@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+#
+# nix-source-escrow -- keep the sources a Nix build depends on in storage you
+# control, and prove with a test that the build survives the death of their
+# origins.
+#
+# v0.1 guarantee: ORIGIN_INDEPENDENCE. See README.md and DESIGN.md.
+
+set -euo pipefail
+
+NSE_SELF=${BASH_SOURCE[0]}
+while [ -L "$NSE_SELF" ]; do NSE_SELF=$(readlink -f "$NSE_SELF"); done
+NSE_ROOT=$(cd "$(dirname "$NSE_SELF")/.." && pwd)
+
+# shellcheck source=../lib/common.sh
+. "$NSE_ROOT/lib/common.sh"
+# shellcheck source=../lib/discover.sh
+. "$NSE_ROOT/lib/discover.sh"
+# shellcheck source=../lib/preserve.sh
+. "$NSE_ROOT/lib/preserve.sh"
+# shellcheck source=../lib/verify.sh
+. "$NSE_ROOT/lib/verify.sh"
+# shellcheck source=../lib/prove.sh
+. "$NSE_ROOT/lib/prove.sh"
+# shellcheck source=../lib/trust.sh
+. "$NSE_ROOT/lib/trust.sh"
+# shellcheck source=../lib/report.sh
+. "$NSE_ROOT/lib/report.sh"
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: nix-source-escrow <command> [<installable>] [options]
+
+commands:
+  env                             report the Nix environment this runs in
+  discover <installable>          enumerate flake inputs and fixed-output sources
+  preserve <installable>          realise the build in a controlled store and
+                                  copy everything it needed into the escrow
+  verify   <installable>          check the escrow holds the right objects
+  trust-probe                     measure which escrowed objects Nix accepts unsigned
+  test-origin-independence <inst> build with every origin unreachable
+  report                          print the evidence report
+  escrow   <installable>          discover + preserve + verify + test + report
+
+options:
+  --escrow-dir DIR    escrow location (default: ./escrow, or $NSE_DIR)
+  --compression C     binary-cache compression: zstd|xz|none (default: zstd)
+  --fresh-staging     wipe the staging store before preserving
+  --expect-fail       for test-origin-independence: assert the build FAILS
+                      (negative control for a deliberately incomplete escrow)
+  --no-isolation      run the acceptance build without namespaces (debug only;
+                      the result is marked as a control run, not an acceptance)
+  -h, --help          this text
+
+exit status: 0 on success, 1 on a failed check, 2 on usage error.
+USAGE
+}
+
+NSE_DIR=${NSE_DIR:-$PWD/escrow}
+NSE_COMPRESSION=${NSE_COMPRESSION:-zstd}
+NSE_FRESH_STAGING=0
+NSE_NO_ISOLATION=0
+NSE_EXPECT=pass
+NSE_INSTALLABLE=""
+
+[ $# -ge 1 ] || { usage; exit 2; }
+case $1 in
+  -h|--help|help) usage; exit 0 ;;
+esac
+cmd=$1; shift
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --escrow-dir) [ $# -ge 2 ] || { printf 'nix-source-escrow: --escrow-dir needs a value\n' >&2; exit 2; }
+                  NSE_DIR=$(nse_abspath "$2"); shift 2 ;;
+    --compression) [ $# -ge 2 ] || { printf 'nix-source-escrow: --compression needs a value\n' >&2; exit 2; }
+                  case $2 in zstd|xz|none) NSE_COMPRESSION=$2 ;;
+                    *) printf 'nix-source-escrow: unsupported compression %s\n' "$2" >&2; exit 2 ;; esac
+                  shift 2 ;;
+    --fresh-staging) NSE_FRESH_STAGING=1; shift ;;
+    --expect-fail)   NSE_EXPECT=fail; shift ;;
+    --no-isolation)  NSE_NO_ISOLATION=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --*) printf 'nix-source-escrow: unknown option %s\n' "$1" >&2; usage; exit 2 ;;
+    *) if [ -z "$NSE_INSTALLABLE" ]; then NSE_INSTALLABLE=$1; shift
+       else printf 'nix-source-escrow: unexpected argument %s\n' "$1" >&2; exit 2; fi ;;
+  esac
+done
+
+NSE_DIR=$(nse_abspath "$NSE_DIR")
+NSE_CACHE=$NSE_DIR/cache
+export NSE_DIR NSE_CACHE NSE_COMPRESSION NSE_FRESH_STAGING NSE_NO_ISOLATION NSE_INSTALLABLE
+
+nse_require_cmd nix jq
+
+need_installable() {
+  [ -n "$NSE_INSTALLABLE" ] \
+    || { printf 'nix-source-escrow: %s needs an installable, e.g. ".#default"\n' "$cmd" >&2; exit 2; }
+}
+
+mkdir -p "$NSE_DIR" "$NSE_DIR/evidence"
+
+case $cmd in
+  env)      nse_env ;;
+  discover) need_installable; nse_discover ;;
+  preserve) need_installable; nse_preserve ;;
+  verify)   need_installable; nse_verify ;;
+  trust-probe) nse_trust_probe ;;
+  test-origin-independence) need_installable; nse_prove "$NSE_EXPECT" ;;
+  report)   nse_report ;;
+  escrow)
+    need_installable
+    nse_env
+    nse_discover
+    nse_preserve
+    nse_verify
+    nse_trust_probe
+    nse_prove "$NSE_EXPECT"
+    nse_step "EVIDENCE REPORT"
+    nse_report
+    ;;
+  *) printf 'nix-source-escrow: unknown command %s\n' "$cmd" >&2; usage; exit 2 ;;
+esac
