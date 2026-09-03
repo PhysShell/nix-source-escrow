@@ -272,13 +272,35 @@ NSE_ROOT=$ROOT; export NSE_ROOT
 prov=$(nse_provenance)
 assert_eq "u11.1 provenance is valid JSON" \
   "ok" "$(printf '%s' "$prov" | jq -e . >/dev/null 2>&1 && echo ok || echo bad)"
-assert_eq "u11.2 it records a full commit id" \
-  "true" "$(printf '%s' "$prov" | jq -r '(.gitCommit // "") | test("^[0-9a-f]{40}$")')"
-assert_eq "u11.3 and whether the working tree was dirty" \
-  "boolean" "$(printf '%s' "$prov" | jq -r '.gitDirty | type')"
-assert_eq "u11.4 every provenance field is present, even when unknown" \
-  "closureSha256 gitCommit gitDirty manifestSha256 nixVersion" \
+assert_eq "u11.2 a dev checkout reports its HEAD" \
+  "true" "$(printf '%s' "$prov" | jq -r '(.toolRevision // "") | test("^[0-9a-f]{40}$")')"
+assert_eq "u11.3 and says the revision came from the checkout" \
+  "git-checkout" "$(printf '%s' "$prov" | jq -r '.revisionSource')"
+assert_eq "u11.4 and whether the working tree was dirty" \
+  "boolean" "$(printf '%s' "$prov" | jq -r '.workingTreeDirty | type')"
+assert_eq "u11.4a every provenance field is present, even when unknown" \
+  "closureSha256 manifestSha256 nixVersion revisionSource toolRevision workingTreeDirty" \
   "$(printf '%s' "$prov" | jq -r 'keys | join(" ")')"
+
+# A packaged build has no .git and no working tree: the revision is stamped in
+# at build time and a runtime `git` query there returns nothing, however many
+# git binaries are on PATH. That was the bug -- adding git to runtimeDeps
+# treated the symptom.
+PKG=$TMP/packaged; mkdir -p "$PKG/share/nix-source-escrow"
+printf '{"toolRevision":"2c50fde0000000000000000000000000deadbeef","workingTreeDirty":false,"revisionSource":"flake"}' \
+  > "$PKG/share/nix-source-escrow/build-info.json"
+pkgprov=$(NSE_ROOT=$PKG nse_provenance)
+assert_eq "u11.4b a packaged build reports its stamped revision, not nothing" \
+  "2c50fde0000000000000000000000000deadbeef" "$(printf '%s' "$pkgprov" | jq -r '.toolRevision')"
+assert_eq "u11.4c and says the revision came from the flake" \
+  "flake" "$(printf '%s' "$pkgprov" | jq -r '.revisionSource')"
+assert_eq "u11.4d a clean packaged build is false, not null (jq // treats false as absent)" \
+  "false" "$(printf '%s' "$pkgprov" | jq -r '.workingTreeDirty')"
+printf '{"toolRevision":"unknown","workingTreeDirty":null,"revisionSource":"flake"}' \
+  > "$PKG/share/nix-source-escrow/build-info.json"
+assert_eq "u11.4e a source with no revision at all says so rather than guessing" \
+  "null flake-no-revision" \
+  "$(NSE_ROOT=$PKG nse_provenance | jq -r '"\(.toolRevision) \(.revisionSource)"')"
 NSE_DIR=$TMP/prov-escrow; export NSE_DIR
 mkdir -p "$NSE_DIR"; printf '{"a":1}' > "$NSE_DIR/manifest.json"
 assert_eq "u11.5 the manifest is hashed when it exists" \

@@ -55,10 +55,10 @@ tier.
 Its prebuilt objects are copied **from the approved tier you name**, never from
 whatever this machine happened to build — otherwise the evidence would claim
 "works given the approved cache" about a cache that never held the object.
-Anything neither escrowed nor held by that tier is handed to nobody and rebuilt
-inside the test. If the tier cannot supply something the build does *not*
-produce for itself, the verdict is `MODE_UNSUPPORTED`: the claim is
-unavailable, which is neither a red escrow nor a green one. `DESIGN.md` §12.
+Anything neither escrowed nor held by that tier is handed to nobody, and the
+acceptance build has to produce it: whether it can is the test's answer to
+give, not something the tool predicts from a signature or a guess.
+`DESIGN.md` §12.
 
 ### Explicitly *not* the guarantee
 
@@ -210,6 +210,12 @@ nix develop -c env NSE_TEST_REUSE=1 ./tests/run-tests.sh
 nix develop -c env NSE_TEST_SKIP_MODES=1 ./tests/run-tests.sh
 
 nix flake check                                            # shellcheck
+
+# the packaged executable, which is the only way to test that the revision
+# really is stamped into the build rather than read out of a .git that is
+# not there
+nix build .#nix-source-escrow
+./result/bin/nix-source-escrow --help
 ```
 
 Experiments — questions this repo has read the answer to in the Nix sources but
@@ -357,15 +363,26 @@ wrong `systems`.
   run print `NOT_RUN` rather than vanishing. The v0.1 CLI got this backwards:
   `set -e` plus an acceptance test returning 1 killed the process before the
   report was written, so the report went missing exactly when it was needed.
-* **A broken harness is its own verdict, and so is an unavailable claim.**
+* **A broken harness is its own verdict, and so is an unmodellable claim.**
   Every isolation step is checked, and a half-applied namespace yields
-  `HARNESS_ERROR`. A guarantee whose preconditions do not hold yields
+  `HARNESS_ERROR`. A guarantee the harness cannot model on these inputs — an
+  escrow preserved for one guarantee, proven against another — yields
   `MODE_UNSUPPORTED`. Neither is a `FAIL` that reads as an accusation against
   the escrow, and neither is accepted by `--expect-fail` as a negative control.
+  What is *not* one of these: a cache that lacks a path. That is a data
+  condition a real build can resolve by building the thing, and the build is
+  left to answer it.
+* **Requested is not reachable.** `nix copy` copies closures, so the stores the
+  test can actually read are listed and counted, not inferred from the size of
+  the request. Anything the manifest says is provided to nobody but turns out
+  to be reachable is a `FAIL`: "the test rebuilt it" would not be true.
 * **Every result names the code that produced it.** Each evidence file carries
-  `provenance` — commit, dirty flag, Nix version, and the SHA-256 of the
-  manifest and closure it judged — and the report prints `TOOL_COMMIT`. A
-  `CONFIRMED` with no commit attached is a rumour.
+  `provenance` — revision, where that revision came from, dirty flag, Nix
+  version, and the SHA-256 of the manifest and closure it judged — and the
+  report prints `TOOL_COMMIT`. For a packaged build the revision is stamped in
+  at build time, because an installed `/nix/store` tree has no `.git` to ask
+  and no working tree to be dirty. A `CONFIRMED` with no revision attached is a
+  rumour. `DESIGN.md` §14.
 * **The report says which machine, and how it knows.** `HOST` is detected and
   printed alongside `HOST_DETECTED_BY`. An earlier version printed a
   hardcoded `HOST=Windows 11` on every machine, in a tool whose stated rule is

@@ -109,9 +109,10 @@ nse_report() {
              "CLIENT_IS_TRUSTED_USER=" + (.clientIsTrustedUser|tostring),
              "AMBIENT_REQUIRE_SIGS=" + .nixConfig.requireSigs,
              "AMBIENT_HASHED_MIRRORS=" + (if .nixConfig.hashedMirrors == "" then "(unset)" else .nixConfig.hashedMirrors end),
-             "TOOL_COMMIT=" + ((.provenance.gitCommit // "unknown")[0:12]) +
-               (if .provenance.gitDirty == true then " (WORKING TREE DIRTY)"
-                elif .provenance.gitDirty == false then " (clean)" else "" end)' \
+             "TOOL_COMMIT=" + ((.provenance.toolRevision // "unknown")[0:12]) +
+               " [" + (.provenance.revisionSource // "unknown") + "]" +
+               (if .provenance.workingTreeDirty == true then " (WORKING TREE DIRTY)"
+                elif .provenance.workingTreeDirty == false then " (clean)" else "" end)' \
         "$envj"
     else
       printf 'ENVIRONMENT=NOT_RUN\n'
@@ -173,9 +174,7 @@ nse_report() {
              (if .binaryTier == null then "APPROVED_BINARY_TIER=(none)" else
                 "APPROVED_BINARY_TIER=" + .binaryTier.url end),
              (if .binaryTier == null then empty else
-                "  OBJECTS_FROM_TIER=\(.binaryTier.pathsFromTier)  NOT_PROVIDED=\(.binaryTier.pathsNotProvided)" end),
-             (if .binaryTier == null then empty else
-                "  PREBUILT_MISSING_FROM_TIER=\(.binaryTier.prebuiltMissingFromTier)  TIER_SUFFICIENT=\(.binaryTier.sufficient)" end),
+                "  ASKED_TIER_FOR=\(.binaryTier.pathsRequested)  SUPPLIED_BY_TIER=\(.binaryTier.pathsFromTier)  PROVIDED_TO_NOBODY=\(.binaryTier.pathsNotProvided)" end),
              "COMPRESSION=" + (.escrow.compression // "unknown"),
              "FLAKE_INPUTS_PRESERVED=\(.counts.flakeInputsPresent)/\(.counts.flakeInputs)",
              "SOURCES_REQUIRED_BY_PLAN=\(.counts.sourcesRequiredByPlan)",
@@ -252,6 +251,9 @@ nse_report() {
                 "BINARY_REPLICA_REPLAYED_FROM=" + .replaySource.binaryReplicaUsedByTest +
                 " (" + .replaySource.binaryReplicaMode + ", \(.replaySource.binaryReplicaObjects // 0) objects)" end),
              "MODE_SUPPORTED=" + ((.modeSupported // true)|tostring),
+             "REPLAY_OBJECTS_REQUESTED=\(.replaySource.objectsRequested // 0)",
+             "  REACHABLE_BY_TEST=\(.replaySource.objectsReachableByTest // "not measured")  ARRIVED_AS_CLOSURE=\(.replaySource.objectsArrivedAsClosure // "not measured")",
+             "  NOT_PROVIDED_BUT_REACHABLE=\(.replaySource.notProvidedReachableByTest // "not measured")",
              "SOURCES_IN_ESCROW_BEFORE_ISOLATION=\(.sourcesInEscrowBeforeIsolation // 0)/\(.sourcesRequired)",
              "SUBSTITUTERS_ONLY_ESCROW=" + (.substitutersOnlyEscrow|tostring),
              "SUBSTITUTERS_AS_CONFIGURED=" + ((.substitutersAsExpected // .substitutersOnlyEscrow)|tostring),

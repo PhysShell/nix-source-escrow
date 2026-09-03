@@ -125,14 +125,18 @@ nse_prove() {
   rm -f "$work/prove-result.json"
 
   # ---- precondition: is this claim available at all? ----------------------
-  # Under SOURCE_ORIGIN_INDEPENDENCE the manifest records whether the approved
-  # binary tier could supply every prebuilt object the build does not produce
-  # itself. If it could not, no build outcome can establish the mode, and
-  # running one anyway would just produce a failure attributed to the escrow.
+  # MODE_UNSUPPORTED is for a claim this harness cannot model on these inputs --
+  # not for "one particular cache does not have one particular path", which is
+  # a data condition the acceptance build is perfectly able to resolve by
+  # building the thing. The real case is a mismatch: the escrow was PRESERVED
+  # for one guarantee and is being PROVEN against another, so the path sets on
+  # disk do not correspond to the claim being made and no build outcome would
+  # mean what the verdict says.
   local mode_supported=true mode_reason=""
-  if [ "$(jq -r '.binaryTier.sufficient // true' "$manifest")" != true ]; then
+  local preserved_for; preserved_for=$(jq -r '.guarantee // "unknown"' "$manifest")
+  if [ "$preserved_for" != "$NSE_GUARANTEE" ]; then
     mode_supported=false
-    mode_reason=$(jq -r '"the approved binary tier \(.binaryTier.url) is missing \(.binaryTier.prebuiltMissingFromTier) prebuilt object(s) this build did not produce locally, so SOURCE_ORIGIN_INDEPENDENCE cannot be established against it"' "$manifest")
+    mode_reason="the escrow was preserved for '$preserved_for' but this run asks for a '$NSE_GUARANTEE' verdict; the escrowed and replicated path sets do not correspond to the claim, so no build outcome could establish it. Re-run preserve with --guarantee $NSE_GUARANTEE."
   fi
 
   # ---- precondition: does the ESCROW itself hold the sources? -------------
@@ -167,6 +171,45 @@ nse_prove() {
     substituters="$escrow_proof $replica_proof"
   fi
 
+  # ---- audit what the test can actually reach ------------------------------
+  # `nix copy` copies CLOSURES, so "we asked for 53 roots" is not "53 objects
+  # arrived". Measure the stores the test will use, rather than reporting the
+  # size of the request as though it were the size of the result.
+  #
+  # The check that matters: nothing from notProvidedPaths may be reachable. We
+  # said the acceptance build has to instantiate or rebuild those, and if a
+  # closure copy quietly put one next to it, the claim "it was rebuilt" is
+  # false and the run is a demonstration of nothing.
+  jq -r '(.notProvidedPaths // [])[]' "$closure" | LC_ALL=C sort -u \
+    > "$work/prove-not-provided.txt"
+  LC_ALL=C sort -u "$work/prove-escrow-set.txt" "$work/prove-replica-set.txt" \
+    > "$work/prove-requested.txt"
+  : > "$work/prove-replay-objects.txt"
+  local audited=true pair url
+  for pair in "escrow=$escrow_proof" "replica=$replica_proof"; do
+    url=${pair#*=}
+    [ -n "$url" ] || continue
+    if nse_url_is_file "$url"; then
+      nse_store_list "$url" >> "$work/prove-replay-objects.txt"
+    else
+      audited=false
+    fi
+  done
+  LC_ALL=C sort -u -o "$work/prove-replay-objects.txt" "$work/prove-replay-objects.txt"
+
+  local replay_actual=null replay_unrequested=null replay_leak=null replay_leak_n=0
+  if [ "$audited" = true ]; then
+    replay_actual=$(wc -l < "$work/prove-replay-objects.txt")
+    replay_unrequested=$(LC_ALL=C comm -23 "$work/prove-replay-objects.txt" "$work/prove-requested.txt" | wc -l)
+    LC_ALL=C comm -12 "$work/prove-replay-objects.txt" "$work/prove-not-provided.txt" \
+      > "$work/prove-replay-leak.txt"
+    replay_leak_n=$(wc -l < "$work/prove-replay-leak.txt")
+    replay_leak=$replay_leak_n
+    nse_log "replay audit: $replay_actual objects reachable ($(wc -l < "$work/prove-requested.txt") requested, $replay_unrequested arrived as closure), $replay_leak_n of them were supposed to be provided to nobody"
+  else
+    nse_warn "replay audit: a substituter is not a file:// store, so what the test can reach was not measured"
+  fi
+
   local envf=$work/prove-env.sh
   {
     printf 'NSE_SUBSTITUTERS=%q\n' "$substituters"
@@ -175,6 +218,8 @@ nse_prove() {
     printf 'NSE_SOURCES_REQUIRED=%q\n' "$sources_required"
     printf 'NSE_SOURCES_IN_ESCROW=%q\n' "$sources_in_escrow"
     printf 'NSE_MODE_SUPPORTED=%q\n' "$mode_supported"
+    printf 'NSE_REPLAY_LEAK=%q\n' "$replay_leak_n"
+    printf 'NSE_REPLAY_AUDITED=%q\n' "$audited"
     printf 'NSE_MODE_REASON=%q\n' "$mode_reason"
     printf 'NSE_TESTSTORE=%q\n'    "$teststore"
     printf 'NSE_TESTHOME=%q\n'     "$testhome"
@@ -220,6 +265,9 @@ nse_prove() {
     --arg replicaProof "$replica_proof" --arg replicaProofMode "$replica_proof_mode" \
     --argjson escrowProofObjects "$escrow_proof_n" \
     --argjson replicaProofObjects "$replica_proof_n" \
+    --argjson replayActual "$replay_actual" \
+    --argjson replayUnrequested "$replay_unrequested" \
+    --argjson replayLeak "$replay_leak" \
     --arg binaryTier "$([ "$NSE_GUARANTEE" = source-origin-independence ] && printf '%s' "$NSE_BINARY_TIER")" \
     --slurpfile r "$work/prove-result.json" \
     '$r[0] + {schemaVersion:3, kind:"origin-independence", timestamp:$ts,
@@ -233,7 +281,11 @@ nse_prove() {
                 binaryReplicaObjects:$replicaProofObjects,
                 binaryTier:(if $binaryTier=="" then null else $binaryTier end),
                 binaryReplicaUsedByTest:(if $replicaProof=="" then null else $replicaProof end),
-                binaryReplicaMode:$replicaProofMode}}' \
+                binaryReplicaMode:$replicaProofMode,
+                objectsRequested:($escrowProofObjects + $replicaProofObjects),
+                objectsReachableByTest:$replayActual,
+                objectsArrivedAsClosure:$replayUnrequested,
+                notProvidedReachableByTest:$replayLeak}}' \
     | nse_json_canonical | nse_write_file "$NSE_DIR/evidence/origin-independence.json"
 
   nse_prove_report "$NSE_DIR/evidence/origin-independence.json" "$expect"
@@ -267,6 +319,8 @@ nse_prove_report() {
     "FLAKE_INPUT_RESTORE=" + (.flakeInputRestore // "not recorded"),
     "MODE_SUPPORTED=" + ((.modeSupported // true)|tostring),
     "REPLAY_SOURCE=" + .replaySource.escrowUsedByTest + " (" + .replaySource.escrowMode + " from " + .replaySource.durableEscrow + ")",
+    "REPLAY_OBJECTS_REQUESTED=\(.replaySource.objectsRequested)  REACHABLE=\(.replaySource.objectsReachableByTest // "not measured")  AS_CLOSURE=\(.replaySource.objectsArrivedAsClosure // "not measured")",
+    "NOT_PROVIDED_REACHABLE=\(.replaySource.notProvidedReachableByTest // "not measured")",
     "OFFLINE_EVAL_PROBE=" + .offlineEvalProbe,
     "SOURCES_IN_ESCROW_BEFORE_ISOLATION=\(.sourcesInEscrowBeforeIsolation)/\(.sourcesRequired)",
     "REQUIRED_SOURCES_RESTORED=\(.sourcesRestored)/\(.sourcesRequired)",
@@ -577,6 +631,9 @@ elif [ "$isolation_setup" = failed ]; then
 elif [ "$substituters_ok" != true ]; then
   result=FAIL
   reason="substituters were '$effective_substituters', expected exactly '$NSE_SUBSTITUTERS'"
+elif [ "${NSE_REPLAY_AUDITED:-false}" = true ] && [ "${NSE_REPLAY_LEAK:-0}" -ne 0 ]; then
+  result=FAIL
+  reason="$NSE_REPLAY_LEAK object(s) the manifest says are provided to nobody were reachable from the test's substituters anyway (nix copy copies closures); 'the test rebuilt them' would not be true"
 elif [ "$NSE_SOURCES_IN_ESCROW" -ne "$NSE_SOURCES_REQUIRED" ]; then
   result=FAIL
   reason="the durable escrow held only $NSE_SOURCES_IN_ESCROW of $NSE_SOURCES_REQUIRED plan-required sources when asked before isolation, so a green build would not be attributable to it"

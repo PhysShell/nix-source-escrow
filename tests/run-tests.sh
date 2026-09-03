@@ -411,11 +411,14 @@ fi
 
 # ---------------------------------------------------------------------------
 head_ "t15  SOURCE_ORIGIN_INDEPENDENCE is a different, weaker, cheaper claim"
-# The defect this group exists for: v1 of this mode filled the binary replica
+# Two defects this group exists for. v1 of the mode filled the binary replica
 # with `closure - sources` copied out of the STAGING store, so an object this
-# machine happened to build locally was served to the test as though the
-# approved cache had it. The evidence then read "works given the approved
-# binary tier" about a tier that may never have held it.
+# machine built was served as though the approved cache had it. v2 then read a
+# cache signature as proof of substitution and refused the whole mode when the
+# tier lacked such a path -- but a signature is not proof of substitution, and
+# "staging chose to download X" says nothing about whether X can be built.
+# The tier now supplies what it has; everything else is rebuilt by the test,
+# and the test is the judge of whether that works.
 if [ "${NSE_TEST_SKIP_MODES:-0}" = 1 ]; then
   echo "  skipped (NSE_TEST_SKIP_MODES=1)"
 else
@@ -431,54 +434,45 @@ else
   SRC_MANIFEST=$SRC/manifest.json
   SRC_CLOSURE=$SRC/closure.json
 
-  assert_eq "t15.1 the manifest names the weaker guarantee" \
+  assert_eq "t15.1 the source-only guarantee passes end to end" "0" "$rc"
+  assert_eq "t15.2 the manifest names the weaker guarantee" \
     "source-origin-independence" "$(jq -r '.guarantee' "$SRC_MANIFEST")"
-  assert_eq "t15.2 and the approved binary tier it was built against" \
-    "true" "$(jq -r '.binaryTier.url != null and (.binaryTier.url|length) > 0' "$SRC_MANIFEST")"
-
-  TIER_OK=$(jq -r '.binaryTier.sufficient' "$SRC_MANIFEST")
-  if [ "$TIER_OK" = true ]; then
-    assert_eq "t15.3 the run passes when the tier can supply the prebuilt objects" "0" "$rc"
-    assert_eq "t15.4 the escrow holds source material only, not the whole closure" \
-      "true" "$(jq -r '(.escrowPaths|length) < (.paths|length)' "$SRC_CLOSURE")"
-    assert_eq "t15.5 every plan-required source is still in the escrow itself" \
-      "0" "$(jq -r '.counts.sourcesMissing' "$SRC_MANIFEST")"
-    assert_eq "t15.6 every flake input is still in the escrow itself" \
-      "true" "$(jq -r '.counts.flakeInputsPresent == .counts.flakeInputs' "$SRC_MANIFEST")"
-    assert_eq "t15.7 the verdict is labelled with the weaker guarantee" \
-      "SOURCE_ORIGIN_INDEPENDENCE" "$(jq -r '.guarantee.name' "$SRC_OI")"
-    assert_eq "t15.8 and it does NOT claim the escrow was the only substituter" \
-      "false" "$(jq -r '.substitutersOnlyEscrow' "$SRC_OI")"
-    assert_eq "t15.9 the escrow was still asked for every required source, before isolation" \
-      "true" "$(jq -r '.sourcesInEscrowBeforeIsolation == .sourcesRequired and .sourcesRequired > 0' "$SRC_OI")"
-    assert_eq "t15.10 the evidence spells out what this does not prove" \
-      "true" "$(jq -r '.guarantee.doesNotProve | test("ESCROW_REPLAY")' "$SRC_OI")"
-    # The core fidelity assertion: nothing in the replica came from staging.
-    # Every replica path must be one the approved tier actually holds, which is
-    # exactly the set the manifest counted.
-    assert_eq "t15.11 the replica holds exactly what the tier supplied" \
-      "true" "$(jq -r --slurpfile m "$SRC_MANIFEST" '(.replicaPaths|length) == $m[0].binaryTier.pathsFromTier' "$SRC_CLOSURE")"
-    assert_eq "t15.12 objects nobody supplies are recorded, not silently escrowed" \
-      "true" "$(jq -r '(.notProvidedPaths|length) > 0' "$SRC_CLOSURE")"
-    assert_eq "t15.13 the .drv files are among them -- a binary cache is not asked for a derivation" \
-      "true" "$(jq -r '[.notProvidedPaths[]|select(endswith(".drv"))]|length > 0' "$SRC_CLOSURE")"
-    assert_eq "t15.14 nothing is in both the escrow and the replica" \
-      "0" "$(jq -r '[.escrowPaths[]] as $e | [.replicaPaths[]|select(. as $p | $e|index($p))]|length' "$SRC_CLOSURE")"
-    assert_eq "t15.15 the three sets account for the whole realised closure" \
-      "true" "$(jq -r '((.escrowPaths + .replicaPaths + .notProvidedPaths)|unique|length) == (.paths|length)' "$SRC_CLOSURE")"
-  else
-    # The tier could not supply something this build did not produce locally.
-    # That is not a green result and not a red escrow: the claim is unavailable.
-    assert_ne "t15.3 an insufficient tier does not yield exit 0" "0" "$rc"
-    assert_eq "t15.4 the verdict is MODE_UNSUPPORTED, never FAIL or PASS" \
-      "MODE_UNSUPPORTED" "$(jq -r '.result' "$SRC_OI")"
-    assert_eq "t15.5 and the reason names the tier, not the escrow" \
-      "true" "$(jq -r '(.reason // "") | test("binary tier")' "$SRC_OI")"
-    assert_eq "t15.6 MODE_UNSUPPORTED is refused as a negative control too" \
-      "1" "$(nse_expect_fail_rc "$SRC_OI")"
-    echo "  note: the approved tier is missing $(jq -r '.binaryTier.prebuiltMissingFromTier' "$SRC_MANIFEST") prebuilt object(s); the mode is correctly unavailable here"
-  fi
-  assert_eq "t15.16 the strict escrow is untouched and still ESCROW_REPLAY" \
+  assert_eq "t15.3 and the approved binary tier it was built against" \
+    "true" "$(jq -r '(.binaryTier.url // "") | length > 0' "$SRC_MANIFEST")"
+  assert_eq "t15.4 the escrow holds source material only, not the whole closure" \
+    "true" "$(jq -r '(.escrowPaths|length) < (.paths|length)' "$SRC_CLOSURE")"
+  assert_eq "t15.5 every plan-required source is still in the escrow itself" \
+    "0" "$(jq -r '.counts.sourcesMissing' "$SRC_MANIFEST")"
+  assert_eq "t15.6 every flake input is still in the escrow itself" \
+    "true" "$(jq -r '.counts.flakeInputsPresent == .counts.flakeInputs' "$SRC_MANIFEST")"
+  assert_eq "t15.7 the verdict is labelled with the weaker guarantee" \
+    "SOURCE_ORIGIN_INDEPENDENCE" "$(jq -r '.guarantee.name' "$SRC_OI")"
+  assert_eq "t15.8 and it does NOT claim the escrow was the only substituter" \
+    "false" "$(jq -r '.substitutersOnlyEscrow' "$SRC_OI")"
+  assert_eq "t15.9 the escrow was still asked for every required source, before isolation" \
+    "true" "$(jq -r '.sourcesInEscrowBeforeIsolation == .sourcesRequired and .sourcesRequired > 0' "$SRC_OI")"
+  assert_eq "t15.10 the evidence spells out what this does not prove" \
+    "true" "$(jq -r '.guarantee.doesNotProve | test("ESCROW_REPLAY")' "$SRC_OI")"
+  # The fidelity assertion: the replica is exactly what the tier answered with.
+  assert_eq "t15.11 the replica holds exactly what the tier supplied" \
+    "true" "$(jq -r --slurpfile m "$SRC_MANIFEST" '(.replicaPaths|length) == $m[0].binaryTier.pathsFromTier' "$SRC_CLOSURE")"
+  assert_eq "t15.12 objects nobody supplies are recorded, not silently escrowed" \
+    "true" "$(jq -r '(.notProvidedPaths|length) > 0' "$SRC_CLOSURE")"
+  assert_eq "t15.13 the .drv files are among them -- a binary cache is not asked for a derivation" \
+    "true" "$(jq -r '[.notProvidedPaths[]|select(endswith(".drv"))]|length > 0' "$SRC_CLOSURE")"
+  assert_eq "t15.14 nothing is in both the escrow and the replica" \
+    "0" "$(jq -r '[.escrowPaths[]] as $e | [.replicaPaths[]|select(. as $p | $e|index($p))]|length' "$SRC_CLOSURE")"
+  assert_eq "t15.15 the three sets account for the whole realised closure" \
+    "true" "$(jq -r '((.escrowPaths + .replicaPaths + .notProvidedPaths)|unique|length) == (.paths|length)' "$SRC_CLOSURE")"
+  assert_eq "t15.16 no .drv was ever asked of the tier" \
+    "true" "$(jq -r --slurpfile c "$SRC_CLOSURE" '.binaryTier.pathsRequested == (($c[0].replicaPaths + [$c[0].notProvidedPaths[]|select(endswith(".drv")|not)])|unique|length)' "$SRC_MANIFEST")"
+  # The accounting the third review asked for: `nix copy` copies closures, so
+  # what the test can REACH is measured, not inferred from what was requested.
+  assert_eq "t15.17 what the test could reach was measured, not assumed" \
+    "number" "$(jq -r '.replaySource.objectsReachableByTest | type' "$SRC_OI")"
+  assert_eq "t15.18 nothing marked provided-to-nobody was reachable after all" \
+    "0" "$(jq -r '.replaySource.notProvidedReachableByTest' "$SRC_OI")"
+  assert_eq "t15.19 the strict escrow is untouched and still ESCROW_REPLAY" \
     "escrow-replay" "$(jq -r '.guarantee' "$MANIFEST")"
 fi
 
@@ -540,16 +534,76 @@ fi
 # ---------------------------------------------------------------------------
 head_ "t17  every piece of evidence is bound to the code that produced it"
 for f in environment.json verify.json trust.json origin-independence.json; do
-  assert_eq "t17.1 $f records the commit it was produced on" \
-    "true" "$(jq -r '(.provenance.gitCommit // "") | test("^[0-9a-f]{40}$")' "$ESCROW/evidence/$f")"
+  assert_eq "t17.1 $f records the revision it was produced on" \
+    "true" "$(jq -r '(.provenance.toolRevision // "") | test("^[0-9a-f]{40}$")' "$ESCROW/evidence/$f")"
 done
 assert_eq "t17.2 and whether the working tree was dirty at the time" \
-  "boolean" "$(jq -r '.provenance.gitDirty | type' "$ESCROW/evidence/origin-independence.json")"
+  "boolean" "$(jq -r '.provenance.workingTreeDirty | type' "$ESCROW/evidence/origin-independence.json")"
 assert_eq "t17.3 the acceptance evidence is bound to the manifest it judged" \
   "$(sha256sum "$MANIFEST" | cut -d' ' -f1)" \
   "$(jq -r '.provenance.manifestSha256' "$ESCROW/evidence/origin-independence.json")"
 assert_eq "t17.4 the report prints the commit, so a pasted report is traceable" \
   "1" "$(grep -c '^TOOL_COMMIT=' "$REPORT")"
+
+# ---------------------------------------------------------------------------
+head_ "t18  a claim the harness cannot model is MODE_UNSUPPORTED, not FAIL"
+# Deterministic trigger: prove a guarantee against an escrow that was preserved
+# for a different one. The path sets on disk do not correspond to the claim, so
+# no build outcome would mean what the verdict says. (This replaces the old
+# trigger -- "the approved cache lacks a signed path" -- which was a data
+# condition a real build can resolve by building the thing, not something the
+# harness is unable to model.)
+MISMATCH=$WORK/mismatch
+rm_store "$MISMATCH"; mkdir -p "$MISMATCH/evidence"
+for f in manifest.json closure.json discovery.json; do
+  command cp -f "$ESCROW/$f" "$MISMATCH/$f"
+done
+rc=0
+"$NSE" test-origin-independence "$FIXTURE" \
+  --escrow-dir "$MISMATCH" \
+  --escrow-substituter "file://$ESCROW/cache" \
+  --guarantee source-origin-independence >"$WORK/mismatch.log" 2>&1 || rc=$?
+MM_OI=$MISMATCH/evidence/origin-independence.json
+assert_ne "t18.1 the run does not exit 0" "0" "$rc"
+assert_eq "t18.2 the verdict is MODE_UNSUPPORTED, never PASS or FAIL" \
+  "MODE_UNSUPPORTED" "$(jq -r '.result' "$MM_OI")"
+assert_eq "t18.3 the reason names the mismatch, not the escrow" \
+  "true" "$(jq -r '(.reason // "") | test("preserved for")' "$MM_OI")"
+assert_eq "t18.4 no build was run for a claim that was unavailable" \
+  "1" "$(jq -r '.buildExit' "$MM_OI")"
+assert_eq "t18.5 it is refused as a negative control too" \
+  "1" "$(nse_expect_fail_rc "$MM_OI")"
+assert_eq "t18.6 the connectivity evidence was still collected" \
+  "true" "$(jq -r '(.connectivity|length) > 0' "$MM_OI")"
+
+# ---------------------------------------------------------------------------
+head_ "t19  the packaged executable knows which revision it is"
+# The bug: nse_provenance asked git at runtime, and an installed /nix/store tree
+# has no .git (the src filter drops it) and no working tree. Every `nix run`
+# would have reported a null revision, and adding git to runtimeDeps treated
+# the symptom. The revision is now stamped in at build time -- which only a
+# test against the BUILT package can catch.
+rc=0
+nix build --no-link --print-out-paths "$ROOT#nix-source-escrow" > "$WORK/pkg-path.txt" 2>"$WORK/pkg-build.log" || rc=$?
+if [ "$rc" -ne 0 ]; then
+  bad "t19.1 the package builds" "see $WORK/pkg-build.log"
+else
+  ok "t19.1 the package builds"
+  PKG=$(head -1 "$WORK/pkg-path.txt")
+  assert_eq "t19.2 the build stamped a revision into the package" \
+    "true" "$([ -f "$PKG/share/nix-source-escrow/build-info.json" ] && echo true || echo false)"
+  PKGDIR=$WORK/pkg-escrow
+  rm_store "$PKGDIR"; mkdir -p "$PKGDIR"
+  "$PKG/bin/nix-source-escrow" env --escrow-dir "$PKGDIR" >"$WORK/pkg-env.log" 2>&1
+  PKGENV=$PKGDIR/evidence/environment.json
+  assert_ne "t19.3 the packaged run records a revision, not null" \
+    "null" "$(jq -r '.provenance.toolRevision' "$PKGENV")"
+  assert_eq "t19.4 and says it came from the flake, not from a git checkout" \
+    "flake" "$(jq -r '.provenance.revisionSource' "$PKGENV")"
+  assert_eq "t19.5 the report prints a resolvable TOOL_COMMIT" \
+    "0" "$("$PKG/bin/nix-source-escrow" report --escrow-dir "$PKGDIR" 2>/dev/null \
+           | grep -c '^TOOL_COMMIT=unknown')"
+fi
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1mRESULT\033[0m  passed=%d failed=%d\n' "$pass" "$fail"

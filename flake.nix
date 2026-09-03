@@ -41,9 +41,22 @@
             pkgs.git # provenance: which commit produced this evidence
           ];
 
+          # The package has no .git (the src filter drops it) and an immutable
+          # /nix/store tree has no "working tree" to be dirty. So the revision
+          # is stamped in at build time from the flake itself, and the runtime
+          # git query is only ever a fallback for a dev checkout.
+          buildInfo = builtins.toJSON {
+            toolRevision = self.rev or self.dirtyRev or "unknown";
+            workingTreeDirty =
+              if self ? rev then false else if self ? dirtyRev then true else null;
+            revisionSource = "flake";
+          };
+          passAsFile = [ "buildInfo" ];
+
           installPhase = ''
             runHook preInstall
-            mkdir -p "$out/bin" "$out/lib"
+            mkdir -p "$out/bin" "$out/lib" "$out/share/nix-source-escrow"
+            cp "$buildInfoPath" "$out/share/nix-source-escrow/build-info.json"
             cp -r lib/*.sh "$out/lib/"
             cp bin/nix-source-escrow "$out/bin/.nix-source-escrow-wrapped"
             makeWrapper "$out/bin/.nix-source-escrow-wrapped" "$out/bin/nix-source-escrow" \

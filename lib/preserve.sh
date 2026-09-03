@@ -83,7 +83,6 @@ require-drop-supplementary-groups = false" \
 
   : > "$work/replica-set.txt"
   : > "$work/not-provided-set.txt"
-  : > "$work/tier-missing-prebuilt.txt"
 
   case $NSE_GUARANTEE in
     escrow-replay)
@@ -91,10 +90,7 @@ require-drop-supplementary-groups = false" \
     source-origin-independence)
       LC_ALL=C sort -u "$work/sources-required.txt" "$work/flake-paths.txt" \
         > "$work/escrow-set.txt"
-      # A shortfall is recorded, not fatal here: the pipeline should reach the
-      # acceptance test and produce a verdict that says exactly why the mode
-      # cannot be established, rather than dying with a shell error.
-      nse_binary_replica "$work" "$staging" || : ;;
+      nse_binary_replica "$work" ;;
     *) nse_die "unknown guarantee '$NSE_GUARANTEE'" ;;
   esac
 
@@ -140,23 +136,25 @@ require-drop-supplementary-groups = false" \
 # Decide what the approved binary tier has to supply, ask it, and write down
 # the answer.
 #
-# The v1 of this mode filled the replica with `preserve-set - escrow-set`
-# copied out of the staging store. That quietly made the claim untrue: an
-# object staging happened to build locally was served to the acceptance test as
-# though the approved cache had it, and the evidence then read "the build works
-# given the approved binary tier" about a tier that may never have held it.
+# The first version of this mode filled the replica with `preserve-set -
+# escrow-set` copied out of the STAGING store, which quietly made the claim
+# untrue: an object staging happened to build locally was served to the
+# acceptance test as though the approved cache had it.
 #
-# The replica is now filled FROM THE TIER and from nothing else. What the tier
-# does not have is simply not provided, and the acceptance test has to
-# instantiate or rebuild it -- which for a .drv or for this build's own outputs
-# is the correct behaviour and a stronger test, not a hole.
+# The second version overcorrected. It read a cache signature on a staging path
+# as proof the path had been SUBSTITUTED, and then refused the whole mode when
+# the approved tier lacked such a path. Both halves of that were wrong. A
+# signature is not proof of substitution -- Nix signs locally built paths too
+# when `secret-key-files` is set -- and more importantly, "the previous staging
+# run chose to download X" says nothing about whether X can be built. The mode
+# already allows a rebuild for everything the tier does not hold, so a signed
+# path has no special metaphysical status.
 #
-# Returns 1 for the one case that IS a hole: an object staging did not build
-# (it carries a cache signature, so it was substituted) that the approved tier
-# cannot supply either. Nobody can produce it, and the mode cannot be
-# established.
+# So there is no heuristic here at all. The tier supplies what it has; whatever
+# nobody holds is handed to nobody, and the acceptance build is the judge of
+# whether it can be produced. That is a measurement, not a guess.
 nse_binary_replica() {
-  local work=$1 staging=$2
+  local work=$1
 
   LC_ALL=C comm -23 "$work/preserve-set.txt" "$work/escrow-set.txt" \
     > "$work/non-source-set.txt"
@@ -173,25 +171,7 @@ nse_binary_replica() {
     <(LC_ALL=C sort -u "$work/escrow-set.txt" "$work/replica-set.txt") \
     > "$work/not-provided-set.txt"
 
-  # Signed in the staging store == substituted from a cache, not built here.
-  # Unsigned == this machine produced it, so the test reproducing it is the
-  # point rather than a gap.
-  nse_store_pathinfo "$staging" "$work/tier-candidates.txt" \
-    | jq -r 'to_entries[] | select(((.value.signatures // []) | length) > 0) | .key' \
-    | LC_ALL=C sort -u > "$work/tier-prebuilt.txt"
-  LC_ALL=C comm -23 "$work/tier-prebuilt.txt" "$work/replica-set.txt" \
-    > "$work/tier-missing-prebuilt.txt"
-
-  nse_log "binary tier: $(wc -l < "$work/replica-set.txt") available, $(wc -l < "$work/not-provided-set.txt") not provided (the test instantiates or rebuilds those)"
-
-  local n_missing; n_missing=$(wc -l < "$work/tier-missing-prebuilt.txt")
-  if [ "$n_missing" -ne 0 ]; then
-    nse_warn "the approved binary tier '$NSE_BINARY_TIER' is missing $n_missing object(s) that this build did NOT produce locally, for example:"
-    head -3 "$work/tier-missing-prebuilt.txt" >&2
-    nse_warn "SOURCE_ORIGIN_INDEPENDENCE cannot be established against this tier."
-    nse_warn "Point --binary-tier at a cache that holds them, or use --guarantee escrow-replay."
-    return 1
-  fi
+  nse_log "binary tier: $(wc -l < "$work/replica-set.txt") supplied, $(wc -l < "$work/not-provided-set.txt") provided to nobody (the test instantiates or rebuilds those)"
   return 0
 }
 
@@ -237,8 +217,8 @@ nse_manifest() {
     | LC_ALL=C sort -u > "$work/escrow-present.txt"
 
   local backend; backend=$(nse_backend_name "$NSE_STORE_URL")
-  local tier_missing=$work/tier-missing-prebuilt.txt
-  [ -f "$tier_missing" ] || : > "$tier_missing"
+  local tier_candidates=$work/tier-candidates.txt
+  [ -f "$tier_candidates" ] || : > "$tier_candidates"
 
   jq -n \
     --slurpfile disc "$disc" \
@@ -248,7 +228,7 @@ nse_manifest() {
     --arg substituterUrl "$NSE_SUBSTITUTER_URL" \
     --arg replicaUrl "$([ -s "$work/replica-set.txt" ] && printf '%s' "$NSE_REPLICA_URL")" \
     --arg tierUrl "$NSE_BINARY_TIER" \
-    --rawfile tierMissing "$tier_missing" \
+    --rawfile tierRequested "$tier_candidates" \
     --rawfile replicaSet  "$work/replica-set.txt" \
     --rawfile notProvided "$work/not-provided-set.txt" \
     --arg compression "${NSE_COMPRESSION:-zstd}" \
@@ -283,7 +263,6 @@ nse_manifest() {
             elif .escrow.present then "COVERED_NOT_REQUIRED"
             else "NOT_REQUIRED_BY_PLAN" end) ) ) as $sources |
 
-    ($tierMissing | split("\n") | map(select(length>0))) as $tierMiss |
     {
       schemaVersion: 3,
       installable: $d.installable,
@@ -298,14 +277,13 @@ nse_manifest() {
                 compression: $compression },
       binaryTier: (if $guarantee != "source-origin-independence" then null else {
         url: $tierUrl,
-        # Objects the tier supplied, objects nobody supplies (the test must
-        # instantiate or rebuild them), and the shortfall that makes the whole
-        # mode unavailable.
-        pathsFromTier:  ($replicaSet  | split("\n") | map(select(length>0)) | length),
-        pathsNotProvided: ($notProvided | split("\n") | map(select(length>0)) | length),
-        prebuiltMissingFromTier: ($tierMiss | length),
-        missingSample: ($tierMiss[0:5]),
-        sufficient: (($tierMiss | length) == 0)
+        # What we asked the tier for, what it supplied, and what is therefore
+        # provided to nobody -- the acceptance build has to instantiate or
+        # rebuild that last set, and whether it can is for the acceptance test
+        # to answer, not for this stage to predict.
+        pathsRequested:   ($tierRequested | split("\n") | map(select(length>0)) | length),
+        pathsFromTier:    ($replicaSet    | split("\n") | map(select(length>0)) | length),
+        pathsNotProvided: ($notProvided   | split("\n") | map(select(length>0)) | length)
       } end),
       flakeInputs: $inputs,
       sources: $sources,

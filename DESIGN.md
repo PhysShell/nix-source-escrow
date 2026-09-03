@@ -622,58 +622,74 @@ are written into `origin-independence.json` (`guarantee.proves` /
 `guarantee.doesNotProve`) and printed in the report, so the weaker claim cannot
 be quoted as the stronger one.
 
-**Where the prebuilt tier comes from, and why the first version was a lie.**
-The first implementation filled the binary replica with `closure − sources`,
-copied out of the **staging store**. That is wrong in a way that is easy to
-miss and fatal to the claim: staging builds locally whatever it cannot
-substitute, so an object *this machine happened to produce* was handed to the
-acceptance test as though the approved cache had it. The evidence then read
-"the build works given the approved binary tier" about a tier that may never
-have held the object at all. Not a trust problem — a fidelity problem: the
-model of the third party was made out of local build output.
+**Where the prebuilt tier comes from. Two wrong answers first.**
 
-The replica is now filled **from the approved tier and from nothing else**:
+*Wrong answer one: copy it out of staging.* The first implementation filled the
+binary replica with `closure − sources` taken from the **staging store**.
+Staging builds locally whatever it cannot substitute, so an object *this
+machine happened to produce* was handed to the acceptance test as though the
+approved cache had it. The evidence then read "the build works given the
+approved binary tier" about a tier that may never have held the object. Not a
+trust problem — a fidelity problem: the model of the third party was made out
+of local build output.
+
+*Wrong answer two: infer what was substituted, and refuse when the tier lacks
+it.* The fix for the above read a cache signature on a staging path as proof
+that the path had been **substituted**, and then declared the whole mode
+unavailable when the approved tier could not supply such a path. Both halves
+were wrong:
+
+* a signature is not proof of substitution — Nix signs locally built paths too,
+  whenever `secret-key-files` is configured;
+* and more fundamentally, *"the previous staging run chose to download X" says
+  nothing about whether X can be built.* The mode already permits a rebuild for
+  everything the tier does not hold. A signed path has no special metaphysical
+  status. Refusing on that basis is: "yesterday I took the bus to work,
+  therefore today, without a bus, the journey is logically undefined." No. Try
+  walking.
+
+**The answer with no heuristic in it.**
 
 ```
-realised closure − escrowed source material
-        |
-        +-- *.drv                    -> asked of nobody. The test evaluates the
-        |                               flake and instantiates them itself;
-        |                               asking a binary cache for a derivation
-        |                               is a category error
-        |
-        +-- ask --binary-tier URL
-              |
-              +-- it has it     -> binary replica (copied FROM THE TIER)
-              |
-              +-- it does not   -> provided to nobody. The test rebuilds it.
-                                   For this build's own outputs that is the
-                                   correct behaviour and a stronger test than
-                                   handing them over
+realised closure
+      |
+      +-- escrowed source material              -> escrow
+      |
+      +-- *.drv                                 -> provided to nobody. The test
+      |                                            evaluates the flake and
+      |                                            instantiates them itself;
+      |                                            asking a binary cache for a
+      |                                            derivation is a category error
+      |
+      +-- everything else: ask --binary-tier URL
+                |
+                +-- it has it   -> binary replica, copied FROM THE TIER
+                |
+                +-- it does not -> provided to nobody. The acceptance build
+                                    has to produce it, and whether it can is
+                                    the test's answer to give
 ```
 
-`closure.json` records all three sets (`escrowPaths`, `replicaPaths`,
-`notProvidedPaths`) and they partition the realised closure, so the accounting
-is checkable rather than assertable.
+`replicaPaths = tierCandidates ∩ tier`, `notProvidedPaths = closure −
+escrowPaths − replicaPaths`, and `closure.json` records all three so the
+partition is checkable rather than assertable. Nothing anywhere reads a
+signature. The acceptance build is the judge: it rebuilds what nobody supplied,
+or it fails, and either way that is a measurement.
 
-**The one case that makes the mode unavailable.** An object carrying a cache
-signature in the staging store was *substituted*, not built here — the
-acceptance test will expect to obtain it rather than produce it. If the
-approved tier cannot supply it either, nobody can, and no build outcome can
-establish the guarantee. That is a distinct verdict, `MODE_UNSUPPORTED`: not a
-red escrow, not a broken harness, an unavailable claim. It can never be `PASS`,
-and `--expect-fail` refuses it as a negative control, because "the mode was
-unavailable" is not "the escrow was incomplete".
-
-An unsigned staging path, by contrast, is one this machine built, so the test
-rebuilding it is the point rather than a hole.
+**What `MODE_UNSUPPORTED` is actually for.** Not "one particular cache lacks
+one particular path" — that is a data condition a real build can resolve by
+building the thing. It is for a claim this harness cannot *model* on these
+inputs, and there is exactly one such case today: the escrow was **preserved**
+for one guarantee and is being **proven** against another. The path sets on
+disk then do not correspond to the claim, so no build outcome would mean what
+the verdict says. It can never be `PASS`, and `--expect-fail` refuses it,
+because "the claim was unavailable" is not "the escrow was incomplete". Test
+`t18` triggers it deterministically.
 
 **What the harness still cannot do.** It cuts all egress rather than filtering
 it, so the approved tier is present as a local replica rather than as the real
-cache. That models "the third party is still up" and models nothing about
-whether the third party is trustworthy — which is why the replica is
-deliberately not part of the escrow, is not archived with it, and is named
-separately in the report. Selective egress is the same missing piece as in §13.
+cache. Its *contents* are now faithful; its *reachability* is still simulated.
+Selective egress is the same missing piece as in §13.
 
 **Why `FULL_AIRGAP_REBUILD` is still only a row in this table.** It needs the
 whole bootstrap source corpus (the 161 in §7) and signing, per §4 row 5:
@@ -716,9 +732,26 @@ acceptance build
 
 The evidence records both ends and which one the test used
 (`replaySource.durableEscrow`, `replaySource.escrowUsedByTest`,
-`replaySource.escrowMode` = `direct` | `materialised`,
-`replaySource.escrowObjects`). A `file://` escrow is used directly; there is
-nothing to copy.
+`replaySource.escrowMode` = `direct` | `materialised`). A `file://` escrow is
+used directly; there is nothing to copy.
+
+**Requested is not the same as reachable.** `nix copy` copies *closures*, so
+"we asked for 53 roots" is not "53 objects arrived", and reporting the size of
+the request as though it were the size of the result is the same genre of
+mistake in a new hat. The stores the test will actually use are therefore
+listed and counted:
+
+```
+REPLAY_OBJECTS_REQUESTED=53
+  REACHABLE_BY_TEST=61  ARRIVED_AS_CLOSURE=8
+  NOT_PROVIDED_BUT_REACHABLE=0
+```
+
+That last line is the one that matters. Under `SOURCE_ORIGIN_INDEPENDENCE` the
+manifest says a set of objects is provided to nobody and the test must rebuild
+them. If a closure copy quietly put one of them next to the build, "it was
+rebuilt" is false and the run demonstrates nothing — so a non-zero
+`notProvidedReachableByTest` is a `FAIL` with that reason, not a footnote.
 
 **What this establishes.** Before isolation: the durable escrow was asked for
 every object and produced every one of them. After isolation: that exact set
@@ -745,17 +778,52 @@ commit it was confirmed on. Every evidence file now carries:
 
 ```json
 "provenance": {
-  "gitCommit": "d920550146...",
-  "gitDirty": false,
+  "toolRevision": "2c50fdebeae397954ace167e06495d1e43a8c73e",
+  "revisionSource": "flake",
+  "workingTreeDirty": false,
   "nixVersion": "nix (Nix) 2.34.7",
   "manifestSha256": "...",
   "closureSha256": "..."
 }
 ```
 
-`gitDirty` counts untracked files as dirty: a stray `lib/*.sh` that `nix flake
-check` never saw is exactly the kind of thing that makes a result
-unreproducible. The report prints `TOOL_COMMIT=<short> (clean|WORKING TREE
-DIRTY)`, so a pasted report block is traceable to a tree, and an acceptance
-verdict is bound to the `manifest.json` it judged rather than to whichever
-manifest happens to be on disk when someone reads it later.
+**Where the revision comes from, and the version of this that did not work.**
+The first attempt ran `git -C "$NSE_ROOT" rev-parse HEAD` and, when that came
+back empty, added `git` to the package's `runtimeDeps`. That fixes nothing.
+`NSE_ROOT` for an installed tool is `/nix/store/…-nix-source-escrow-0.1.0`,
+the `src` filter deliberately drops `.git`, and an immutable store path has no
+working tree to be dirty in the first place. Shipping a `git` binary to read a
+repository that was never packaged is like shipping `cat` for a file you did
+not install. Every `nix run` would have recorded a null revision.
+
+So the revision is **stamped in at build time** from the flake itself
+(`self.rev or self.dirtyRev`), written to
+`$out/share/nix-source-escrow/build-info.json`, and the runtime `git` query
+survives only as the dev-checkout fallback:
+
+| `revisionSource` | revision | `workingTreeDirty` |
+|---|---|---|
+| `flake` | stamped at build time | `false` for a clean flake, `true` for a dirty one, `null` when the source has no VCS info |
+| `git-checkout` | `git rev-parse HEAD` | `true`/`false`, with untracked files counting as dirty |
+| `unknown` / `*-no-revision` | `null` | `null` |
+
+`gitDirty` counting untracked files is deliberate for a checkout: a stray
+`lib/*.sh` that `nix flake check` never saw is exactly the kind of thing that
+makes a result unreproducible. For a packaged build the concept does not apply
+and the field says so.
+
+This distinction is only observable through the **built** package, which is why
+`t19` runs `nix build .#nix-source-escrow` and then asserts on
+`./result/bin/nix-source-escrow`. A test against `$PWD/bin` would have passed
+for the broken version.
+
+One more trap worth naming, because this repository documents it in §6 and then
+walked into it anyway: reading the stamped flag with `jq '.workingTreeDirty //
+null'` returns `null` for a **clean** build, because jq's `//` treats `false`
+as absent. `has()` is the only correct form. Unit test `u11.4d` exists to keep
+it that way.
+
+The report prints `TOOL_COMMIT=<short> [<source>] (clean|WORKING TREE DIRTY)`,
+so a pasted report block is traceable to a tree, and an acceptance verdict is
+bound to the `manifest.json` it judged rather than to whichever manifest
+happens to be on disk when someone reads it later.

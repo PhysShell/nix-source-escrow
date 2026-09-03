@@ -301,24 +301,64 @@ nse_sha256_of() {
   if [ -f "$1" ]; then sha256sum "$1" | cut -d' ' -f1; else printf '\n'; fi
 }
 
-# `gitDirty` counts untracked files too: a stray lib/*.sh that shellcheck never
-# saw is exactly the kind of thing that makes a result unreproducible.
+# Where the revision comes from, in order of authority:
+#
+#   flake       $out/share/nix-source-escrow/build-info.json, stamped in at
+#               build time. An installed /nix/store tree has no .git (the src
+#               filter drops it) and no working tree to be dirty, so asking git
+#               at runtime there returns nothing however many git binaries are
+#               on PATH -- which is what an earlier version of this function
+#               did, and it would have reported `null` for every packaged run.
+#   git         a dev checkout: HEAD plus whether the tree is dirty. Untracked
+#               files count as dirty -- a stray lib/*.sh that `nix flake check`
+#               never saw is exactly what makes a result unreproducible.
+#   unknown     neither. Said out loud rather than guessed.
 nse_provenance() {
   local root=${NSE_ROOT:-$PWD}
-  local commit="" dirty=null
-  if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
-    commit=$(git -C "$root" rev-parse HEAD 2>/dev/null) || commit=""
+  local info=$root/share/nix-source-escrow/build-info.json
+  local rev="" dirty=null source=unknown
+
+  if [ -f "$info" ]; then
+    rev=$(jq -r '.toolRevision // ""' "$info")
+    # `//` treats false as absent, so a clean packaged build would come back
+    # `null` instead of `false`. DESIGN.md §6 warns about exactly this operator
+    # and this function still walked into it.
+    dirty=$(jq -c 'if has("workingTreeDirty") then .workingTreeDirty else null end' "$info")
+    source=$(jq -r '.revisionSource // "flake"' "$info")
+  elif command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+    rev=$(git -C "$root" rev-parse HEAD 2>/dev/null) || rev=""
     if [ -n "$(git -C "$root" status --porcelain 2>/dev/null)" ]; then dirty=true; else dirty=false; fi
+    source=git-checkout
   fi
+  if [ -z "$rev" ] || [ "$rev" = unknown ]; then
+    rev=""
+    if [ "$source" != unknown ]; then source="$source-no-revision"; fi
+  fi
+
   jq -n \
-    --arg commit "$commit" \
+    --arg rev "$rev" \
     --argjson dirty "$dirty" \
+    --arg source "$source" \
     --arg nixVersion "$(nse_nix_version)" \
     --arg manifest "$(nse_sha256_of "${NSE_DIR:-/nonexistent}/manifest.json")" \
     --arg closure  "$(nse_sha256_of "${NSE_DIR:-/nonexistent}/closure.json")" \
-    '{gitCommit:    (if $commit   == "" then null else $commit   end),
-      gitDirty:     $dirty,
-      nixVersion:   $nixVersion,
-      manifestSha256:(if $manifest == "" then null else $manifest end),
-      closureSha256: (if $closure  == "" then null else $closure  end)}'
+    '{toolRevision:   (if $rev == "" then null else $rev end),
+      revisionSource: $source,
+      workingTreeDirty: $dirty,
+      nixVersion:     $nixVersion,
+      manifestSha256: (if $manifest == "" then null else $manifest end),
+      closureSha256:  (if $closure  == "" then null else $closure  end)}'
+}
+
+# stdout: every store path a file:// binary cache actually holds.
+# Used to measure a proof replica rather than assume its contents: `nix copy`
+# copies CLOSURES, so asking for N roots does not mean N objects arrive.
+nse_store_list() {
+  local url=$1
+  nse_url_is_file "$url" || return 0
+  local dir; dir=$(nse_url_file_path "$url")
+  [ -d "$dir" ] || return 0
+  find "$dir" -maxdepth 1 -name '*.narinfo' -print0 2>/dev/null \
+    | xargs -0 -r sed -n 's/^StorePath: //p' 2>/dev/null || :
+  return 0
 }

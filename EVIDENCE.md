@@ -20,7 +20,7 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > `guarantee` object, and every evidence file now carries a `provenance` block.
 > **Re-run before quoting any of this**, and replace the block with the new
 > output. Nothing below has been re-measured on the current
-> code; the shell-level units (`tests/unit-shell.sh`, 64 checks) are the only
+> code; the shell-level units (`tests/unit-shell.sh`, 69 checks) are the only
 > part of this change set with a recorded result, and they pass.
 
 The v0.1.0 run below started by deleting `escrow/` entirely, so the staging
@@ -181,7 +181,7 @@ refuse.
 
 ## Automated tests
 
-`./tests/unit-shell.sh` — **64/64 passed** on the current code (no Nix needed).
+`./tests/unit-shell.sh` — **69/69 passed** on the current code (no Nix needed).
 
 `nix develop -c ./tests/run-tests.sh` — **72/72 passed on v0.1.0**. The suite
 has grown four groups since (`t00`, `t13`, `t14`, `t15`) and **has not been
@@ -206,7 +206,9 @@ re-run on the current code**; do that before quoting a number here.
 | `t14` | a failed isolation setup (a deliberately broken `ip` on `PATH`) yields `HARNESS_ERROR`, names the failed operations, does not blame the escrow, and is refused as a negative control |
 | `t15` | `SOURCE_ORIGIN_INDEPENDENCE` end to end: the binary replica holds exactly what the approved tier supplied and nothing from staging, the three path sets partition the realised closure, `.drv` files are provided to nobody, and an insufficient tier yields `MODE_UNSUPPORTED` rather than a verdict about the escrow |
 | `t16` | a remote escrow (a real HTTP binary cache) is materialised into a local proof replica before isolation, the evidence names both ends, and a `file://` escrow is still used directly |
-| `t17` | every evidence file records the commit that produced it, whether the tree was dirty, and the hash of the manifest it judged |
+| `t17` | every evidence file records the revision that produced it, whether the tree was dirty, and the hash of the manifest it judged |
+| `t18` | proving one guarantee against an escrow preserved for another yields `MODE_UNSUPPORTED`, runs no build, names the mismatch rather than the escrow, and is refused as a negative control |
+| `t19` | the **built package** reports a stamped revision and `revisionSource=flake` — the case a test against `$PWD/bin` cannot see |
 
 Two checks earned their keep during development. `t06`'s content-identity check
 caught a bug in the *test harness* that wrote through a hardlink and corrupted a
@@ -269,6 +271,20 @@ claimed more than the data supported.
 | **P1** | `experiments.sh` mapped `FAIL → REFUTED` unconditionally. With a broken escrow every variant fails, so it would have written a confident `dummyInterfaceStillNeeded: true` that no run supported — the most confident wrong answer this repository could produce. | `E0` is a baseline: if it is not green, `E1`–`E3` are not run and are recorded `INCONCLUSIVE` with the reason. `E3` is `INCONCLUSIVE` unless `E1` and `E2` are each CONFIRMED alone. `HARNESS_ERROR` / `MODE_UNSUPPORTED` are inconclusive, never refutations. The conclusion fields are `null` when unknown instead of guessing. The rules are a pure function, unit-tested by `u10.1`–`u10.14`. |
 | **P1** | Under `SOURCE_ORIGIN_INDEPENDENCE` the post-build presence check still carried the `ESCROW_REPLAY` argument — "the store was empty and nothing was reachable, so it came from the escrow". With two substituters configured, and an approved cache that may well carry source FODs, that no longer follows. | The escrow is asked directly, before isolation, whether it holds every plan-required source; the count is recorded as `sourcesInEscrowBeforeIsolation` and a shortfall is a `FAIL`. This also makes `test-origin-independence` sound standalone instead of quietly depending on someone having run `verify` first. Test `t15.9`. `DESIGN.md` §11. |
 | **P1** | Nothing bound a result to the code that produced it. `E1 = CONFIRMED` two commits later is a rumour. | Every evidence file carries `provenance`: commit, dirty flag (untracked files count), Nix version, and the SHA-256 of the manifest and closure it judged. The report prints `TOOL_COMMIT`. Tests `u11`, `t17`. `DESIGN.md` §14. |
+
+---
+
+## Defects found in the fourth review, and what changed
+
+Three findings, two of them about causal claims the previous change set had
+made without the data to support them.
+
+| | defect | fix |
+|---|---|---|
+| **P0** | Provenance asked `git` at runtime, and the fix for it being empty was to add `git` to `runtimeDeps`. That treats the symptom: `NSE_ROOT` for an installed tool is a `/nix/store` path, the `src` filter deliberately drops `.git`, and an immutable store path has no working tree. Every `nix run` would have recorded a null revision — shipping a `git` binary to read a repository that was never packaged. | The revision is stamped in at build time from the flake (`self.rev or self.dirtyRev`) into `$out/share/nix-source-escrow/build-info.json`; the runtime `git` query survives only as the dev-checkout fallback, and `revisionSource` says which one answered. `workingTreeDirty` is `null` for a packaged build, because the concept does not apply there. Test `t19` asserts it through the **built** package — a test against `$PWD/bin` passes for the broken version. `DESIGN.md` §14. |
+| **P0** | `SOURCE_ORIGIN_INDEPENDENCE` read a cache signature on a staging path as proof the path had been *substituted*, and declared the mode unavailable when the approved tier lacked such a path. A signature is not proof of substitution (Nix signs locally built paths when `secret-key-files` is set), and "the previous staging run chose to download X" says nothing about whether X can be built — the mode already permits a rebuild for everything the tier does not hold. | The heuristic is gone entirely. The tier supplies what it has; everything else is provided to nobody and the acceptance build is the judge of whether it can be produced. `MODE_UNSUPPORTED` is now reserved for a claim the harness cannot *model*: an escrow preserved for one guarantee and proven against another, which test `t18` triggers deterministically. Tests `t15.11`–`t15.16`. `DESIGN.md` §12. |
+| **P1** | `nix copy` copies *closures*, so `escrowObjects: 53` reported the size of the **request**, not the size of the result — and under `SOURCE_ORIGIN_INDEPENDENCE` a closure copy could quietly place a `notProvidedPaths` object next to the build, making "the test rebuilt it" false. | The stores the test will use are listed and counted: `objectsRequested`, `objectsReachableByTest`, `objectsArrivedAsClosure`, and `notProvidedReachableByTest`. A non-zero last field is a `FAIL` with that reason. Tests `t15.17`–`t15.18`. `DESIGN.md` §13. |
+| **P1** | Reading the stamped dirty flag with `jq '.workingTreeDirty // null'` returned `null` for a **clean** build: jq's `//` treats `false` as absent — the exact operator this repository warns about in `DESIGN.md` §6, walked into by the function that was supposed to make results trustworthy. | `has()` instead. Unit test `u11.4d` fails if it comes back. |
 
 ---
 
@@ -381,15 +397,21 @@ Honest list. None of these are hidden behind a green result.
     about that store being reachable during a blackout. A selective harness
     (`nftables`/`pasta` allowlist permitting only the escrow endpoint) would
     prove the stronger thing and is not built.
-21. `MODE_UNSUPPORTED` is reached from one signal: a staging path carrying a
-    cache signature that the approved tier lacks. That correctly catches
-    "substituted here, unavailable there". It does **not** catch a path that
-    staging built locally *and* the test cannot rebuild offline — that still
-    surfaces as an ordinary build failure, with `closure.notProvidedPaths` in
-    the evidence as the first place to look.
-19. The change sets answering the second and third reviews have been
-    **exercised only by `tests/unit-shell.sh`** (64 checks, all passing, no Nix
-    required). The Nix-dependent suite — including the new `t13`–`t17` — has
+21. `MODE_UNSUPPORTED` has exactly one trigger: an escrow preserved for one
+    guarantee and proven against another. Whether the acceptance build can
+    actually produce everything `closure.notProvidedPaths` names is left to the
+    build, and a failure there surfaces as an ordinary `FAIL` — with
+    `notProvidedPaths` in the evidence as the first place to look. That is
+    deliberate: predicting buildability from a signature was the previous
+    version of this gap and it was wrong.
+22. The **contents** of the binary replica are now faithful to the named tier;
+    its **reachability** is still simulated, and the replay audit only measures
+    `file://` stores. Both are honest today only because a materialised proof
+    replica is always local — a future non-file replay target would need the
+    audit extended rather than assumed.
+19. The change sets answering the second, third and fourth reviews have been
+    **exercised only by `tests/unit-shell.sh`** (69 checks, all passing, no Nix
+    required). The Nix-dependent suite — including the new `t13`–`t19` — has
     not been run on this code, because the machine it was written on has no
     Nix. Treat the report block above as a v0.1.0 record until you re-run it.
 
@@ -401,12 +423,16 @@ In the order the value arrives. The first item is not optional: everything
 below it is written but unmeasured.
 
 1. **Re-run everything on a machine with Nix.** `./tests/run-tests.sh`, then
-   `./tests/experiments.sh`, then replace the report block in this file with
-   the new `escrow/evidence/report.txt`. Until then this file documents
-   v0.1.0 and two change sets, not a result. Watch in particular whether
-   `t15` lands in its `sufficient` branch or its `MODE_UNSUPPORTED` branch
-   against `cache.nixos.org` — both are correct behaviour and they say
-   different things about the fixture.
+   `./tests/experiments.sh`, then `nix build .#nix-source-escrow` and
+   `./result/bin/nix-source-escrow --help`, then replace the report block in
+   this file with the new `escrow/evidence/report.txt`. Until then this file
+   documents v0.1.0 and three change sets, not a result. Accept the new
+   evidence only if `provenance.toolRevision` names the tested HEAD and
+   `workingTreeDirty` is `false` — a result measured on a dirty tree is a
+   result about nothing in particular. Watch `t15.18`
+   (`notProvidedReachableByTest`) in particular: if it is non-zero, a closure
+   copy is reaching further than the accounting claims and the "rebuilt inside
+   the test" wording needs revisiting, not the assertion.
 2. **Retire the two workarounds the experiments clear.** If `E1` is CONFIRMED,
    delete the dummy interface and `DESIGN.md` §8. If `E2` is CONFIRMED, make
    `--native-input-restore` the default and demote the manual copy to a
