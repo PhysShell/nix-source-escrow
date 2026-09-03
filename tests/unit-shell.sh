@@ -68,7 +68,7 @@ head_ "u04  batching: no ARG_MAX bomb, no process per path"
 seq 1 1000 | sed 's|^|/nix/store/path-|' > "$TMP/paths.txt"
 : > "$TMP/calls.log"
 # Stand in for `nix`: record one line per invocation and how many paths it got.
-# shellcheck disable=SC2317  # called indirectly, through nse_nix_batched
+# shellcheck disable=SC2317,SC2329  # called indirectly, through nse_nix_batched
 nse_nix() {
   local a n=0
   for a in "$@"; do case $a in /nix/store/*) n=$((n+1)) ;; esac; done
@@ -86,7 +86,7 @@ assert_eq "u04.3 the last batch is the remainder" "232" "$(tail -1 "$TMP/calls.l
 nse_nix_batched "$TMP/empty.txt" copy --to file:///dev/null
 assert_eq "u04.4 an empty set runs nothing at all" "0" "$(wc -l < "$TMP/calls.log")"
 # A failing batch must stop the run rather than reporting success.
-# shellcheck disable=SC2317  # called indirectly, through nse_nix_batched
+# shellcheck disable=SC2317,SC2329  # called indirectly, through nse_nix_batched
 nse_nix() { return 1; }
 rc=0; nse_nix_batched "$TMP/paths.txt" copy --to file:///dev/null || rc=$?
 assert_ne "u04.5 a failing batch is not swallowed" "0" "$rc"

@@ -76,6 +76,9 @@ jobs:
         run: nix flake check --print-build-logs
 
       - name: Acceptance suite (cold, no NSE_TEST_REUSE)
+        # always(): this is an evidence run, not a gate. A lint nit must not
+        # cost a whole cycle of the thing we are actually here to measure.
+        if: always()
         run: nix develop -c ./tests/run-tests.sh
 
       - name: Experiments E0-E3
