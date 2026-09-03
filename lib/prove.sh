@@ -1,9 +1,16 @@
 # shellcheck shell=bash
-# PROVE: the ORIGIN_INDEPENDENCE acceptance test.
+# PROVE: the origin-independence acceptance test.
 #
-# Guarantee under test (A): the accepted build succeeds while every dependency
-# origin is unreachable, using only the escrow. This is NOT the same guarantee
-# as FULL_AIRGAP_REBUILD -- see DESIGN.md.
+# Two named guarantees, from the same harness (DESIGN.md §12):
+#
+#   ESCROW_REPLAY               the accepted build succeeds with every origin
+#                               AND every third-party binary cache unreachable,
+#                               using only the escrow.
+#   SOURCE_ORIGIN_INDEPENDENCE  the accepted build succeeds with every source
+#                               origin unreachable, given the approved binary
+#                               tier is still available.
+#
+# Neither is FULL_AIRGAP_REBUILD -- see DESIGN.md §9.
 
 # Hosts we actively probe and report on. Isolation is a network namespace with
 # no route anywhere, so this list documents what we *checked*, not what we
@@ -23,6 +30,32 @@ nse_resolve_probe_hosts() {
   printf '%s\n' "${out# }"
 }
 
+# What each guarantee claims, and what it does not. Written into the evidence
+# so the report prints a recorded string rather than a hardcoded one.
+nse_guarantee_name() {
+  case $NSE_GUARANTEE in
+    escrow-replay)              printf 'ESCROW_REPLAY\n' ;;
+    source-origin-independence) printf 'SOURCE_ORIGIN_INDEPENDENCE\n' ;;
+    *) nse_die "unknown guarantee '$NSE_GUARANTEE'" ;;
+  esac
+}
+nse_guarantee_proves() {
+  case $NSE_GUARANTEE in
+    escrow-replay)
+      printf 'the accepted build completes with every dependency origin and every third-party binary cache unreachable, from an empty store, using only the escrow\n' ;;
+    source-origin-independence)
+      printf 'the accepted build completes with every dependency origin unreachable, from an empty store, using the escrow for source material and the approved binary tier for prebuilt objects\n' ;;
+  esac
+}
+nse_guarantee_excludes() {
+  case $NSE_GUARANTEE in
+    escrow-replay)
+      printf 'FULL_AIRGAP_REBUILD: the escrow holds prebuilt binaries that came from cache.nixos.org, so this does not show the graph can be rebuilt from source alone\n' ;;
+    source-origin-independence)
+      printf 'independence from the binary tier: the prebuilt objects came from a replica of an approved cache, so a loss of that cache is NOT covered. That claim is ESCROW_REPLAY\n' ;;
+  esac
+}
+
 nse_prove() {
   local expect=${1:-pass}
   local manifest=$NSE_DIR/manifest.json
@@ -32,7 +65,7 @@ nse_prove() {
   [ -f "$manifest" ] || nse_die "no manifest.json; run 'nix-source-escrow preserve' first"
   mkdir -p "$work" "$NSE_DIR/evidence"
 
-  nse_step "ORIGIN_INDEPENDENCE acceptance test (expect=$expect)"
+  nse_step "$(nse_guarantee_name) acceptance test (expect=$expect)"
   nse_require_cmd unshare ip curl getent awk
 
   # ---- clean, controlled state --------------------------------------------
@@ -49,9 +82,18 @@ nse_prove() {
 
   rm -f "$work/prove-result.json"
 
+  # The substituter list the test allows. Under ESCROW_REPLAY that is the
+  # escrow and nothing else; under SOURCE_ORIGIN_INDEPENDENCE it is the escrow
+  # plus the approved binary tier, and the verdict says so out loud.
+  local substituters=$NSE_SUBSTITUTER_URL
+  if [ "$NSE_GUARANTEE" = source-origin-independence ]; then
+    substituters="$NSE_SUBSTITUTER_URL $NSE_REPLICA_URL"
+  fi
+
   local envf=$work/prove-env.sh
   {
-    printf 'NSE_CACHE=%q\n'        "$NSE_CACHE"
+    printf 'NSE_SUBSTITUTERS=%q\n' "$substituters"
+    printf 'NSE_ESCROW_SUBSTITUTER=%q\n' "$NSE_SUBSTITUTER_URL"
     printf 'NSE_TESTSTORE=%q\n'    "$teststore"
     printf 'NSE_TESTHOME=%q\n'     "$testhome"
     printf 'NSE_INSTALLABLE=%q\n'  "$NSE_INSTALLABLE"
@@ -60,6 +102,10 @@ nse_prove() {
     printf 'NSE_PROBE_IPS=%q\n'    "$(nse_resolve_probe_hosts)"
     printf 'NSE_PWD=%q\n'          "$PWD"
     printf "NSE_TRUSTED_KEYS=%q\n" "${NSE_TRUSTED_KEYS:-cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=}"
+    printf "NSE_EXTRA_NIX_CONFIG=%q\n" "${NSE_EXTRA_NIX_CONFIG:-}"
+    printf "NSE_DUMMY_IFACE=%q\n"  "${NSE_DUMMY_IFACE:-1}"
+    printf "NSE_INPUT_RESTORE=%q\n" "${NSE_INPUT_RESTORE:-manual}"
+    printf "NSE_GUARANTEE_NAME=%q\n" "$(nse_guarantee_name)"
     printf "NSE_ISOLATION_MODE=%q\n" "$([ "${NSE_NO_ISOLATION:-0}" = 1 ] && echo none || echo namespaces)"
   } > "$envf"
 
@@ -82,10 +128,14 @@ nse_prove() {
     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg isolation "$isolation" \
     --arg expect "$expect" \
+    --arg gName "$(nse_guarantee_name)" \
+    --arg gProves "$(nse_guarantee_proves)" \
+    --arg gExcludes "$(nse_guarantee_excludes)" \
     --argjson runnerExit "$rc" \
     --slurpfile r "$work/prove-result.json" \
-    '$r[0] + {schemaVersion:1, kind:"origin-independence", timestamp:$ts,
-              isolation:$isolation, expectation:$expect, runnerExit:$runnerExit}' \
+    '$r[0] + {schemaVersion:2, kind:"origin-independence", timestamp:$ts,
+              isolation:$isolation, expectation:$expect, runnerExit:$runnerExit,
+              guarantee:{name:$gName, proves:$gProves, doesNotProve:$gExcludes}}' \
     | nse_json_canonical | nse_write_file "$NSE_DIR/evidence/origin-independence.json"
 
   nse_prove_report "$NSE_DIR/evidence/origin-independence.json" "$expect"
@@ -103,16 +153,20 @@ nse_prove_report() {
   local f=$1 expect=$2
   local result; result=$(jq -r '.result' "$f")
 
-  # Report only what was demonstrated. "BLOCKED" lists hosts proven unreachable
-  # by both probes -- never the hosts we merely intended to block.
+  # Report only what was demonstrated. "PROVEN_UNREACHABLE" lists hosts shown
+  # unreachable by both probes -- never the hosts we merely intended to block.
   jq -r '
+    "GUARANTEE=" + (.guarantee.name // "unknown"),
     "NETWORK_ISOLATION=" + .isolation,
     "ISOLATION_MODE=" + .isolationMode,
+    "ISOLATION_SETUP=" + (.isolationSetup // "not recorded"),
+    "DUMMY_INTERFACE=" + (.dummyInterface // "not recorded"),
     "NSS_ISOLATION=" + .nssIsolation,
     "ORIGIN_HOSTS_PROVEN_UNREACHABLE=" + ((.originHostsProvenUnreachable|join(",")) | if .=="" then "none" else . end),
     "ORIGIN_HOSTS_REACHABLE=" + ((.originHostsReachable|join(",")) | if .=="" then "none" else . end),
     "CACHE_NIXOS_ORG_ALLOWED=" + ([.connectivity[]|select(.host=="cache.nixos.org")|(.reachableByName or .reachableByAddress)]|first|tostring),
-    "SUBSTITUTERS_ONLY_ESCROW=" + (.substitutersOnlyEscrow|tostring),
+    "SUBSTITUTERS_AS_CONFIGURED=" + (.substitutersAsExpected|tostring),
+    "FLAKE_INPUT_RESTORE=" + (.flakeInputRestore // "not recorded"),
     "OFFLINE_EVAL_PROBE=" + .offlineEvalProbe,
     "REQUIRED_SOURCES_RESTORED=\(.sourcesRestored)/\(.sourcesRequired)",
     "HTTP_FETCHES_IN_BUILD_LOG=\(.httpFetchesInBuildLog)",
@@ -126,8 +180,9 @@ nse_prove_report() {
     pass)
       [ "$result" = PASS ] || return 1 ;;
     fail)
-      # A negative control must fail *for the right reason*. NOT_ISOLATED is a
-      # broken harness, not a demonstration that the escrow was incomplete.
+      # A negative control must fail *for the right reason*. NOT_ISOLATED and
+      # HARNESS_ERROR are broken harnesses, not demonstrations that the escrow
+      # was incomplete.
       if [ "$result" = PASS ]; then
         printf 'NEGATIVE_CONTROL=FAIL (the build succeeded although the escrow was incomplete)\n'
         return 1
@@ -145,19 +200,38 @@ nse_write_inner_script() {
   cat > "$1" <<'INNER'
 #!/usr/bin/env bash
 # Runs inside the isolated namespaces. Everything it touches is either the
-# escrow (a plain directory) or a store it created itself.
+# escrow (a substituter) or a store it created itself.
 set -uo pipefail
 # shellcheck disable=SC1090
 . "$1"
+
+: > "$NSE_WORK/prove-setup.log"
+
+# Every setup operation is checked. A harness that half-applied its isolation
+# must say so: an unchecked `ip link add` that fails turns into a build failure
+# three steps later, attributed to the escrow, which is a lie.
+isolation_setup=ok
+setup_failures=""
+require_setup() {
+  local label=$1; shift
+  if "$@" >>"$NSE_WORK/prove-setup.log" 2>&1; then return 0; fi
+  printf 'SETUP FAILED: %s (%s)\n' "$label" "$*" >> "$NSE_WORK/prove-setup.log"
+  setup_failures="${setup_failures:+$setup_failures,}$label"
+  isolation_setup=failed
+  return 1
+}
 
 # ---- 1. mount isolation --------------------------------------------------
 # glibc NSS reaches nscd/nsncd over a *unix socket*, which a network namespace
 # does not isolate; without this, name resolution inside the namespace is still
 # answered by the host. It cannot move bytes, but we would rather not have to
-# argue about that in the evidence.
+# argue about that in the evidence. NSS isolation is graded (full/partial), not
+# fatal -- the by-address probes are what carry the argument.
 nss_isolation=full
+dummy_interface=absent
 if [ "$NSE_ISOLATION_MODE" = none ]; then
   nss_isolation=none
+  isolation_setup=skipped
 else
   mount --make-rprivate / 2>/dev/null || nss_isolation=partial
   for d in /run/nscd /var/run/nscd; do
@@ -169,15 +243,22 @@ else
   mount --bind /tmp/nse-empty-resolv.conf /etc/resolv.conf 2>/dev/null || nss_isolation=partial
 
   # ---- 2. network isolation ----------------------------------------------
-  # Loopback, plus a dummy device whose default route points at an address that
-  # does not exist. The dummy device exists for exactly one reason: Nix 2.34
-  # disables *all* substituters -- including purely local file:// ones -- when
-  # it decides the machine has no Internet access. See DESIGN.md.
-  ip link set lo up
-  ip link add dummy0 type dummy
-  ip addr add 10.99.0.1/24 dev dummy0
-  ip link set dummy0 up
-  ip route add default via 10.99.0.254 dev dummy0
+  # Loopback always. The dummy device is a workaround for one Nix behaviour:
+  # Nix 2.34 disables *all* substituters -- including purely local file:// ones
+  # -- when it decides the machine has no Internet access, unless `substitute`
+  # is an explicit override. We now set `substitute = true` in NIX_CONFIG
+  # below, which by the reading of src/nix/main.cc should make the dummy
+  # unnecessary; NSE_DUMMY_IFACE=0 runs the experiment that settles it.
+  # See DESIGN.md §8 and tests/experiments.sh.
+  require_setup lo-up ip link set lo up
+  if [ "${NSE_DUMMY_IFACE:-1}" = 1 ]; then
+    if require_setup dummy-add   ip link add dummy0 type dummy \
+    && require_setup dummy-addr  ip addr add 10.99.0.1/24 dev dummy0 \
+    && require_setup dummy-up    ip link set dummy0 up \
+    && require_setup dummy-route ip route add default via 10.99.0.254 dev dummy0; then
+      dummy_interface=present
+    fi
+  fi
 fi
 
 # ---- 3. record what is actually reachable --------------------------------
@@ -227,8 +308,11 @@ unresolved_origins=$(jq -r '[.[]|select(.role=="origin" and .preResolvedAddress=
 
 export HOME="$NSE_TESTHOME"
 export XDG_CACHE_HOME="$NSE_TESTHOME/.cache"
+# `substitute = true` is set on purpose and is load-bearing: Nix only
+# auto-disables substitution when that setting is NOT an explicit override.
 export NIX_CONFIG="experimental-features = nix-command flakes
-substituters = file://$NSE_CACHE
+substitute = true
+substituters = $NSE_SUBSTITUTERS
 trusted-substituters =
 trusted-public-keys = $NSE_TRUSTED_KEYS
 require-sigs = true
@@ -236,15 +320,17 @@ flake-registry =
 warn-dirty = false
 build-users-group =
 require-drop-supplementary-groups = false
+${NSE_EXTRA_NIX_CONFIG:-}
 "
 
 cd "$NSE_PWD" || { printf 'prove: cannot cd to %s\n' "$NSE_PWD" >&2; exit 90; }
 
-# The escrow must be the ONLY substituter. If anything else were configured, a
-# green build would not tell us where the sources came from.
+# The configured substituters must be exactly the ones this guarantee allows.
+# If anything else were configured, a green build would not tell us where the
+# sources came from. Compared as a set, so ordering is not a failure.
 effective_substituters=$(nix config show substituters 2>/dev/null | tr -s ' ')
-expected_substituters="file://$NSE_CACHE"
-if [ "$effective_substituters" = "$expected_substituters" ]; then
+norm() { printf '%s\n' "$1" | tr ' ' '\n' | sed '/^$/d' | LC_ALL=C sort | paste -sd' ' -; }
+if [ "$(norm "$effective_substituters")" = "$(norm "$NSE_SUBSTITUTERS")" ]; then
   substituters_ok=true
 else
   substituters_ok=false
@@ -253,19 +339,27 @@ fi
 reason=""
 step=""
 
-# ---- 4. restore flake input material from the escrow ---------------------
-# A locked flake input is re-fetched from its origin unless the store already
-# holds it: Nix derives the expected store path from the narHash in the lock
-# and uses it when it is valid. This is the escrow RECOVER step, done offline.
+# ---- 4. flake input material ---------------------------------------------
+# Two modes, because which one is used changes what the test proves.
+#
+#   manual  copy the locked input paths out of the escrow ourselves. Proves the
+#           escrow holds them; does NOT prove a stock consumer gets them.
+#   native  do nothing, and let Nix substitute the locked input itself.
+#           Input::getAccessorUnchecked computes the store path from the lock's
+#           narHash and calls ensurePath, so a configured substituter should be
+#           enough. That is the claim the primary path ought to be making.
+flake_input_restore=$NSE_INPUT_RESTORE
 step=restore-flake-inputs
-mapfile -t inputs < <(jq -r '.flakeInputs[] | select(.escrow.present) | .storePath' "$NSE_MANIFEST")
 restore_rc=0
-if [ "${#inputs[@]}" -gt 0 ]; then
-  nix copy --from "file://$NSE_CACHE" --to "$NSE_TESTSTORE" "${inputs[@]}" \
-    > "$NSE_WORK/prove-restore.log" 2>&1
-  restore_rc=$?
+if [ "$NSE_INPUT_RESTORE" = manual ]; then
+  mapfile -t inputs < <(jq -r '.flakeInputs[] | select(.escrow.present) | .storePath' "$NSE_MANIFEST")
+  if [ "${#inputs[@]}" -gt 0 ]; then
+    nix copy --from "$NSE_ESCROW_SUBSTITUTER" --to "$NSE_TESTSTORE" "${inputs[@]}" \
+      > "$NSE_WORK/prove-restore.log" 2>&1
+    restore_rc=$?
+  fi
+  [ "$restore_rc" -eq 0 ] || reason="flake input restore from the escrow failed (see prove-restore.log)"
 fi
-[ "$restore_rc" -eq 0 ] || reason="flake input restore from the escrow failed (see prove-restore.log)"
 
 # ---- 5. offline evaluation probe -----------------------------------------
 # This is the ONLY thing that can cover eval-time fetches. builtins.fetchTarball
@@ -279,7 +373,7 @@ if [ -z "$reason" ]; then
   nix path-info --derivation --store "$NSE_TESTSTORE" "$NSE_INSTALLABLE" \
     > "$NSE_WORK/prove-eval.log" 2>&1
   eval_rc=$?
-  [ "$eval_rc" -eq 0 ] || reason="evaluation failed offline; an eval-time fetch is not covered by the escrow (see prove-eval.log)"
+  [ "$eval_rc" -eq 0 ] || reason="evaluation failed offline; an eval-time fetch or flake input is not covered by the escrow (see prove-eval.log)"
 fi
 
 # ---- 6. the build --------------------------------------------------------
@@ -295,16 +389,24 @@ fi
 
 # ---- 7. did the sources really come from the escrow? ---------------------
 # The store started empty and nothing was reachable, so a valid source path in
-# the test store can only have come from the escrow.
+# the test store can only have come from the escrow. One query for the whole
+# set; the per-path loop is only the fallback for a batch Nix refuses.
 step=post-checks
-required=0; restored=0
-while IFS= read -r p; do
-  [ -n "$p" ] || continue
-  required=$((required + 1))
-  if nix path-info --store "$NSE_TESTSTORE" "$p" >/dev/null 2>&1; then
-    restored=$((restored + 1))
+mapfile -t required_paths < <(jq -r '.sources[] | select(.plan.requiredByPlan) | .storePath' "$NSE_MANIFEST")
+required=${#required_paths[@]}
+restored=0
+if [ "$required" -gt 0 ]; then
+  if present=$(nix path-info --store "$NSE_TESTSTORE" --json "${required_paths[@]}" 2>/dev/null); then
+    restored=$(printf '%s\n' "$present" \
+               | jq -r 'if type=="array" then length else (keys|length) end')
+  else
+    for p in "${required_paths[@]}"; do
+      if nix path-info --store "$NSE_TESTSTORE" "$p" >/dev/null 2>&1; then
+        restored=$((restored + 1))
+      fi
+    done
   fi
-done < <(jq -r '.sources[] | select(.plan.requiredByPlan) | .storePath' "$NSE_MANIFEST")
+fi
 
 expected_out=$(jq -r '.expectedOutputs[0] // ""' "$NSE_MANIFEST")
 
@@ -320,7 +422,8 @@ out_matches=false
 # Order matters. The environmental preconditions are checked BEFORE the build
 # outcome, because a build that succeeds while GitHub is reachable proves
 # nothing at all -- and reporting it as PASS is exactly the failure mode this
-# ordering exists to prevent.
+# ordering exists to prevent. A half-applied harness is its own verdict, so it
+# can never be mistaken for evidence about the escrow.
 result=FAIL
 if [ "$NSE_ISOLATION_MODE" = none ]; then
   result=NOT_ISOLATED
@@ -331,9 +434,17 @@ elif [ "$reachable_origins" -ne 0 ]; then
 elif [ "$unresolved_origins" -ne 0 ]; then
   result=FAIL
   reason="$unresolved_origins origin host(s) could not be resolved before isolation, so their unreachability is unproven"
+elif [ "$isolation_setup" = failed ]; then
+  # Measured reachability comes first because it is the more specific finding:
+  # a reachable origin invalidates the run whatever the cause. Reaching HERE
+  # means nothing was reachable *and* the harness was half-applied -- which is
+  # the case that used to be indistinguishable from an incomplete escrow, and
+  # got reported as "build failed under origin blackout".
+  result=HARNESS_ERROR
+  reason="isolation setup failed ($setup_failures); the environment was not the one this test claims to run in, so no conclusion about the escrow is available (see prove-setup.log)"
 elif [ "$substituters_ok" != true ]; then
   result=FAIL
-  reason="substituters were '$effective_substituters', expected only '$expected_substituters'"
+  reason="substituters were '$effective_substituters', expected exactly '$NSE_SUBSTITUTERS'"
 elif [ -n "$reason" ]; then
   result=FAIL
 elif [ "$build_rc" -eq 0 ] && [ "$eval_rc" -eq 0 ] \
@@ -357,6 +468,11 @@ jq -n \
   --arg result "$result" --arg reason "$reason" --arg step "$step" \
   --arg built "$built" --arg expected "$expected_out" \
   --arg isolationMode "$NSE_ISOLATION_MODE" \
+  --arg isolationSetup "$isolation_setup" \
+  --arg setupFailures "$setup_failures" \
+  --arg dummyInterface "$dummy_interface" \
+  --arg flakeInputRestore "$flake_input_restore" \
+  --arg guaranteeName "$NSE_GUARANTEE_NAME" \
   --argjson buildRc "$build_rc" --argjson restoreRc "$restore_rc" --argjson evalRc "$eval_rc" \
   --argjson required "$required" --argjson restored "$restored" \
   --argjson httpFetches "$net_lines" \
@@ -365,10 +481,17 @@ jq -n \
   --argjson unresolvedOrigins "$unresolved_origins" \
   --argjson substitutersOk "$substituters_ok" \
   --arg substituters "$effective_substituters" \
+  --arg expectedSubstituters "$NSE_SUBSTITUTERS" \
+  --arg escrowSubstituter "$NSE_ESCROW_SUBSTITUTER" \
   --arg nss "$nss_isolation" \
   --slurpfile conn "$NSE_WORK/prove-connectivity.json" \
   '{result:$result, reason:(if $reason=="" then null else $reason end), failedStep:$step,
     isolationMode:$isolationMode,
+    isolationSetup:$isolationSetup,
+    isolationSetupFailures:(if $setupFailures=="" then [] else ($setupFailures|split(",")) end),
+    dummyInterface:$dummyInterface,
+    flakeInputRestore:$flakeInputRestore,
+    guaranteeName:$guaranteeName,
     builtOutput:$built, expectedOutput:$expected, outputMatches:$outMatches,
     buildExit:$buildRc, restoreExit:$restoreRc, offlineEvalExit:$evalRc,
     offlineEvalProbe:(if $evalRc == 0 then "clean" else "failed" end),
@@ -376,7 +499,11 @@ jq -n \
     httpFetchesInBuildLog:$httpFetches,
     reachableOriginCount:$reachableOrigins,
     unresolvedOriginCount:$unresolvedOrigins,
-    substitutersOnlyEscrow:$substitutersOk, effectiveSubstituters:$substituters,
+    substitutersAsExpected:$substitutersOk,
+    effectiveSubstituters:$substituters,
+    expectedSubstituters:$expectedSubstituters,
+    escrowSubstituter:$escrowSubstituter,
+    substitutersOnlyEscrow:($substitutersOk and ($expectedSubstituters == $escrowSubstituter)),
     originHostsProvenUnreachable:
       ([$conn[0][]|select(.role=="origin" and .reachableByName==false and .reachableByAddress==false)|.host]),
     originHostsReachable:

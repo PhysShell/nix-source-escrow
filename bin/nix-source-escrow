@@ -4,7 +4,8 @@
 # control, and prove with a test that the build survives the death of their
 # origins.
 #
-# v0.1 guarantee: ORIGIN_INDEPENDENCE. See README.md and DESIGN.md.
+# Guarantees: ESCROW_REPLAY (default) and SOURCE_ORIGIN_INDEPENDENCE.
+# See README.md and DESIGN.md.
 
 set -euo pipefail
 
@@ -42,15 +43,45 @@ commands:
   report                          print the evidence report
   escrow   <installable>          discover + preserve + verify + test + report
 
-options:
-  --escrow-dir DIR    escrow location (default: ./escrow, or $NSE_DIR)
-  --compression C     binary-cache compression: zstd|xz|none (default: zstd)
-  --fresh-staging     wipe the staging store before preserving
-  --expect-fail       for test-origin-independence: assert the build FAILS
-                      (negative control for a deliberately incomplete escrow)
-  --no-isolation      run the acceptance build without namespaces (debug only;
-                      the result is marked as a control run, not an acceptance)
-  -h, --help          this text
+escrow location (a URL, not necessarily a directory):
+  --escrow-dir DIR        local escrow root (default: ./escrow, or $NSE_DIR).
+                          Sets the default store/substituter URLs below.
+  --escrow-store URL      where PRESERVE writes: file://, s3://, ssh-ng://, or
+                          any Nix store URL. An Attic / S3 / Artifactory Nix
+                          repository is a first-class target.
+  --escrow-substituter URL  what VERIFY and PROVE read from
+                          (default: the store URL without its query string)
+  --binary-replica URL    SOURCE_ORIGIN_INDEPENDENCE only: the store standing
+                          in for your approved binary tier
+                          (default: file://<escrow-dir>/replica)
+  --compression C         binary-cache compression: zstd|xz|none (default: zstd)
+
+guarantee:
+  --guarantee NAME        escrow-replay (default)
+                            escrow the whole realised closure; the acceptance
+                            test allows the escrow and nothing else.
+                          source-origin-independence
+                            escrow source material only; the acceptance test
+                            also allows the binary replica. Cheaper, weaker,
+                            and named so nobody confuses the two.
+
+acceptance test:
+  --expect-fail           assert the build FAILS (negative control for a
+                          deliberately incomplete escrow)
+  --no-isolation          run without namespaces (debug only; the result is
+                          marked a control run, never an acceptance)
+  --no-dummy-interface    do not create the dummy route-to-nowhere interface
+                          (experiment: see DESIGN.md §8)
+  --native-input-restore  do not pre-copy flake inputs; make Nix substitute
+                          them itself, the way a real consumer would
+
+other:
+  --staging-dir DIR       the controlled store PRESERVE builds into
+                          (default: <escrow-dir>/work/staging). Point several
+                          escrows at one staging store and the closure is
+                          fetched once, not once per escrow.
+  --fresh-staging         wipe the staging store before preserving
+  -h, --help              this text
 
 exit status: 0 on success, 1 on a failed check, 2 on usage error.
 USAGE
@@ -60,8 +91,15 @@ NSE_DIR=${NSE_DIR:-$PWD/escrow}
 NSE_COMPRESSION=${NSE_COMPRESSION:-zstd}
 NSE_FRESH_STAGING=0
 NSE_NO_ISOLATION=0
+nse_staging_opt=${NSE_STAGING:-}
 NSE_EXPECT=pass
 NSE_INSTALLABLE=""
+NSE_GUARANTEE=${NSE_GUARANTEE:-escrow-replay}
+NSE_DUMMY_IFACE=${NSE_DUMMY_IFACE:-1}
+NSE_INPUT_RESTORE=${NSE_INPUT_RESTORE:-manual}
+nse_store_url_opt=${NSE_STORE_URL:-}
+nse_substituter_opt=${NSE_SUBSTITUTER_URL:-}
+nse_replica_opt=${NSE_REPLICA_URL:-}
 
 [ $# -ge 1 ] || { usage; exit 2; }
 case $1 in
@@ -69,17 +107,32 @@ case $1 in
 esac
 cmd=$1; shift
 
+need_value() {
+  [ "$1" -ge 2 ] || { printf 'nix-source-escrow: %s needs a value\n' "$2" >&2; exit 2; }
+}
+
 while [ $# -gt 0 ]; do
   case $1 in
-    --escrow-dir) [ $# -ge 2 ] || { printf 'nix-source-escrow: --escrow-dir needs a value\n' >&2; exit 2; }
-                  NSE_DIR=$(nse_abspath "$2"); shift 2 ;;
-    --compression) [ $# -ge 2 ] || { printf 'nix-source-escrow: --compression needs a value\n' >&2; exit 2; }
+    --escrow-dir) need_value $# "$1"; NSE_DIR=$(nse_abspath "$2"); shift 2 ;;
+    --escrow-store) need_value $# "$1"; nse_store_url_opt=$2; shift 2 ;;
+    --escrow-substituter) need_value $# "$1"; nse_substituter_opt=$2; shift 2 ;;
+    --binary-replica) need_value $# "$1"; nse_replica_opt=$2; shift 2 ;;
+    --guarantee) need_value $# "$1"
+                 case $2 in
+                   escrow-replay|source-origin-independence) NSE_GUARANTEE=$2 ;;
+                   *) printf 'nix-source-escrow: unknown guarantee %s\n' "$2" >&2; exit 2 ;;
+                 esac
+                 shift 2 ;;
+    --compression) need_value $# "$1"
                   case $2 in zstd|xz|none) NSE_COMPRESSION=$2 ;;
                     *) printf 'nix-source-escrow: unsupported compression %s\n' "$2" >&2; exit 2 ;; esac
                   shift 2 ;;
+    --staging-dir) need_value $# "$1"; nse_staging_opt=$(nse_abspath "$2"); shift 2 ;;
     --fresh-staging) NSE_FRESH_STAGING=1; shift ;;
     --expect-fail)   NSE_EXPECT=fail; shift ;;
     --no-isolation)  NSE_NO_ISOLATION=1; shift ;;
+    --no-dummy-interface) NSE_DUMMY_IFACE=0; shift ;;
+    --native-input-restore) NSE_INPUT_RESTORE=native; shift ;;
     -h|--help) usage; exit 0 ;;
     --*) printf 'nix-source-escrow: unknown option %s\n' "$1" >&2; usage; exit 2 ;;
     *) if [ -z "$NSE_INSTALLABLE" ]; then NSE_INSTALLABLE=$1; shift
@@ -89,7 +142,17 @@ done
 
 NSE_DIR=$(nse_abspath "$NSE_DIR")
 NSE_CACHE=$NSE_DIR/cache
-export NSE_DIR NSE_CACHE NSE_COMPRESSION NSE_FRESH_STAGING NSE_NO_ISOLATION NSE_INSTALLABLE
+
+# The local file:// cache is the default backend and the demo backend. It is
+# not the only one: every stage addresses the escrow through these URLs.
+NSE_STORE_URL=${nse_store_url_opt:-$(nse_default_store_url)}
+NSE_SUBSTITUTER_URL=${nse_substituter_opt:-$(nse_url_strip_query "$NSE_STORE_URL")}
+NSE_REPLICA_URL=${nse_replica_opt:-file://$NSE_DIR/replica}
+NSE_STAGING=${nse_staging_opt:-$NSE_DIR/work/staging}
+
+export NSE_DIR NSE_CACHE NSE_COMPRESSION NSE_FRESH_STAGING NSE_NO_ISOLATION \
+       NSE_INSTALLABLE NSE_STORE_URL NSE_SUBSTITUTER_URL NSE_REPLICA_URL \
+       NSE_GUARANTEE NSE_DUMMY_IFACE NSE_INPUT_RESTORE NSE_STAGING
 
 nse_require_cmd nix jq
 
@@ -108,16 +171,6 @@ case $cmd in
   trust-probe) nse_trust_probe ;;
   test-origin-independence) need_installable; nse_prove "$NSE_EXPECT" ;;
   report)   nse_report ;;
-  escrow)
-    need_installable
-    nse_env
-    nse_discover
-    nse_preserve
-    nse_verify
-    nse_trust_probe
-    nse_prove "$NSE_EXPECT"
-    nse_step "EVIDENCE REPORT"
-    nse_report
-    ;;
+  escrow)   need_installable; nse_escrow_pipeline ;;
   *) printf 'nix-source-escrow: unknown command %s\n' "$cmd" >&2; usage; exit 2 ;;
 esac

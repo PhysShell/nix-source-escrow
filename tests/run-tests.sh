@@ -37,6 +37,16 @@ command -v nix >/dev/null || { echo "tests: nix not on PATH" >&2; exit 2; }
 # Store paths are 0555; a plain rm -rf on a store tree fails.
 rm_store() { [ -e "$1" ] || return 0; chmod -R u+w "$1" 2>/dev/null || :; rm -rf "$1"; }
 
+# Would `--expect-fail` accept this result as a valid negative control?
+# Echoes the exit status nse_prove_report would return. Only a genuine FAIL
+# counts: NOT_ISOLATED and HARNESS_ERROR are broken harnesses.
+nse_expect_fail_rc() {
+  case "$(jq -r '.result' "$1")" in
+    FAIL) printf '0\n' ;;
+    *)    printf '1\n' ;;
+  esac
+}
+
 # A full copy of the escrow, so a deliberately damaged variant can never write
 # back into the real one. Hardlinking here would be faster and was tried; a
 # `sed ... > file` writes *through* a hardlink and silently corrupts the
@@ -64,6 +74,16 @@ drop_object() {
   return 0
 }
 
+mkdir -p "$ESCROW"
+
+# ---------------------------------------------------------------------------
+head_ "t00  shell-level units (no Nix, no network, no namespaces)"
+if "$ROOT/tests/unit-shell.sh" > "$ESCROW/unit-shell.log" 2>&1; then
+  ok "t00.1 tests/unit-shell.sh passes ($(grep -c 'PASS' "$ESCROW/unit-shell.log") checks)"
+else
+  bad "t00.1 tests/unit-shell.sh" "see $ESCROW/unit-shell.log"
+fi
+
 # ---------------------------------------------------------------------------
 head_ "setup: build the reference escrow"
 if [ "${NSE_TEST_REUSE:-0}" = 1 ] && [ -f "$ESCROW/manifest.json" ]; then
@@ -72,6 +92,7 @@ else
   "$NSE" discover "$FIXTURE" >/dev/null
   "$NSE" preserve "$FIXTURE" >/dev/null
 fi
+"$NSE" env >/dev/null
 mkdir -p "$WORK"
 
 MANIFEST=$ESCROW/manifest.json
@@ -122,6 +143,15 @@ assert_eq "t02.4 manifest records the expected build output" \
   "1" "$(jq -r '.expectedOutputs|length' "$MANIFEST")"
 assert_eq "t02.5 manifest carries no timestamp (canonical, not probe data)" \
   "false" "$(jq -r '[paths|map(tostring)|join(".")]|any(test("timestamp";"i"))' "$MANIFEST")"
+assert_eq "t02.6 manifest names the guarantee it was built for" \
+  "escrow-replay" "$(jq -r '.guarantee' "$MANIFEST")"
+assert_eq "t02.7 the escrow is addressed by URL, and the backend is derived from it" \
+  "local-file-binary-cache true" \
+  "$(jq -r '"\(.escrow.backend) \((.escrow.storeUrl|startswith("file://")) and (.escrow.substituterUrl|startswith("file://")))"' "$MANIFEST")"
+assert_eq "t02.8 under ESCROW_REPLAY there is no binary replica" \
+  "null" "$(jq -r '.escrow.binaryReplicaUrl' "$MANIFEST")"
+assert_eq "t02.9 closure.json splits escrow from replica" \
+  "true" "$(jq -r '(.escrowPaths|length) == (.paths|length) and ((.replicaPaths|length) == 0)' "$ESCROW/closure.json")"
 
 # ---------------------------------------------------------------------------
 head_ "t03  preservation"
@@ -327,6 +357,93 @@ assert_eq "t11.4 github.com was unreachable by name AND by address during t07" \
   "1" "$(jq -r '[.connectivity[]|select(.host=="github.com" and .reachableByName==false and .reachableByAddress==false)]|length' "$OI")"
 assert_eq "t11.5 every input store path, transitive ones included, is in the escrow" \
   "true" "$(jq -r "([.flakeInputs[]|select(.escrow.present)]|length) == .counts.flakeInputs and .counts.flakeInputs > 0" "$MANIFEST")"
+
+# ---------------------------------------------------------------------------
+head_ "t13  the report states what was measured, including the machine"
+# The bug: `HOST=Windows 11` was a literal in lib/report.sh, printed on every
+# machine, in a tool whose stated rule is that the report says what was
+# demonstrated. It even reached EVIDENCE.md as a measured fact.
+"$NSE" report >"$WORK/report.log" 2>&1
+REPORT=$ESCROW/evidence/report.txt
+ENVJ=$ESCROW/evidence/environment.json
+assert_ne "t13.1 the recorded host is not the old hardcoded string" \
+  "Windows 11" "$(jq -r '.host.kind' "$ENVJ")"
+assert_ne "t13.2 and the evidence says how it was determined" \
+  "" "$(jq -r '.host.method' "$ENVJ")"
+assert_eq "t13.3 the report's HOST line is that recorded value, verbatim" \
+  "HOST=$(jq -r '.host.kind' "$ENVJ")" "$(grep -m1 '^HOST=' "$REPORT")"
+assert_eq "t13.4 the report records the detection method too" \
+  "1" "$(grep -c '^HOST_DETECTED_BY=' "$REPORT")"
+assert_eq "t13.5 the report names the guarantee under test" \
+  "ESCROW_REPLAY" "$(sed -n 's/^GUARANTEE=//p' "$REPORT" | tail -1)"
+assert_eq "t13.6 and states what that guarantee does NOT prove" \
+  "1" "$(grep -c '^  does not prove: ' "$REPORT")"
+
+# ---------------------------------------------------------------------------
+head_ "t14  a half-applied harness is its own verdict, never an escrow verdict"
+# The bug: `ip link add dummy0` ran unchecked under `set -uo pipefail`. With no
+# `dummy` module in the kernel the interface silently never appeared and the
+# run came back FAIL with reason "build failed under origin blackout" -- an
+# accusation against the escrow for a fault in the harness.
+FAKEBIN=$WORK/fakebin; mkdir -p "$FAKEBIN"
+printf '#!/bin/sh\nexit 1\n' > "$FAKEBIN/ip"; chmod +x "$FAKEBIN/ip"
+HARN=$WORK/harness; rm_store "$HARN"; mkdir -p "$HARN/store" "$HARN/home"
+sed -e "s|^NSE_WORK=.*|NSE_WORK=$HARN|" \
+    -e "s|^NSE_TESTSTORE=.*|NSE_TESTSTORE=$HARN/store|" \
+    -e "s|^NSE_TESTHOME=.*|NSE_TESTHOME=$HARN/home|" \
+    "$ESCROW/work/prove-env.sh" > "$HARN/env.sh"
+env PATH="$FAKEBIN:$PATH" unshare -Ur --net --mount -- \
+  bash "$ESCROW/work/prove-inner.sh" "$HARN/env.sh" >"$WORK/harness.log" 2>&1 || :
+if [ -f "$HARN/prove-result.json" ]; then
+  assert_eq "t14.1 a failed isolation setup yields HARNESS_ERROR, not FAIL" \
+    "HARNESS_ERROR" "$(jq -r '.result' "$HARN/prove-result.json")"
+  assert_eq "t14.2 it is recorded as a setup failure" \
+    "failed" "$(jq -r '.isolationSetup' "$HARN/prove-result.json")"
+  assert_ne "t14.3 and names which operations failed" \
+    "0" "$(jq -r '.isolationSetupFailures|length' "$HARN/prove-result.json")"
+  assert_eq "t14.4 the reason does not blame the escrow" \
+    "false" "$(jq -r '(.reason // "") | test("build failed")' "$HARN/prove-result.json")"
+  assert_eq "t14.5 HARNESS_ERROR is not accepted as a negative control either" \
+    "1" "$(nse_expect_fail_rc "$HARN/prove-result.json")"
+else
+  bad "t14.1 a failed isolation setup yields HARNESS_ERROR" "runner produced no result file"
+fi
+
+# ---------------------------------------------------------------------------
+head_ "t15  SOURCE_ORIGIN_INDEPENDENCE is a different, weaker, cheaper claim"
+if [ "${NSE_TEST_SKIP_MODES:-0}" = 1 ]; then
+  echo "  skipped (NSE_TEST_SKIP_MODES=1)"
+else
+  SRC=$WORK/srcmode
+  rm_store "$SRC"; mkdir -p "$SRC"
+  rc=0
+  "$NSE" escrow "$FIXTURE" \
+    --escrow-dir "$SRC" \
+    --guarantee source-origin-independence \
+    --staging-dir "$ESCROW/work/staging" >"$WORK/srcmode.log" 2>&1 || rc=$?
+  SRC_OI=$SRC/evidence/origin-independence.json
+  assert_eq "t15.1 the source-only guarantee passes end to end" "0" "$rc"
+  assert_eq "t15.2 the manifest names the weaker guarantee" \
+    "source-origin-independence" "$(jq -r '.guarantee' "$SRC/manifest.json")"
+  assert_eq "t15.3 the escrow holds source material only, not the whole closure" \
+    "true" "$(jq -r '(.escrowPaths|length) < (.paths|length) and (.replicaPaths|length) > 0' "$SRC/closure.json")"
+  assert_eq "t15.4 every plan-required source is still in the escrow itself" \
+    "0" "$(jq -r '.counts.sourcesMissing' "$SRC/manifest.json")"
+  assert_eq "t15.5 every flake input is still in the escrow itself" \
+    "true" "$(jq -r '.counts.flakeInputsPresent == .counts.flakeInputs' "$SRC/manifest.json")"
+  assert_eq "t15.6 the verdict is labelled with the weaker guarantee" \
+    "SOURCE_ORIGIN_INDEPENDENCE" "$(jq -r '.guarantee.name' "$SRC_OI")"
+  assert_eq "t15.7 and it does NOT claim the escrow was the only substituter" \
+    "false" "$(jq -r '.substitutersOnlyEscrow' "$SRC_OI")"
+  assert_eq "t15.8 the substituter list was still exactly what the mode allows" \
+    "true" "$(jq -r '.substitutersAsExpected' "$SRC_OI")"
+  assert_eq "t15.9 origins were unreachable for this run too" \
+    "0" "$(jq -r '.reachableOriginCount' "$SRC_OI")"
+  assert_eq "t15.10 the evidence spells out what this does not prove" \
+    "true" "$(jq -r '.guarantee.doesNotProve | test("ESCROW_REPLAY")' "$SRC_OI")"
+  assert_eq "t15.11 the strict escrow is untouched and still ESCROW_REPLAY" \
+    "escrow-replay" "$(jq -r '.guarantee' "$MANIFEST")"
+fi
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1mRESULT\033[0m  passed=%d failed=%d\n' "$pass" "$fail"
