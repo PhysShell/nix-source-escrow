@@ -411,6 +411,11 @@ fi
 
 # ---------------------------------------------------------------------------
 head_ "t15  SOURCE_ORIGIN_INDEPENDENCE is a different, weaker, cheaper claim"
+# The defect this group exists for: v1 of this mode filled the binary replica
+# with `closure - sources` copied out of the STAGING store, so an object this
+# machine happened to build locally was served to the test as though the
+# approved cache had it. The evidence then read "works given the approved
+# binary tier" about a tier that may never have held it.
 if [ "${NSE_TEST_SKIP_MODES:-0}" = 1 ]; then
   echo "  skipped (NSE_TEST_SKIP_MODES=1)"
 else
@@ -420,30 +425,131 @@ else
   "$NSE" escrow "$FIXTURE" \
     --escrow-dir "$SRC" \
     --guarantee source-origin-independence \
+    --binary-tier "${NSE_TEST_BINARY_TIER:-https://cache.nixos.org}" \
     --staging-dir "$ESCROW/work/staging" >"$WORK/srcmode.log" 2>&1 || rc=$?
   SRC_OI=$SRC/evidence/origin-independence.json
-  assert_eq "t15.1 the source-only guarantee passes end to end" "0" "$rc"
-  assert_eq "t15.2 the manifest names the weaker guarantee" \
-    "source-origin-independence" "$(jq -r '.guarantee' "$SRC/manifest.json")"
-  assert_eq "t15.3 the escrow holds source material only, not the whole closure" \
-    "true" "$(jq -r '(.escrowPaths|length) < (.paths|length) and (.replicaPaths|length) > 0' "$SRC/closure.json")"
-  assert_eq "t15.4 every plan-required source is still in the escrow itself" \
-    "0" "$(jq -r '.counts.sourcesMissing' "$SRC/manifest.json")"
-  assert_eq "t15.5 every flake input is still in the escrow itself" \
-    "true" "$(jq -r '.counts.flakeInputsPresent == .counts.flakeInputs' "$SRC/manifest.json")"
-  assert_eq "t15.6 the verdict is labelled with the weaker guarantee" \
-    "SOURCE_ORIGIN_INDEPENDENCE" "$(jq -r '.guarantee.name' "$SRC_OI")"
-  assert_eq "t15.7 and it does NOT claim the escrow was the only substituter" \
-    "false" "$(jq -r '.substitutersOnlyEscrow' "$SRC_OI")"
-  assert_eq "t15.8 the substituter list was still exactly what the mode allows" \
-    "true" "$(jq -r '.substitutersAsExpected' "$SRC_OI")"
-  assert_eq "t15.9 origins were unreachable for this run too" \
-    "0" "$(jq -r '.reachableOriginCount' "$SRC_OI")"
-  assert_eq "t15.10 the evidence spells out what this does not prove" \
-    "true" "$(jq -r '.guarantee.doesNotProve | test("ESCROW_REPLAY")' "$SRC_OI")"
-  assert_eq "t15.11 the strict escrow is untouched and still ESCROW_REPLAY" \
+  SRC_MANIFEST=$SRC/manifest.json
+  SRC_CLOSURE=$SRC/closure.json
+
+  assert_eq "t15.1 the manifest names the weaker guarantee" \
+    "source-origin-independence" "$(jq -r '.guarantee' "$SRC_MANIFEST")"
+  assert_eq "t15.2 and the approved binary tier it was built against" \
+    "true" "$(jq -r '.binaryTier.url != null and (.binaryTier.url|length) > 0' "$SRC_MANIFEST")"
+
+  TIER_OK=$(jq -r '.binaryTier.sufficient' "$SRC_MANIFEST")
+  if [ "$TIER_OK" = true ]; then
+    assert_eq "t15.3 the run passes when the tier can supply the prebuilt objects" "0" "$rc"
+    assert_eq "t15.4 the escrow holds source material only, not the whole closure" \
+      "true" "$(jq -r '(.escrowPaths|length) < (.paths|length)' "$SRC_CLOSURE")"
+    assert_eq "t15.5 every plan-required source is still in the escrow itself" \
+      "0" "$(jq -r '.counts.sourcesMissing' "$SRC_MANIFEST")"
+    assert_eq "t15.6 every flake input is still in the escrow itself" \
+      "true" "$(jq -r '.counts.flakeInputsPresent == .counts.flakeInputs' "$SRC_MANIFEST")"
+    assert_eq "t15.7 the verdict is labelled with the weaker guarantee" \
+      "SOURCE_ORIGIN_INDEPENDENCE" "$(jq -r '.guarantee.name' "$SRC_OI")"
+    assert_eq "t15.8 and it does NOT claim the escrow was the only substituter" \
+      "false" "$(jq -r '.substitutersOnlyEscrow' "$SRC_OI")"
+    assert_eq "t15.9 the escrow was still asked for every required source, before isolation" \
+      "true" "$(jq -r '.sourcesInEscrowBeforeIsolation == .sourcesRequired and .sourcesRequired > 0' "$SRC_OI")"
+    assert_eq "t15.10 the evidence spells out what this does not prove" \
+      "true" "$(jq -r '.guarantee.doesNotProve | test("ESCROW_REPLAY")' "$SRC_OI")"
+    # The core fidelity assertion: nothing in the replica came from staging.
+    # Every replica path must be one the approved tier actually holds, which is
+    # exactly the set the manifest counted.
+    assert_eq "t15.11 the replica holds exactly what the tier supplied" \
+      "true" "$(jq -r --slurpfile m "$SRC_MANIFEST" '(.replicaPaths|length) == $m[0].binaryTier.pathsFromTier' "$SRC_CLOSURE")"
+    assert_eq "t15.12 objects nobody supplies are recorded, not silently escrowed" \
+      "true" "$(jq -r '(.notProvidedPaths|length) > 0' "$SRC_CLOSURE")"
+    assert_eq "t15.13 the .drv files are among them -- a binary cache is not asked for a derivation" \
+      "true" "$(jq -r '[.notProvidedPaths[]|select(endswith(".drv"))]|length > 0' "$SRC_CLOSURE")"
+    assert_eq "t15.14 nothing is in both the escrow and the replica" \
+      "0" "$(jq -r '[.escrowPaths[]] as $e | [.replicaPaths[]|select(. as $p | $e|index($p))]|length' "$SRC_CLOSURE")"
+    assert_eq "t15.15 the three sets account for the whole realised closure" \
+      "true" "$(jq -r '((.escrowPaths + .replicaPaths + .notProvidedPaths)|unique|length) == (.paths|length)' "$SRC_CLOSURE")"
+  else
+    # The tier could not supply something this build did not produce locally.
+    # That is not a green result and not a red escrow: the claim is unavailable.
+    assert_ne "t15.3 an insufficient tier does not yield exit 0" "0" "$rc"
+    assert_eq "t15.4 the verdict is MODE_UNSUPPORTED, never FAIL or PASS" \
+      "MODE_UNSUPPORTED" "$(jq -r '.result' "$SRC_OI")"
+    assert_eq "t15.5 and the reason names the tier, not the escrow" \
+      "true" "$(jq -r '(.reason // "") | test("binary tier")' "$SRC_OI")"
+    assert_eq "t15.6 MODE_UNSUPPORTED is refused as a negative control too" \
+      "1" "$(nse_expect_fail_rc "$SRC_OI")"
+    echo "  note: the approved tier is missing $(jq -r '.binaryTier.prebuiltMissingFromTier' "$SRC_MANIFEST") prebuilt object(s); the mode is correctly unavailable here"
+  fi
+  assert_eq "t15.16 the strict escrow is untouched and still ESCROW_REPLAY" \
     "escrow-replay" "$(jq -r '.guarantee' "$MANIFEST")"
 fi
+
+# ---------------------------------------------------------------------------
+head_ "t16  a remote escrow is replayed from a proof replica, not pretended to be reachable"
+# PRESERVE and VERIFY can address any Nix store URL. The acceptance test cannot:
+# it cuts all egress, so an HTTPS/S3/Attic escrow is exactly as unreachable
+# inside the namespace as GitHub is. Materialising it into a local proof
+# replica BEFORE isolation is what makes the claim honest -- and this group
+# runs that path against a real HTTP binary cache rather than asserting it.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "  skipped (python3 not on PATH; it serves the throwaway HTTP cache)"
+else
+  HTTPLOG=$WORK/http-cache.log
+  python3 -m http.server 0 --bind 127.0.0.1 --directory "$ESCROW/cache" \
+    >"$HTTPLOG" 2>&1 &
+  HTTP_PID=$!
+  # shellcheck disable=SC2064  # $HTTP_PID must expand now, not at trap time
+  trap "kill $HTTP_PID 2>/dev/null || :" EXIT
+  PORT=""
+  for _ in $(seq 1 100); do
+    PORT=$(sed -n 's/.*port \([0-9][0-9]*\).*/\1/p' "$HTTPLOG" | head -1)
+    [ -n "$PORT" ] && break
+    sleep 0.1
+  done
+  if [ -z "$PORT" ] || ! curl -sf -m 5 "http://127.0.0.1:$PORT/nix-cache-info" >/dev/null; then
+    bad "t16.1 a throwaway HTTP binary cache is serving the escrow" "see $HTTPLOG"
+  else
+    ok "t16.1 a throwaway HTTP binary cache is serving the escrow"
+    REMOTE=$WORK/remote
+    rm_store "$REMOTE"; mkdir -p "$REMOTE/evidence"
+    for f in manifest.json closure.json discovery.json; do
+      command cp -f "$ESCROW/$f" "$REMOTE/$f"
+    done
+    rc=0
+    "$NSE" test-origin-independence "$FIXTURE" \
+      --escrow-dir "$REMOTE" \
+      --escrow-substituter "http://127.0.0.1:$PORT" \
+      >"$WORK/remote.log" 2>&1 || rc=$?
+    REMOTE_OI=$REMOTE/evidence/origin-independence.json
+    assert_eq "t16.2 the acceptance test passes against a remote escrow" "0" "$rc"
+    assert_eq "t16.3 the durable escrow is recorded as the http one" \
+      "http://127.0.0.1:$PORT" "$(jq -r '.replaySource.durableEscrow' "$REMOTE_OI")"
+    assert_eq "t16.4 but the test replayed from a LOCAL store" \
+      "true" "$(jq -r '.replaySource.escrowUsedByTest | startswith("file://")' "$REMOTE_OI")"
+    assert_eq "t16.5 and says so: the replica was materialised, not reachable" \
+      "materialised" "$(jq -r '.replaySource.escrowMode' "$REMOTE_OI")"
+    assert_eq "t16.6 every escrowed object was materialised before isolation" \
+      "true" "$(jq -r --slurpfile c "$ESCROW/closure.json" '.replaySource.escrowObjects == ($c[0].escrowPaths|length)' "$REMOTE_OI")"
+    assert_eq "t16.7 origins were still unreachable during the run" \
+      "0" "$(jq -r '.reachableOriginCount' "$REMOTE_OI")"
+    assert_eq "t16.8 a file:// escrow is used directly, with no pointless copy" \
+      "direct" "$(jq -r '.replaySource.escrowMode' "$OI")"
+  fi
+  kill "$HTTP_PID" 2>/dev/null || :
+  trap - EXIT
+fi
+
+# ---------------------------------------------------------------------------
+head_ "t17  every piece of evidence is bound to the code that produced it"
+for f in environment.json verify.json trust.json origin-independence.json; do
+  assert_eq "t17.1 $f records the commit it was produced on" \
+    "true" "$(jq -r '(.provenance.gitCommit // "") | test("^[0-9a-f]{40}$")' "$ESCROW/evidence/$f")"
+done
+assert_eq "t17.2 and whether the working tree was dirty at the time" \
+  "boolean" "$(jq -r '.provenance.gitDirty | type' "$ESCROW/evidence/origin-independence.json")"
+assert_eq "t17.3 the acceptance evidence is bound to the manifest it judged" \
+  "$(sha256sum "$MANIFEST" | cut -d' ' -f1)" \
+  "$(jq -r '.provenance.manifestSha256' "$ESCROW/evidence/origin-independence.json")"
+assert_eq "t17.4 the report prints the commit, so a pasted report is traceable" \
+  "1" "$(grep -c '^TOOL_COMMIT=' "$REPORT")"
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1mRESULT\033[0m  passed=%d failed=%d\n' "$pass" "$fail"

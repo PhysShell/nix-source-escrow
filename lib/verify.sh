@@ -153,7 +153,8 @@ nse_verify() {
     --arg integrity "$integrity_status" --argjson integrityRc "$integrity_rc" \
     --arg integrityScope "$integrity_scope" --argjson integrityChecked "$integrity_checked" \
     --argjson ca "$n_ca" --argjson sig "$n_sig" --argjson neither "$n_neither" \
-    '{schemaVersion:2, kind:"verify", timestamp:$ts, status:$status,
+    --argjson provenance "$(nse_provenance)" \
+    '{schemaVersion:3, kind:"verify", timestamp:$ts, status:$status, provenance:$provenance,
       substituterUrl:$substituter,
       binaryReplicaUrl:(if $replica=="" then null else $replica end),
       presence:{closurePaths:$total, missing:$missing,

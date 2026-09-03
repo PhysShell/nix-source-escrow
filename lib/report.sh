@@ -49,7 +49,8 @@ nse_env() {
     --arg requireSigs "$(nix config show require-sigs)" \
     --arg sandbox "$(nix config show sandbox)" \
     --arg hashedMirrors "$(nix config show hashed-mirrors)" \
-    '{schemaVersion:2, kind:"environment", timestamp:$ts,
+    --argjson provenance "$(nse_provenance)" \
+    '{schemaVersion:3, kind:"environment", timestamp:$ts, provenance:$provenance,
       nixVersion:$nixVersion, system:$system, storeDir:$storeDir, kernel:$kernel, os:$os,
       host:$host, wsl2:$wsl, clientIsTrustedUser:$clientTrusted,
       nixConfig:{experimentalFeatures:$experimental, substituters:$substituters,
@@ -107,7 +108,10 @@ nse_report() {
              "KERNEL=" + .kernel,
              "CLIENT_IS_TRUSTED_USER=" + (.clientIsTrustedUser|tostring),
              "AMBIENT_REQUIRE_SIGS=" + .nixConfig.requireSigs,
-             "AMBIENT_HASHED_MIRRORS=" + (if .nixConfig.hashedMirrors == "" then "(unset)" else .nixConfig.hashedMirrors end)' \
+             "AMBIENT_HASHED_MIRRORS=" + (if .nixConfig.hashedMirrors == "" then "(unset)" else .nixConfig.hashedMirrors end),
+             "TOOL_COMMIT=" + ((.provenance.gitCommit // "unknown")[0:12]) +
+               (if .provenance.gitDirty == true then " (WORKING TREE DIRTY)"
+                elif .provenance.gitDirty == false then " (clean)" else "" end)' \
         "$envj"
     else
       printf 'ENVIRONMENT=NOT_RUN\n'
@@ -166,6 +170,12 @@ nse_report() {
              "STORE_URL=" + (.escrow.storeUrl // .escrow.url // "unknown"),
              "SUBSTITUTER_URL=" + (.escrow.substituterUrl // .escrow.url // "unknown"),
              "BINARY_REPLICA_URL=" + (.escrow.binaryReplicaUrl // "(none: the escrow holds the whole closure)"),
+             (if .binaryTier == null then "APPROVED_BINARY_TIER=(none)" else
+                "APPROVED_BINARY_TIER=" + .binaryTier.url end),
+             (if .binaryTier == null then empty else
+                "  OBJECTS_FROM_TIER=\(.binaryTier.pathsFromTier)  NOT_PROVIDED=\(.binaryTier.pathsNotProvided)" end),
+             (if .binaryTier == null then empty else
+                "  PREBUILT_MISSING_FROM_TIER=\(.binaryTier.prebuiltMissingFromTier)  TIER_SUFFICIENT=\(.binaryTier.sufficient)" end),
              "COMPRESSION=" + (.escrow.compression // "unknown"),
              "FLAKE_INPUTS_PRESERVED=\(.counts.flakeInputsPresent)/\(.counts.flakeInputs)",
              "SOURCES_REQUIRED_BY_PLAN=\(.counts.sourcesRequiredByPlan)",
@@ -176,9 +186,10 @@ nse_report() {
       printf 'ESCROW=NOT_RUN\n'
     fi
     if [ -n "$cj" ]; then
-      jq -r '"OBJECTS_PRESERVED=\(.paths|length)",
+      jq -r '"OBJECTS_REALISED=\(.paths|length)",
              "  IN_ESCROW=\(.escrowPaths|length)",
-             "  IN_BINARY_REPLICA=\((.replicaPaths // [])|length)"' "$cj"
+             "  IN_BINARY_REPLICA=\((.replicaPaths // [])|length)",
+             "  PROVIDED_TO_NOBODY=\((.notProvidedPaths // [])|length) (the test instantiates or rebuilds these)"' "$cj"
     fi
     if [ -n "$vj" ]; then
       # Presence of an object and integrity of its NAR are different claims,
@@ -234,7 +245,14 @@ nse_report() {
              "ORIGIN_HOSTS_PROVEN_UNREACHABLE=" + ((.originHostsProvenUnreachable|join(",")) | if .=="" then "none" else . end),
              "ORIGIN_HOSTS_REACHABLE=" + ((.originHostsReachable|join(",")) | if .=="" then "none" else . end),
              "CACHE_NIXOS_ORG_ALLOWED=" + ([.connectivity[]|select(.host=="cache.nixos.org")|(.reachableByName or .reachableByAddress)]|first|tostring),
-             "ESCROW_SUBSTITUTER=" + (.escrowSubstituter // "not recorded"),
+             "DURABLE_ESCROW=" + (.replaySource.durableEscrow // .escrowSubstituter // "not recorded"),
+             "REPLAYED_FROM=" + (.replaySource.escrowUsedByTest // .escrowSubstituter // "not recorded") +
+               " (" + (.replaySource.escrowMode // "direct") + ", \(.replaySource.escrowObjects // 0) objects)",
+             (if (.replaySource.binaryReplicaUsedByTest // null) == null then empty else
+                "BINARY_REPLICA_REPLAYED_FROM=" + .replaySource.binaryReplicaUsedByTest +
+                " (" + .replaySource.binaryReplicaMode + ", \(.replaySource.binaryReplicaObjects // 0) objects)" end),
+             "MODE_SUPPORTED=" + ((.modeSupported // true)|tostring),
+             "SOURCES_IN_ESCROW_BEFORE_ISOLATION=\(.sourcesInEscrowBeforeIsolation // 0)/\(.sourcesRequired)",
              "SUBSTITUTERS_ONLY_ESCROW=" + (.substitutersOnlyEscrow|tostring),
              "SUBSTITUTERS_AS_CONFIGURED=" + ((.substitutersAsExpected // .substitutersOnlyEscrow)|tostring),
              "EFFECTIVE_SUBSTITUTERS=" + .effectiveSubstituters,

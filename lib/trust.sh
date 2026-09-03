@@ -114,7 +114,9 @@ nse_trust_probe() {
     --arg signedNixosKey "$r_signed_nixoskey" --arg signedNoKeys "$r_signed_nokeys" \
     --arg unsignedInputAddressed "$r_unsigned" \
     --arg sourceSigRequired "$source_sig_required" \
-    '{schemaVersion:2, kind:"trust-probe", timestamp:$ts, substituterUrl:$substituter,
+    --argjson provenance "$(nse_provenance)" \
+    '{schemaVersion:3, kind:"trust-probe", timestamp:$ts, provenance:$provenance,
+      substituterUrl:$substituter,
       requireSigs:true, escrowIsSigned:false, escrowKeyInTrustedKeys:false,
       signingKeysCreated:0,
       samples:{contentAddressedSource:$sampleCa, signedInputAddressed:$sampleSigned,

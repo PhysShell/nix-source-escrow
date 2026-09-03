@@ -17,9 +17,10 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > (`HOST_DETECTED_BY`, `GUARANTEE`, `ISOLATION_SETUP`, `DUMMY_INTERFACE`,
 > `FLAKE_INPUT_RESTORE`, `STORE_URL` / `SUBSTITUTER_URL`), `manifest.json` and
 > `closure.json` are at schema 2, and `origin-independence.json` carries a
-> `guarantee` object. **Re-run before quoting any of this**, and replace the
-> block with the new output. Nothing below has been re-measured on the current
-> code; the shell-level units (`tests/unit-shell.sh`, 44 checks) are the only
+> `guarantee` object, and every evidence file now carries a `provenance` block.
+> **Re-run before quoting any of this**, and replace the block with the new
+> output. Nothing below has been re-measured on the current
+> code; the shell-level units (`tests/unit-shell.sh`, 64 checks) are the only
 > part of this change set with a recorded result, and they pass.
 
 The v0.1.0 run below started by deleting `escrow/` entirely, so the staging
@@ -180,7 +181,7 @@ refuse.
 
 ## Automated tests
 
-`./tests/unit-shell.sh` — **44/44 passed** on the current code (no Nix needed).
+`./tests/unit-shell.sh` — **64/64 passed** on the current code (no Nix needed).
 
 `nix develop -c ./tests/run-tests.sh` — **72/72 passed on v0.1.0**. The suite
 has grown four groups since (`t00`, `t13`, `t14`, `t15`) and **has not been
@@ -203,7 +204,9 @@ re-run on the current code**; do that before quoting a number here.
 | `t00` | the shell-level units (`tests/unit-shell.sh`): URL parsing and backend naming, presence as a set operation, batching with no ARG_MAX bomb, measured host detection, a report on every failure shape |
 | `t13` | the report's `HOST` is the value `environment.json` recorded, verbatim, with the detection method beside it; the guarantee and its *does not prove* line are printed |
 | `t14` | a failed isolation setup (a deliberately broken `ip` on `PATH`) yields `HARNESS_ERROR`, names the failed operations, does not blame the escrow, and is refused as a negative control |
-| `t15` | `SOURCE_ORIGIN_INDEPENDENCE` end to end: a smaller escrow, a populated binary replica, every plan-required source and flake input still in the escrow itself, and a verdict that explicitly declines the stronger claim |
+| `t15` | `SOURCE_ORIGIN_INDEPENDENCE` end to end: the binary replica holds exactly what the approved tier supplied and nothing from staging, the three path sets partition the realised closure, `.drv` files are provided to nobody, and an insufficient tier yields `MODE_UNSUPPORTED` rather than a verdict about the escrow |
+| `t16` | a remote escrow (a real HTTP binary cache) is materialised into a local proof replica before isolation, the evidence names both ends, and a `file://` escrow is still used directly |
+| `t17` | every evidence file records the commit that produced it, whether the tree was dirty, and the hash of the manifest it judged |
 
 Two checks earned their keep during development. `t06`'s content-identity check
 caught a bug in the *test harness* that wrote through a hardlink and corrupted a
@@ -249,6 +252,23 @@ tool.
 Two of these were fixed by argument alone and are therefore **not yet
 demonstrated**: `E1` and `E2` are hypotheses with an experiment attached, not
 results. See KNOWN_GAPS 17.
+
+---
+
+## Defects found in the third review, and what changed
+
+The second change set was reviewed again before merge, and it had found its own
+new problems: making storage abstract exposed that the *network* model had not
+moved with it, and naming a weaker guarantee exposed that its binary-tier model
+claimed more than the data supported.
+
+| | defect | fix |
+|---|---|---|
+| **P0** | `--escrow-store` / `--escrow-substituter` accepted any Nix store URL, and PROVE then configured that URL as `substituters` **inside a namespace with no route**. A remote escrow is exactly as unreachable in there as GitHub is, so "the escrow was the only substituter" described a store the test could not reach. "First-class target" was a claim about storage stated as a claim about acceptance. | A non-local escrow is materialised into a local **proof replica** before isolation, and the test replays from that. The evidence records both ends and which was used (`replaySource.durableEscrow`, `escrowUsedByTest`, `escrowMode`, `escrowObjects`), and the docs now separate storage target from acceptance target. Test `t16` runs it against a real HTTP binary cache. `DESIGN.md` §13. |
+| **P0** | `SOURCE_ORIGIN_INDEPENDENCE` filled its binary replica with `closure − sources` copied out of the **staging store**. Staging builds locally whatever it cannot substitute, so an object this machine produced was served to the test as though the approved cache had it — and the evidence read "works given the approved binary tier" about a tier that may never have held it. A fidelity problem, not a trust problem. | The replica is filled **from `--binary-tier` and from nothing else**. `.drv` paths are asked of nobody (the test instantiates them). What the tier lacks is provided to nobody and rebuilt inside the test — correct, and a stronger test. An object staging did *not* build (it carries a cache signature) that the tier also lacks makes the claim unavailable: a new `MODE_UNSUPPORTED` verdict, refused by `--expect-fail`. Tests `t15.1`–`t15.15`. `DESIGN.md` §12. |
+| **P1** | `experiments.sh` mapped `FAIL → REFUTED` unconditionally. With a broken escrow every variant fails, so it would have written a confident `dummyInterfaceStillNeeded: true` that no run supported — the most confident wrong answer this repository could produce. | `E0` is a baseline: if it is not green, `E1`–`E3` are not run and are recorded `INCONCLUSIVE` with the reason. `E3` is `INCONCLUSIVE` unless `E1` and `E2` are each CONFIRMED alone. `HARNESS_ERROR` / `MODE_UNSUPPORTED` are inconclusive, never refutations. The conclusion fields are `null` when unknown instead of guessing. The rules are a pure function, unit-tested by `u10.1`–`u10.14`. |
+| **P1** | Under `SOURCE_ORIGIN_INDEPENDENCE` the post-build presence check still carried the `ESCROW_REPLAY` argument — "the store was empty and nothing was reachable, so it came from the escrow". With two substituters configured, and an approved cache that may well carry source FODs, that no longer follows. | The escrow is asked directly, before isolation, whether it holds every plan-required source; the count is recorded as `sourcesInEscrowBeforeIsolation` and a shortfall is a `FAIL`. This also makes `test-origin-independence` sound standalone instead of quietly depending on someone having run `verify` first. Test `t15.9`. `DESIGN.md` §11. |
+| **P1** | Nothing bound a result to the code that produced it. `E1 = CONFIRMED` two commits later is a rumour. | Every evidence file carries `provenance`: commit, dirty flag (untracked files count), Nix version, and the SHA-256 of the manifest and closure it judged. The report prints `TOOL_COMMIT`. Tests `u11`, `t17`. `DESIGN.md` §14. |
 
 ---
 
@@ -329,12 +349,12 @@ Honest list. None of these are hidden behind a green result.
     and `t12` proves the verdict does not depend on trusting it.
 13. Trust results are measured on Nix 2.34.7 with this daemon configuration.
     `t09` will fail loudly if that changes, which is the intent.
-14. The escrow is addressed by URL and `s3://`, `https://` and `ssh-ng://`
-    backends are wired through the same code as `file://` — but **only the
-    `file://` backend has ever been run**. The non-file path uses
-    `nix path-info --json` for presence and trust classification instead of
-    reading narinfo files, and that branch is untested against a real Attic or
-    S3 cache. There is still no replication, GC policy or access control.
+14. The escrow is addressed by URL. `t16` exercises the non-file path against a
+    real HTTP binary cache, so the presence/metadata/materialisation code has
+    been run for something other than a directory — but **`s3://`, `ssh-ng://`
+    and a real Attic or Artifactory deployment have not**, and neither has any
+    credentialed access (`NSE_EXTRA_NIX_CONFIG` is the hook, untested). There
+    is still no replication, GC policy or access control.
 15. `preserve` requires network — it is the step that fetches from origins while
     they still exist. Only `verify` and the acceptance test are offline.
 16. The acceptance test proves the *escrow* served the sources by elimination
@@ -349,17 +369,29 @@ Honest list. None of these are hidden behind a green result.
     default to the old behaviour until `tests/experiments.sh` says otherwise on
     a real Nix.
 18. `SOURCE_ORIGIN_INDEPENDENCE` models "your approved binary cache is still
-    up" with a **local replica**, because the harness cuts all egress rather
-    than filtering it selectively. That is an honest model of availability and
-    no model at all of trust: the replica is deliberately not part of the
-    escrow and not archived with it. A version that keeps origins blocked while
-    a real approved cache stays reachable needs a filtering proxy the harness
-    does not have.
-19. The whole change set answering the second review has been **exercised only
-    by `tests/unit-shell.sh`** (44 checks, all passing, no Nix required). The
-    Nix-dependent suite — including the new `t13`, `t14`, `t15` — has not been
-    run on this code, because the machine it was written on has no Nix. Treat
-    the report block above as a v0.1.0 record until you re-run it.
+    up" with a **local replica filled from that cache**, because the harness
+    cuts all egress rather than filtering it selectively. The replica's
+    *contents* are now faithful; its *reachability* is still simulated. Same
+    missing piece as gap 20: a version that keeps origins blocked while the
+    real approved cache stays reachable needs selective egress.
+20. **The acceptance test cannot reach a remote escrow, by construction.** A
+    non-local escrow is materialised into a local proof replica before
+    isolation (`DESIGN.md` §13), which establishes that the durable store held
+    every object and that the set replays offline — and establishes nothing
+    about that store being reachable during a blackout. A selective harness
+    (`nftables`/`pasta` allowlist permitting only the escrow endpoint) would
+    prove the stronger thing and is not built.
+21. `MODE_UNSUPPORTED` is reached from one signal: a staging path carrying a
+    cache signature that the approved tier lacks. That correctly catches
+    "substituted here, unavailable there". It does **not** catch a path that
+    staging built locally *and* the test cannot rebuild offline — that still
+    surfaces as an ordinary build failure, with `closure.notProvidedPaths` in
+    the evidence as the first place to look.
+19. The change sets answering the second and third reviews have been
+    **exercised only by `tests/unit-shell.sh`** (64 checks, all passing, no Nix
+    required). The Nix-dependent suite — including the new `t13`–`t17` — has
+    not been run on this code, because the machine it was written on has no
+    Nix. Treat the report block above as a v0.1.0 record until you re-run it.
 
 ---
 
@@ -371,32 +403,40 @@ below it is written but unmeasured.
 1. **Re-run everything on a machine with Nix.** `./tests/run-tests.sh`, then
    `./tests/experiments.sh`, then replace the report block in this file with
    the new `escrow/evidence/report.txt`. Until then this file documents
-   v0.1.0 and a change set, not a result.
+   v0.1.0 and two change sets, not a result. Watch in particular whether
+   `t15` lands in its `sufficient` branch or its `MODE_UNSUPPORTED` branch
+   against `cache.nixos.org` — both are correct behaviour and they say
+   different things about the fixture.
 2. **Retire the two workarounds the experiments clear.** If `E1` is CONFIRMED,
    delete the dummy interface and `DESIGN.md` §8. If `E2` is CONFIRMED, make
    `--native-input-restore` the default and demote the manual copy to a
    diagnostic. If either is REFUTED, write down *why* — that is a more
-   interesting finding than the fix.
+   interesting finding than the fix. If `E0` is not green, fix that first and
+   read nothing else from that run.
 3. **Run the escrow against a real remote backend.** Attic or an S3 bucket,
-   end to end, so gap 14 stops being a code path and becomes evidence. This is
-   the change that decides whether the tool is adoptable.
-4. **Make the cheap guarantee the CI gate it was designed to be.** Renovate /
+   end to end, with credentials, so gap 14 stops being an HTTP-server test and
+   becomes deployment evidence.
+4. **Selective egress for the acceptance harness** (gaps 18 and 20). An
+   allowlist that permits only the escrow endpoint turns two simulated
+   properties into measured ones: a remote escrow reachable during the
+   blackout, and an approved binary tier that is genuinely third-party.
+5. **Make the cheap guarantee the CI gate it was designed to be.** Renovate /
    `update-flake-lock` integration: `preserve → verify →
    test-origin-independence --guarantee source-origin-independence` as a
    required check on the update PR, sharing one staging store, so a dependency
    bump cannot merge until its sources are in escrow — without copying the
    world on every bump.
-5. **Then the Software Heritage repair layer**, in the order §1 now describes:
+6. **Then the Software Heritage repair layer**, in the order §1 now describes:
    exact `nar-sha256` / `checksum-*` ExtID hit first, revision/origin recovery
    next, reconstruction (Disarchive-style for flat artefacts, `postFetch`
    replay for the rest) only where the first two miss. An archival *check* per
    source — the equivalent of `guix lint -c archival` — is the cheap half and
    is worth doing before the recovery half.
-6. Flat-`fetchurl` hashed-mirror layer, reusing the `copy-tarballs.pl` key
+7. Flat-`fetchurl` hashed-mirror layer, reusing the `copy-tarballs.pl` key
    scheme, for sharing tarballs between organisations.
-7. Incremental staging: diff the manifest against the escrow and fetch only
+8. Incremental staging: diff the manifest against the escrow and fetch only
    what is new. `--staging-dir` already lets several escrows share one warm
    staging store, which is the cheap half of this.
-8. Explicit IFD / manual-escrow policy, with a real IFD project as the fixture.
-9. `FULL_AIRGAP_REBUILD` as a separate, separately-named guarantee — the third
-   row of `DESIGN.md` §12, and the one that needs signing per §4.
+9. Explicit IFD / manual-escrow policy, with a real IFD project as the fixture.
+10. `FULL_AIRGAP_REBUILD` as a separate, separately-named guarantee — the third
+    row of `DESIGN.md` §12, and the one that needs signing per §4.

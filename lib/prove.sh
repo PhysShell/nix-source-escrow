@@ -44,7 +44,7 @@ nse_guarantee_proves() {
     escrow-replay)
       printf 'the accepted build completes with every dependency origin and every third-party binary cache unreachable, from an empty store, using only the escrow\n' ;;
     source-origin-independence)
-      printf 'the accepted build completes with every dependency origin unreachable, from an empty store, using the escrow for source material and the approved binary tier for prebuilt objects\n' ;;
+      printf 'the accepted build completes with every dependency origin unreachable, from an empty store, using the escrow for source material and a replica of the approved binary tier for prebuilt objects; everything neither escrowed nor held by that tier was rebuilt inside the test\n' ;;
   esac
 }
 nse_guarantee_excludes() {
@@ -56,6 +56,46 @@ nse_guarantee_excludes() {
   esac
 }
 
+# Materialise what the acceptance test will replay from.
+#
+# The test runs with no route to anything, so a REMOTE escrow -- S3, Attic, an
+# HTTPS cache -- is exactly as unreachable inside the namespace as GitHub is.
+# Pointing `substituters` at one and calling a green build a proof of anything
+# would be a lie about which store served the bytes.
+#
+# So a non-local store is copied into a local proof replica BEFORE isolation,
+# and the test replays from that. What that buys, precisely:
+#
+#   before isolation  the durable store was asked for every object in the set
+#                     and produced it
+#   after isolation   that exact set replays the build with no network
+#
+# What it does not buy is any claim about the durable store being reachable
+# during a blackout. That store's availability is its own problem, not
+# something this test can or should establish.
+#
+# Sets NSE_PROOF_URL / NSE_PROOF_MODE / NSE_PROOF_N.
+nse_proof_source() {
+  local label=$1 url=$2 setfile=$3
+  local n; n=$(wc -l < "$setfile")
+  if nse_url_is_file "$url"; then
+    NSE_PROOF_URL=$url; NSE_PROOF_MODE=direct; NSE_PROOF_N=$n
+    return 0
+  fi
+  local dir=$NSE_PROOF_REPLICA/$label
+  nse_rm_store "$dir"; mkdir -p "$dir"
+  nse_log "proof replica ($label): materialising $n objects from $url -> file://$dir"
+  nse_nix_batched "$setfile" copy --from "$url" \
+    --to "file://$dir?compression=${NSE_COMPRESSION:-zstd}" --no-check-sigs \
+    || nse_die "cannot materialise the proof replica for '$label' from '$url'"
+  local got
+  got=$(nse_store_present "file://$dir" < "$setfile" | LC_ALL=C sort -u | wc -l)
+  [ "$got" -eq "$n" ] \
+    || nse_die "proof replica ($label) holds $got of $n objects after materialisation from '$url'"
+  NSE_PROOF_URL="file://$dir"; NSE_PROOF_MODE=materialised; NSE_PROOF_N=$n
+  return 0
+}
+
 nse_prove() {
   local expect=${1:-pass}
   local manifest=$NSE_DIR/manifest.json
@@ -63,6 +103,8 @@ nse_prove() {
   local teststore=$work/test-store
   local testhome=$work/test-home
   [ -f "$manifest" ] || nse_die "no manifest.json; run 'nix-source-escrow preserve' first"
+  [ -f "$NSE_DIR/closure.json" ] \
+    || nse_die "no closure.json; run 'nix-source-escrow preserve' first"
   mkdir -p "$work" "$NSE_DIR/evidence"
 
   nse_step "$(nse_guarantee_name) acceptance test (expect=$expect)"
@@ -82,18 +124,58 @@ nse_prove() {
 
   rm -f "$work/prove-result.json"
 
-  # The substituter list the test allows. Under ESCROW_REPLAY that is the
-  # escrow and nothing else; under SOURCE_ORIGIN_INDEPENDENCE it is the escrow
-  # plus the approved binary tier, and the verdict says so out loud.
-  local substituters=$NSE_SUBSTITUTER_URL
+  # ---- precondition: is this claim available at all? ----------------------
+  # Under SOURCE_ORIGIN_INDEPENDENCE the manifest records whether the approved
+  # binary tier could supply every prebuilt object the build does not produce
+  # itself. If it could not, no build outcome can establish the mode, and
+  # running one anyway would just produce a failure attributed to the escrow.
+  local mode_supported=true mode_reason=""
+  if [ "$(jq -r '.binaryTier.sufficient // true' "$manifest")" != true ]; then
+    mode_supported=false
+    mode_reason=$(jq -r '"the approved binary tier \(.binaryTier.url) is missing \(.binaryTier.prebuiltMissingFromTier) prebuilt object(s) this build did not produce locally, so SOURCE_ORIGIN_INDEPENDENCE cannot be established against it"' "$manifest")
+  fi
+
+  # ---- precondition: does the ESCROW itself hold the sources? -------------
+  # Asked of the durable escrow, before isolation, and recorded separately from
+  # the post-build presence check. Under SOURCE_ORIGIN_INDEPENDENCE a second
+  # substituter is configured, so "the store was empty and nothing was
+  # reachable, therefore it came from the escrow" no longer follows on its own
+  # -- an approved cache may well carry source FODs too. This is the claim that
+  # does follow, and it does not depend on anyone having run `verify` first.
+  jq -r '.sources[] | select(.plan.requiredByPlan) | .storePath' "$manifest" \
+    | LC_ALL=C sort -u > "$work/prove-required-sources.txt"
+  nse_store_present "$NSE_SUBSTITUTER_URL" < "$work/prove-required-sources.txt" \
+    | LC_ALL=C sort -u > "$work/prove-sources-in-escrow.txt"
+  local sources_required sources_in_escrow
+  sources_required=$(wc -l < "$work/prove-required-sources.txt")
+  sources_in_escrow=$(wc -l < "$work/prove-sources-in-escrow.txt")
+  nse_log "escrow holds $sources_in_escrow/$sources_required plan-required sources (checked before isolation, against $NSE_SUBSTITUTER_URL)"
+
+  # ---- what the test replays from -----------------------------------------
+  local closure=$NSE_DIR/closure.json
+  jq -r '(.escrowPaths // .paths)[]' "$closure" | LC_ALL=C sort -u > "$work/prove-escrow-set.txt"
+  jq -r '(.replicaPaths // [])[]' "$closure"    | LC_ALL=C sort -u > "$work/prove-replica-set.txt"
+
+  nse_proof_source escrow "$NSE_SUBSTITUTER_URL" "$work/prove-escrow-set.txt"
+  local escrow_proof=$NSE_PROOF_URL escrow_proof_mode=$NSE_PROOF_MODE escrow_proof_n=$NSE_PROOF_N
+
+  local substituters=$escrow_proof
+  local replica_proof="" replica_proof_mode=none replica_proof_n=0
   if [ "$NSE_GUARANTEE" = source-origin-independence ]; then
-    substituters="$NSE_SUBSTITUTER_URL $NSE_REPLICA_URL"
+    nse_proof_source replica "$NSE_REPLICA_URL" "$work/prove-replica-set.txt"
+    replica_proof=$NSE_PROOF_URL; replica_proof_mode=$NSE_PROOF_MODE; replica_proof_n=$NSE_PROOF_N
+    substituters="$escrow_proof $replica_proof"
   fi
 
   local envf=$work/prove-env.sh
   {
     printf 'NSE_SUBSTITUTERS=%q\n' "$substituters"
-    printf 'NSE_ESCROW_SUBSTITUTER=%q\n' "$NSE_SUBSTITUTER_URL"
+    printf 'NSE_ESCROW_SUBSTITUTER=%q\n' "$escrow_proof"
+    printf 'NSE_DURABLE_ESCROW=%q\n' "$NSE_SUBSTITUTER_URL"
+    printf 'NSE_SOURCES_REQUIRED=%q\n' "$sources_required"
+    printf 'NSE_SOURCES_IN_ESCROW=%q\n' "$sources_in_escrow"
+    printf 'NSE_MODE_SUPPORTED=%q\n' "$mode_supported"
+    printf 'NSE_MODE_REASON=%q\n' "$mode_reason"
     printf 'NSE_TESTSTORE=%q\n'    "$teststore"
     printf 'NSE_TESTHOME=%q\n'     "$testhome"
     printf 'NSE_INSTALLABLE=%q\n'  "$NSE_INSTALLABLE"
@@ -132,10 +214,26 @@ nse_prove() {
     --arg gProves "$(nse_guarantee_proves)" \
     --arg gExcludes "$(nse_guarantee_excludes)" \
     --argjson runnerExit "$rc" \
+    --argjson provenance "$(nse_provenance)" \
+    --arg durableEscrow "$NSE_SUBSTITUTER_URL" \
+    --arg escrowProof "$escrow_proof" --arg escrowProofMode "$escrow_proof_mode" \
+    --arg replicaProof "$replica_proof" --arg replicaProofMode "$replica_proof_mode" \
+    --argjson escrowProofObjects "$escrow_proof_n" \
+    --argjson replicaProofObjects "$replica_proof_n" \
+    --arg binaryTier "$([ "$NSE_GUARANTEE" = source-origin-independence ] && printf '%s' "$NSE_BINARY_TIER")" \
     --slurpfile r "$work/prove-result.json" \
-    '$r[0] + {schemaVersion:2, kind:"origin-independence", timestamp:$ts,
+    '$r[0] + {schemaVersion:3, kind:"origin-independence", timestamp:$ts,
               isolation:$isolation, expectation:$expect, runnerExit:$runnerExit,
-              guarantee:{name:$gName, proves:$gProves, doesNotProve:$gExcludes}}' \
+              provenance:$provenance,
+              guarantee:{name:$gName, proves:$gProves, doesNotProve:$gExcludes},
+              replaySource:{
+                durableEscrow:$durableEscrow,
+                escrowUsedByTest:$escrowProof, escrowMode:$escrowProofMode,
+                escrowObjects:$escrowProofObjects,
+                binaryReplicaObjects:$replicaProofObjects,
+                binaryTier:(if $binaryTier=="" then null else $binaryTier end),
+                binaryReplicaUsedByTest:(if $replicaProof=="" then null else $replicaProof end),
+                binaryReplicaMode:$replicaProofMode}}' \
     | nse_json_canonical | nse_write_file "$NSE_DIR/evidence/origin-independence.json"
 
   nse_prove_report "$NSE_DIR/evidence/origin-independence.json" "$expect"
@@ -167,7 +265,10 @@ nse_prove_report() {
     "CACHE_NIXOS_ORG_ALLOWED=" + ([.connectivity[]|select(.host=="cache.nixos.org")|(.reachableByName or .reachableByAddress)]|first|tostring),
     "SUBSTITUTERS_AS_CONFIGURED=" + (.substitutersAsExpected|tostring),
     "FLAKE_INPUT_RESTORE=" + (.flakeInputRestore // "not recorded"),
+    "MODE_SUPPORTED=" + ((.modeSupported // true)|tostring),
+    "REPLAY_SOURCE=" + .replaySource.escrowUsedByTest + " (" + .replaySource.escrowMode + " from " + .replaySource.durableEscrow + ")",
     "OFFLINE_EVAL_PROBE=" + .offlineEvalProbe,
+    "SOURCES_IN_ESCROW_BEFORE_ISOLATION=\(.sourcesInEscrowBeforeIsolation)/\(.sourcesRequired)",
     "REQUIRED_SOURCES_RESTORED=\(.sourcesRestored)/\(.sourcesRequired)",
     "HTTP_FETCHES_IN_BUILD_LOG=\(.httpFetchesInBuildLog)",
     "OUTPUT_PATH_MATCHES_MANIFEST=" + (.outputMatches|tostring)
@@ -339,6 +440,24 @@ fi
 reason=""
 step=""
 
+# ---- 3a. preconditions established OUTSIDE isolation ---------------------
+# Two facts the harness measured before entering the namespace, because that is
+# where the durable escrow is reachable at all:
+#
+#   NSE_SOURCES_IN_ESCROW / NSE_SOURCES_REQUIRED
+#       how many plan-required sources the durable escrow actually holds
+#   NSE_MODE_SUPPORTED
+#       whether the guarantee under test is available at all -- under
+#       SOURCE_ORIGIN_INDEPENDENCE it is not, if the approved binary tier
+#       cannot supply an object this build does not produce for itself
+#
+# When the mode is unsupported the build is skipped entirely: no build outcome
+# can establish a claim that is unavailable, and running one would only produce
+# a failure that reads as an accusation against the escrow.
+if [ "$NSE_MODE_SUPPORTED" != true ]; then
+  step=mode-precondition
+fi
+
 # ---- 4. flake input material ---------------------------------------------
 # Two modes, because which one is used changes what the test proves.
 #
@@ -349,9 +468,9 @@ step=""
 #           narHash and calls ensurePath, so a configured substituter should be
 #           enough. That is the claim the primary path ought to be making.
 flake_input_restore=$NSE_INPUT_RESTORE
-step=restore-flake-inputs
 restore_rc=0
-if [ "$NSE_INPUT_RESTORE" = manual ]; then
+if [ "$NSE_MODE_SUPPORTED" = true ] && [ "$NSE_INPUT_RESTORE" = manual ]; then
+  step=restore-flake-inputs
   mapfile -t inputs < <(jq -r '.flakeInputs[] | select(.escrow.present) | .storePath' "$NSE_MANIFEST")
   if [ "${#inputs[@]}" -gt 0 ]; then
     nix copy --from "$NSE_ESCROW_SUBSTITUTER" --to "$NSE_TESTSTORE" "${inputs[@]}" \
@@ -368,7 +487,7 @@ fi
 # and an empty XDG_CACHE_HOME, so any such fetch has nowhere to come from and
 # this probe fails instead of the gap passing silently.
 eval_rc=1
-if [ -z "$reason" ]; then
+if [ -z "$reason" ] && [ "$NSE_MODE_SUPPORTED" = true ]; then
   step=offline-eval-probe
   nix path-info --derivation --store "$NSE_TESTSTORE" "$NSE_INSTALLABLE" \
     > "$NSE_WORK/prove-eval.log" 2>&1
@@ -379,7 +498,7 @@ fi
 # ---- 6. the build --------------------------------------------------------
 built=""
 build_rc=1
-if [ -z "$reason" ]; then
+if [ -z "$reason" ] && [ "$NSE_MODE_SUPPORTED" = true ]; then
   step=build
   built=$(nix build --store "$NSE_TESTSTORE" "$NSE_INSTALLABLE" --no-link --print-out-paths \
           2> "$NSE_WORK/prove-build.log")
@@ -387,10 +506,17 @@ if [ -z "$reason" ]; then
   [ "$build_rc" -eq 0 ] || reason="build failed under origin blackout (see prove-build.log)"
 fi
 
-# ---- 7. did the sources really come from the escrow? ---------------------
-# The store started empty and nothing was reachable, so a valid source path in
-# the test store can only have come from the escrow. One query for the whole
-# set; the per-path loop is only the fallback for a batch Nix refuses.
+# ---- 7. are the required sources in the test store? ----------------------
+# The store started empty and nothing was reachable, so a valid source path here
+# came from one of the configured substituters. Under ESCROW_REPLAY that is the
+# escrow and nothing else. Under SOURCE_ORIGIN_INDEPENDENCE a second one is
+# configured, and an approved cache can perfectly well carry source FODs too --
+# so this check alone does NOT attribute the source to the escrow. The
+# attribution comes from NSE_SOURCES_IN_ESCROW, measured against the durable
+# escrow before isolation and required to be complete by the verdict below.
+#
+# One query for the whole set; the per-path loop is only the fallback for a
+# batch Nix refuses.
 step=post-checks
 mapfile -t required_paths < <(jq -r '.sources[] | select(.plan.requiredByPlan) | .storePath' "$NSE_MANIFEST")
 required=${#required_paths[@]}
@@ -434,6 +560,12 @@ elif [ "$reachable_origins" -ne 0 ]; then
 elif [ "$unresolved_origins" -ne 0 ]; then
   result=FAIL
   reason="$unresolved_origins origin host(s) could not be resolved before isolation, so their unreachability is unproven"
+elif [ "$NSE_MODE_SUPPORTED" != true ]; then
+  # Not a failure of the escrow and not a failure of the harness: the claim
+  # itself is unavailable on these inputs. It can never be PASS, and
+  # --expect-fail must not accept it as a negative control either.
+  result=MODE_UNSUPPORTED
+  reason="$NSE_MODE_REASON"
 elif [ "$isolation_setup" = failed ]; then
   # Measured reachability comes first because it is the more specific finding:
   # a reachable origin invalidates the run whatever the cause. Reaching HERE
@@ -445,6 +577,9 @@ elif [ "$isolation_setup" = failed ]; then
 elif [ "$substituters_ok" != true ]; then
   result=FAIL
   reason="substituters were '$effective_substituters', expected exactly '$NSE_SUBSTITUTERS'"
+elif [ "$NSE_SOURCES_IN_ESCROW" -ne "$NSE_SOURCES_REQUIRED" ]; then
+  result=FAIL
+  reason="the durable escrow held only $NSE_SOURCES_IN_ESCROW of $NSE_SOURCES_REQUIRED plan-required sources when asked before isolation, so a green build would not be attributable to it"
 elif [ -n "$reason" ]; then
   result=FAIL
 elif [ "$build_rc" -eq 0 ] && [ "$eval_rc" -eq 0 ] \
@@ -472,6 +607,9 @@ jq -n \
   --arg setupFailures "$setup_failures" \
   --arg dummyInterface "$dummy_interface" \
   --arg flakeInputRestore "$flake_input_restore" \
+  --arg modeSupported "$NSE_MODE_SUPPORTED" \
+  --argjson sourcesInEscrow "$NSE_SOURCES_IN_ESCROW" \
+  --arg durableEscrow "$NSE_DURABLE_ESCROW" \
   --arg guaranteeName "$NSE_GUARANTEE_NAME" \
   --argjson buildRc "$build_rc" --argjson restoreRc "$restore_rc" --argjson evalRc "$eval_rc" \
   --argjson required "$required" --argjson restored "$restored" \
@@ -492,6 +630,9 @@ jq -n \
     dummyInterface:$dummyInterface,
     flakeInputRestore:$flakeInputRestore,
     guaranteeName:$guaranteeName,
+    modeSupported:($modeSupported == "true"),
+    durableEscrow:$durableEscrow,
+    sourcesInEscrowBeforeIsolation:$sourcesInEscrow,
     builtOutput:$built, expectedOutput:$expected, outputMatches:$outMatches,
     buildExit:$buildRc, restoreExit:$restoreRc, offlineEvalExit:$evalRc,
     offlineEvalProbe:(if $evalRc == 0 then "clean" else "failed" end),

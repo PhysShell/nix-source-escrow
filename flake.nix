@@ -38,6 +38,7 @@
             pkgs.curl
             pkgs.iproute2
             pkgs.util-linux # unshare
+            pkgs.git # provenance: which commit produced this evidence
           ];
 
           installPhase = ''
@@ -48,7 +49,7 @@
             makeWrapper "$out/bin/.nix-source-escrow-wrapped" "$out/bin/nix-source-escrow" \
               --prefix PATH : "${pkgs.lib.makeBinPath [
                 pkgs.jq pkgs.coreutils pkgs.gnused pkgs.gnugrep pkgs.gawk
-                pkgs.curl pkgs.iproute2 pkgs.util-linux
+                pkgs.curl pkgs.iproute2 pkgs.util-linux pkgs.git
               ]}"
             runHook postInstall
           '';
@@ -70,6 +71,7 @@
             util-linux
             shellcheck
             git
+            python3 # tests only: a throwaway HTTP binary cache for t16
           ];
           shellHook = ''
             export PATH="$PWD/bin:$PATH"

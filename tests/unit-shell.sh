@@ -224,6 +224,69 @@ assert_eq "u09.6 a missing narinfo yields an empty CA rather than an error" \
          | nse_store_meta "file://$META" | awk -F'\t' '$2=="" && $3==0 {n++} END{print n+0}')"
 
 # ---------------------------------------------------------------------------
+head_ "u10  an experiment with a broken baseline concludes nothing"
+# The trap: a broken escrow makes E0, E1, E2 and E3 all FAIL, and a naive
+# `FAIL -> REFUTED` mapping then writes a confident, entirely false
+# "the workaround IS needed" into experiments.json.
+# shellcheck disable=SC2034  # read by tests/experiments.sh at source time
+NSE_EXPERIMENTS_LIB_ONLY=1
+# shellcheck source=./experiments.sh
+. "$ROOT/tests/experiments.sh"
+unset NSE_EXPERIMENTS_LIB_ONLY
+outcome() { nse_experiment_outcome "$@" | cut -f1; }
+
+assert_eq "u10.1 a green control is the baseline" \
+  "BASELINE_OK" "$(outcome E0 PASS '')"
+assert_eq "u10.2 a red control is not a result about anything" \
+  "BASELINE_FAILED" "$(outcome E0 FAIL '')"
+assert_eq "u10.3 a control that never isolated is not a baseline either" \
+  "BASELINE_FAILED" "$(outcome E0 NOT_ISOLATED '')"
+assert_eq "u10.4 with a broken baseline, a failing variant is INCONCLUSIVE, not REFUTED" \
+  "INCONCLUSIVE" "$(outcome E1 FAIL BASELINE_FAILED)"
+assert_eq "u10.5 and so is a passing one" \
+  "INCONCLUSIVE" "$(outcome E2 PASS BASELINE_FAILED)"
+assert_eq "u10.6 with a green baseline, PASS confirms the workaround was dead weight" \
+  "CONFIRMED" "$(outcome E1 PASS BASELINE_OK)"
+assert_eq "u10.7 with a green baseline, FAIL refutes it" \
+  "REFUTED" "$(outcome E1 FAIL BASELINE_OK)"
+assert_eq "u10.8 a harness error says nothing about the hypothesis" \
+  "INCONCLUSIVE" "$(outcome E1 HARNESS_ERROR BASELINE_OK)"
+assert_eq "u10.9 an unavailable mode says nothing about it either" \
+  "INCONCLUSIVE" "$(outcome E2 MODE_UNSUPPORTED BASELINE_OK)"
+assert_eq "u10.10 E3 confirms the composition only when both parts stand alone" \
+  "CONFIRMED" "$(outcome E3 PASS BASELINE_OK CONFIRMED CONFIRMED)"
+assert_eq "u10.11 E3 with a refuted part answers a different question" \
+  "INCONCLUSIVE" "$(outcome E3 PASS BASELINE_OK REFUTED CONFIRMED)"
+assert_eq "u10.12 E3 with an inconclusive part likewise" \
+  "INCONCLUSIVE" "$(outcome E3 FAIL BASELINE_OK CONFIRMED INCONCLUSIVE)"
+assert_eq "u10.13 E3 can still be refuted when both parts stand alone" \
+  "REFUTED" "$(outcome E3 FAIL BASELINE_OK CONFIRMED CONFIRMED)"
+assert_ne "u10.14 every outcome carries a reason" \
+  "" "$(nse_experiment_outcome E1 FAIL BASELINE_FAILED | cut -f2)"
+
+# ---------------------------------------------------------------------------
+head_ "u11  every result is bound to the code that produced it"
+# "E1 = CONFIRMED" is worthless two commits later if nothing records which
+# commit, and whether the tree was dirty at the time.
+NSE_ROOT=$ROOT; export NSE_ROOT
+prov=$(nse_provenance)
+assert_eq "u11.1 provenance is valid JSON" \
+  "ok" "$(printf '%s' "$prov" | jq -e . >/dev/null 2>&1 && echo ok || echo bad)"
+assert_eq "u11.2 it records a full commit id" \
+  "true" "$(printf '%s' "$prov" | jq -r '(.gitCommit // "") | test("^[0-9a-f]{40}$")')"
+assert_eq "u11.3 and whether the working tree was dirty" \
+  "boolean" "$(printf '%s' "$prov" | jq -r '.gitDirty | type')"
+assert_eq "u11.4 every provenance field is present, even when unknown" \
+  "closureSha256 gitCommit gitDirty manifestSha256 nixVersion" \
+  "$(printf '%s' "$prov" | jq -r 'keys | join(" ")')"
+NSE_DIR=$TMP/prov-escrow; export NSE_DIR
+mkdir -p "$NSE_DIR"; printf '{"a":1}' > "$NSE_DIR/manifest.json"
+assert_eq "u11.5 the manifest is hashed when it exists" \
+  "true" "$(nse_provenance | jq -r '(.manifestSha256 // "") | test("^[0-9a-f]{64}$")')"
+assert_eq "u11.6 and reported as null when it does not" \
+  "null" "$(nse_provenance | jq -r '.closureSha256')"
+
+# ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"
 # A comment may name the old bug; an emitted line may not. Anchoring at the
 # start of a non-comment line is what separates the two.

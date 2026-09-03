@@ -281,3 +281,44 @@ nse_store_pathinfo() {
   exec {fd}<&-
   return 0
 }
+
+# ---------------------------------------------------------------------------
+# Provenance: bind a piece of evidence to the code and inputs that produced it
+#
+# "E1 = CONFIRMED" is worth nothing two commits later if nothing records which
+# commit it was confirmed on, or whether the tree was dirty at the time.
+# ---------------------------------------------------------------------------
+
+NSE_NIX_VERSION_CACHE=""
+nse_nix_version() {
+  if [ -z "$NSE_NIX_VERSION_CACHE" ]; then
+    NSE_NIX_VERSION_CACHE=$(nix --version 2>/dev/null) || NSE_NIX_VERSION_CACHE="unknown"
+  fi
+  printf '%s\n' "$NSE_NIX_VERSION_CACHE"
+}
+
+nse_sha256_of() {
+  if [ -f "$1" ]; then sha256sum "$1" | cut -d' ' -f1; else printf '\n'; fi
+}
+
+# `gitDirty` counts untracked files too: a stray lib/*.sh that shellcheck never
+# saw is exactly the kind of thing that makes a result unreproducible.
+nse_provenance() {
+  local root=${NSE_ROOT:-$PWD}
+  local commit="" dirty=null
+  if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+    commit=$(git -C "$root" rev-parse HEAD 2>/dev/null) || commit=""
+    if [ -n "$(git -C "$root" status --porcelain 2>/dev/null)" ]; then dirty=true; else dirty=false; fi
+  fi
+  jq -n \
+    --arg commit "$commit" \
+    --argjson dirty "$dirty" \
+    --arg nixVersion "$(nse_nix_version)" \
+    --arg manifest "$(nse_sha256_of "${NSE_DIR:-/nonexistent}/manifest.json")" \
+    --arg closure  "$(nse_sha256_of "${NSE_DIR:-/nonexistent}/closure.json")" \
+    '{gitCommit:    (if $commit   == "" then null else $commit   end),
+      gitDirty:     $dirty,
+      nixVersion:   $nixVersion,
+      manifestSha256:(if $manifest == "" then null else $manifest end),
+      closureSha256: (if $closure  == "" then null else $closure  end)}'
+}

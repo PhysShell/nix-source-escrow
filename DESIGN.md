@@ -505,12 +505,16 @@ Read but not adopted, with reasons:
 * **Attic / a binary-cache server, as something to *build*** — still not built,
   and now visibly not needed: the escrow is addressed by URL
   (`--escrow-store` / `--escrow-substituter`), so an existing Attic, S3 bucket,
-  HTTPS cache or Artifactory Nix repository is a first-class target with no
-  code here. A `file://` directory is the default and the demo backend, not the
-  architecture. This is the correction to the v0.1 shape, where PROVE asserted
-  `substituters == file://$PWD/escrow/cache` and therefore could not be pointed
-  at anything an organisation already runs — which was the single largest
-  barrier to the tool being usable by anyone.
+  HTTPS cache or Artifactory Nix repository is a first-class **storage** target
+  with no code here. A `file://` directory is the default and the demo backend,
+  not the architecture. This is the correction to the v0.1 shape, where PROVE
+  asserted `substituters == file://$PWD/escrow/cache` and therefore could not be
+  pointed at anything an organisation already runs.
+
+  "First-class **acceptance** target" would be a different and, for now, false
+  claim: the acceptance test cuts all egress, so a remote escrow is exactly as
+  unreachable inside the namespace as GitHub is. §13 says what the test does
+  instead, and what that is worth.
 
 Not built, on purpose: a dependency updater (Renovate, `update-flake-lock`,
 `nix-update` and `nvfetcher` already exist — the escrow is a *gate* around
@@ -543,21 +547,39 @@ The verdict is now ordered, and the environmental preconditions come first:
 2. any origin reachable by name or by address → `FAIL`.
 3. any origin that failed to resolve *before* isolation → `FAIL`. If we never
    learned its address, we cannot claim we proved it unreachable.
-4. an isolation setup operation that failed → **`HARNESS_ERROR`**. Reaching
+4. the guarantee itself unavailable on these inputs → **`MODE_UNSUPPORTED`**
+   (§12). The build is not even run: no outcome can establish a claim that is
+   not on the table, and running one would only produce a failure that reads as
+   an accusation against the escrow.
+5. an isolation setup operation that failed → **`HARNESS_ERROR`**. Reaching
    this point means nothing was reachable *and* the harness was only
    half-applied, which is precisely the state that used to be indistinguishable
    from an incomplete escrow.
-5. substituters not exactly the set this guarantee allows → `FAIL`. Otherwise a
+6. substituters not exactly the set this guarantee allows → `FAIL`. Otherwise a
    green build would not tell us where the sources came from.
-6. only then: evaluation, build, restored sources, output path, and zero
+7. the durable escrow not holding every plan-required source → `FAIL`. Measured
+   **before** isolation, against the durable store, and recorded separately
+   from the post-build presence check — see below.
+8. only then: evaluation, build, restored sources, output path, and zero
    http(s) fetches in the log.
+
+**Why step 7 is separate from the post-build check.** Under `ESCROW_REPLAY` the
+old argument holds: the store started empty, nothing was reachable, exactly one
+substituter was configured, so a source in the test store came from the escrow.
+Under `SOURCE_ORIGIN_INDEPENDENCE` a second substituter is configured, and an
+approved cache can perfectly well carry source FODs too — so presence after the
+build no longer attributes anything. The attribution now comes from a direct
+question put to the durable escrow before isolation, recorded as
+`sourcesInEscrowBeforeIsolation`. It also makes `test-origin-independence`
+sound on its own, instead of quietly depending on someone having run `verify`
+first.
 
 Measured reachability comes *before* the harness check on purpose: a reachable
 origin invalidates the run whatever the cause, and it is the more specific
 finding. `HARNESS_ERROR` is what is left when the environment was quiet but the
-harness could not prove it built the environment it claims. Neither verdict is
-accepted by `--expect-fail`: a negative control has to fail because the escrow
-was incomplete, not because the test broke.
+harness could not prove it built the environment it claims. None of `NOT_ISOLATED`, `HARNESS_ERROR` or `MODE_UNSUPPORTED` is accepted by
+`--expect-fail`: a negative control has to fail because the escrow was
+incomplete, not because the test broke or the claim was unavailable.
 
 Reporting follows the same rule. `ORIGIN_HOSTS_PROVEN_UNREACHABLE` is computed
 from the probe results, so it lists what was demonstrated; the intended
@@ -589,9 +611,8 @@ nobody gets a weaker result by accident.
 **Why the first one exists.** `ESCROW_REPLAY` costs a copy of the entire
 realised closure — 874 objects and 87 MB for a fixture that consumes four
 sources. Running that on every Renovate bump is not a gate, it is a tax. The
-cheap mode escrows only the objects that have an origin to lose, and lets the
-prebuilt tier come from a *binary replica* standing in for the approved cache
-your organisation already runs. What it proves is exactly:
+cheap mode escrows only the objects that have an origin to lose. What it proves
+is exactly:
 
 > the disappearance of the source origins does not break this build, because
 > the source identities are held by us.
@@ -601,18 +622,140 @@ are written into `origin-independence.json` (`guarantee.proves` /
 `guarantee.doesNotProve`) and printed in the report, so the weaker claim cannot
 be quoted as the stronger one.
 
-**What the harness can and cannot do here.** The acceptance test runs with no
-route to anything, in both modes. It does not implement a selective
-allow-github-but-not-cache filter; the "approved binary tier is available" half
-of `SOURCE_ORIGIN_INDEPENDENCE` is modelled by a local replica that the test
-may substitute from. That is an honest model of "the third party is still up"
-and a dishonest model of "the third party is trustworthy" — which is why the
-replica is deliberately *not* part of the escrow, is not archived with it, and
-is named `BINARY_REPLICA_URL` in the report rather than being folded into the
-escrow's object count.
+**Where the prebuilt tier comes from, and why the first version was a lie.**
+The first implementation filled the binary replica with `closure − sources`,
+copied out of the **staging store**. That is wrong in a way that is easy to
+miss and fatal to the claim: staging builds locally whatever it cannot
+substitute, so an object *this machine happened to produce* was handed to the
+acceptance test as though the approved cache had it. The evidence then read
+"the build works given the approved binary tier" about a tier that may never
+have held the object at all. Not a trust problem — a fidelity problem: the
+model of the third party was made out of local build output.
+
+The replica is now filled **from the approved tier and from nothing else**:
+
+```
+realised closure − escrowed source material
+        |
+        +-- *.drv                    -> asked of nobody. The test evaluates the
+        |                               flake and instantiates them itself;
+        |                               asking a binary cache for a derivation
+        |                               is a category error
+        |
+        +-- ask --binary-tier URL
+              |
+              +-- it has it     -> binary replica (copied FROM THE TIER)
+              |
+              +-- it does not   -> provided to nobody. The test rebuilds it.
+                                   For this build's own outputs that is the
+                                   correct behaviour and a stronger test than
+                                   handing them over
+```
+
+`closure.json` records all three sets (`escrowPaths`, `replicaPaths`,
+`notProvidedPaths`) and they partition the realised closure, so the accounting
+is checkable rather than assertable.
+
+**The one case that makes the mode unavailable.** An object carrying a cache
+signature in the staging store was *substituted*, not built here — the
+acceptance test will expect to obtain it rather than produce it. If the
+approved tier cannot supply it either, nobody can, and no build outcome can
+establish the guarantee. That is a distinct verdict, `MODE_UNSUPPORTED`: not a
+red escrow, not a broken harness, an unavailable claim. It can never be `PASS`,
+and `--expect-fail` refuses it as a negative control, because "the mode was
+unavailable" is not "the escrow was incomplete".
+
+An unsigned staging path, by contrast, is one this machine built, so the test
+rebuilding it is the point rather than a hole.
+
+**What the harness still cannot do.** It cuts all egress rather than filtering
+it, so the approved tier is present as a local replica rather than as the real
+cache. That models "the third party is still up" and models nothing about
+whether the third party is trustworthy — which is why the replica is
+deliberately not part of the escrow, is not archived with it, and is named
+separately in the report. Selective egress is the same missing piece as in §13.
 
 **Why `FULL_AIRGAP_REBUILD` is still only a row in this table.** It needs the
 whole bootstrap source corpus (the 161 in §7) and signing, per §4 row 5:
 locally built, input-addressed, unsigned paths are refused. That is a measured
 prerequisite, not a guess, and it is out of scope until the two implemented
 modes have been run in anger.
+
+---
+
+## 13. A remote escrow is replayed, not reached
+
+Making the escrow a URL fixed the storage layer and immediately exposed that
+the network model had not moved. Under `unshare --net` with no route, this:
+
+```
+substituters = https://attic.example.com/escrow
+```
+
+is not "the escrow is the only substituter". It is "there are no substituters",
+and a build that somehow went green would be telling you about something other
+than the escrow. Configuring a remote store as the substituter *inside* the
+blackout and calling the result a proof would be exactly the class of mistake
+§11 exists to prevent — this time committed by the storage refactor.
+
+So a non-local escrow is **materialised before isolation** into a local proof
+replica, and the test replays from that:
+
+```
+durable escrow (s3:// | https:// | ssh-ng:// | file://)
+        |
+        |  before isolation: ask it for every object in escrowPaths,
+        |  copy them, and refuse to continue if it comes up short
+        v
+proof replica (file://, local)
+        |
+        |  unshare -Ur --net --mount
+        v
+acceptance build
+```
+
+The evidence records both ends and which one the test used
+(`replaySource.durableEscrow`, `replaySource.escrowUsedByTest`,
+`replaySource.escrowMode` = `direct` | `materialised`,
+`replaySource.escrowObjects`). A `file://` escrow is used directly; there is
+nothing to copy.
+
+**What this establishes.** Before isolation: the durable escrow was asked for
+every object and produced every one of them. After isolation: that exact set
+replays the build with no network at all.
+
+**What it does not establish.** Anything about the durable store being
+reachable during a blackout. That is the store's own availability problem, and
+it is not what this project is for — an escrow whose S3 bucket is down is a
+paged incident, not a broken guarantee about source origins. A future selective
+harness that permits the escrow endpoint and blocks everything else would prove
+the stronger thing; a `nftables`/`pasta` allowlist is the shape, and it is not
+built.
+
+Test `t16` runs the whole path against a real HTTP binary cache served out of
+the fixture escrow, and asserts that the test replayed from `file://` while the
+durable escrow stayed `http://`.
+
+---
+
+## 14. Evidence that cannot say which code produced it
+
+`E1 = CONFIRMED` is worth nothing two commits later if nothing records which
+commit it was confirmed on. Every evidence file now carries:
+
+```json
+"provenance": {
+  "gitCommit": "d920550146...",
+  "gitDirty": false,
+  "nixVersion": "nix (Nix) 2.34.7",
+  "manifestSha256": "...",
+  "closureSha256": "..."
+}
+```
+
+`gitDirty` counts untracked files as dirty: a stray `lib/*.sh` that `nix flake
+check` never saw is exactly the kind of thing that makes a result
+unreproducible. The report prints `TOOL_COMMIT=<short> (clean|WORKING TREE
+DIRTY)`, so a pasted report block is traceable to a tree, and an acceptance
+verdict is bound to the `manifest.json` it judged rather than to whichever
+manifest happens to be on disk when someone reads it later.

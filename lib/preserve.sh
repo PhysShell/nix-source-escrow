@@ -74,33 +74,36 @@ require-drop-supplementary-groups = false" \
   # runs with the escrow as the only substituter.
   #
   # SOURCE_ORIGIN_INDEPENDENCE escrows only the objects that have an origin to
-  # lose -- plan-required fixed-output sources, flake inputs, the flake source
-  # itself -- and puts the rest of the closure in a *binary replica* that
-  # stands in for third-party binary infrastructure. That is a weaker
-  # guarantee and a much cheaper artefact; see DESIGN.md §12.
+  # lose, and the prebuilt tier comes from an *approved binary cache* rather
+  # than from whatever this machine happened to build. See nse_binary_replica.
   jq -r '.sources[] | select(.storePath != null) | .storePath' "$disc" \
     | LC_ALL=C sort -u > "$work/discovered-sources.txt"
   LC_ALL=C comm -12 "$work/discovered-sources.txt" "$work/staging-requisites.txt" \
     > "$work/sources-required.txt"
 
+  : > "$work/replica-set.txt"
+  : > "$work/not-provided-set.txt"
+  : > "$work/tier-missing-prebuilt.txt"
+
   case $NSE_GUARANTEE in
     escrow-replay)
-      cp "$work/preserve-set.txt" "$work/escrow-set.txt"
-      : > "$work/replica-set.txt" ;;
+      cp "$work/preserve-set.txt" "$work/escrow-set.txt" ;;
     source-origin-independence)
       LC_ALL=C sort -u "$work/sources-required.txt" "$work/flake-paths.txt" \
         > "$work/escrow-set.txt"
-      LC_ALL=C comm -23 "$work/preserve-set.txt" "$work/escrow-set.txt" \
-        > "$work/replica-set.txt" ;;
+      # A shortfall is recorded, not fatal here: the pipeline should reach the
+      # acceptance test and produce a verdict that says exactly why the mode
+      # cannot be established, rather than dying with a shell error.
+      nse_binary_replica "$work" "$staging" || : ;;
     *) nse_die "unknown guarantee '$NSE_GUARANTEE'" ;;
   esac
 
-  nse_copy_set "$work/escrow-set.txt"  "$NSE_STORE_URL" "escrow" "$staging" "$work"
+  nse_copy_set "$work/escrow-set.txt" "$NSE_STORE_URL" "escrow" "$staging" "$work"
+
   if [ -s "$work/replica-set.txt" ]; then
-    # The replica is read through a plain URL but written through one carrying
-    # the compression parameter: a file:// binary cache with no `compression`
-    # defaults to xz, which is a very slow way to store a few hundred megabytes
-    # of prebuilt binaries nobody intends to archive.
+    # Written through a URL carrying the compression parameter: a file:// binary
+    # cache with no `compression` defaults to xz, which is a very slow way to
+    # store prebuilt binaries nobody intends to archive.
     local replica_store=$NSE_REPLICA_URL
     if nse_url_is_file "$NSE_REPLICA_URL"; then
       mkdir -p "$(nse_url_file_path "$NSE_REPLICA_URL")"
@@ -108,20 +111,88 @@ require-drop-supplementary-groups = false" \
         replica_store="$NSE_REPLICA_URL?compression=${NSE_COMPRESSION:-zstd}"
       fi
     fi
-    nse_copy_set "$work/replica-set.txt" "$replica_store" "replica" "$staging" "$work"
+    # FROM THE TIER, never from staging. This is the whole point: an object
+    # copied out of the staging store proves that *this machine* could produce
+    # it, which is not the claim SOURCE_ORIGIN_INDEPENDENCE makes.
+    nse_log "replica: copying $(wc -l < "$work/replica-set.txt") paths from the approved binary tier $NSE_BINARY_TIER -> $replica_store"
+    nse_nix_batched "$work/replica-set.txt" copy --from "$NSE_BINARY_TIER" --to "$replica_store" \
+      || nse_die "copying the prebuilt tier from '$NSE_BINARY_TIER' failed"
   fi
 
   jq -n \
     --arg guarantee "$NSE_GUARANTEE" \
-    --rawfile all      "$work/preserve-set.txt" \
-    --rawfile escrowed "$work/escrow-set.txt" \
-    --rawfile replica  "$work/replica-set.txt" \
+    --rawfile all         "$work/preserve-set.txt" \
+    --rawfile escrowed    "$work/escrow-set.txt" \
+    --rawfile replica     "$work/replica-set.txt" \
+    --rawfile notProvided "$work/not-provided-set.txt" \
     'def lines($s): ($s | split("\n") | map(select(length>0)) | sort);
-     {schemaVersion:2, guarantee:$guarantee,
-      paths: lines($all), escrowPaths: lines($escrowed), replicaPaths: lines($replica)}' \
+     {schemaVersion:3, guarantee:$guarantee,
+      paths: lines($all), escrowPaths: lines($escrowed),
+      replicaPaths: lines($replica),
+      # Realised, but deliberately handed to nobody: the acceptance test has to
+      # instantiate or rebuild these itself. Empty under ESCROW_REPLAY.
+      notProvidedPaths: lines($notProvided)}' \
     | nse_json_canonical | nse_write_file "$NSE_DIR/closure.json"
 
   nse_manifest
+}
+
+# Decide what the approved binary tier has to supply, ask it, and write down
+# the answer.
+#
+# The v1 of this mode filled the replica with `preserve-set - escrow-set`
+# copied out of the staging store. That quietly made the claim untrue: an
+# object staging happened to build locally was served to the acceptance test as
+# though the approved cache had it, and the evidence then read "the build works
+# given the approved binary tier" about a tier that may never have held it.
+#
+# The replica is now filled FROM THE TIER and from nothing else. What the tier
+# does not have is simply not provided, and the acceptance test has to
+# instantiate or rebuild it -- which for a .drv or for this build's own outputs
+# is the correct behaviour and a stronger test, not a hole.
+#
+# Returns 1 for the one case that IS a hole: an object staging did not build
+# (it carries a cache signature, so it was substituted) that the approved tier
+# cannot supply either. Nobody can produce it, and the mode cannot be
+# established.
+nse_binary_replica() {
+  local work=$1 staging=$2
+
+  LC_ALL=C comm -23 "$work/preserve-set.txt" "$work/escrow-set.txt" \
+    > "$work/non-source-set.txt"
+
+  # Derivations are asked of nobody: the acceptance test evaluates the flake
+  # and instantiates them itself. Asking a binary cache for a .drv is a
+  # category error.
+  grep -v '\.drv$' "$work/non-source-set.txt" > "$work/tier-candidates.txt" || :
+
+  nse_log "binary tier: asking $NSE_BINARY_TIER for $(wc -l < "$work/tier-candidates.txt") prebuilt objects"
+  nse_store_present "$NSE_BINARY_TIER" < "$work/tier-candidates.txt" \
+    | LC_ALL=C sort -u > "$work/replica-set.txt"
+  LC_ALL=C comm -23 "$work/preserve-set.txt" \
+    <(LC_ALL=C sort -u "$work/escrow-set.txt" "$work/replica-set.txt") \
+    > "$work/not-provided-set.txt"
+
+  # Signed in the staging store == substituted from a cache, not built here.
+  # Unsigned == this machine produced it, so the test reproducing it is the
+  # point rather than a gap.
+  nse_store_pathinfo "$staging" "$work/tier-candidates.txt" \
+    | jq -r 'to_entries[] | select(((.value.signatures // []) | length) > 0) | .key' \
+    | LC_ALL=C sort -u > "$work/tier-prebuilt.txt"
+  LC_ALL=C comm -23 "$work/tier-prebuilt.txt" "$work/replica-set.txt" \
+    > "$work/tier-missing-prebuilt.txt"
+
+  nse_log "binary tier: $(wc -l < "$work/replica-set.txt") available, $(wc -l < "$work/not-provided-set.txt") not provided (the test instantiates or rebuilds those)"
+
+  local n_missing; n_missing=$(wc -l < "$work/tier-missing-prebuilt.txt")
+  if [ "$n_missing" -ne 0 ]; then
+    nse_warn "the approved binary tier '$NSE_BINARY_TIER' is missing $n_missing object(s) that this build did NOT produce locally, for example:"
+    head -3 "$work/tier-missing-prebuilt.txt" >&2
+    nse_warn "SOURCE_ORIGIN_INDEPENDENCE cannot be established against this tier."
+    nse_warn "Point --binary-tier at a cache that holds them, or use --guarantee escrow-replay."
+    return 1
+  fi
+  return 0
 }
 
 # Copy one path set to one destination, splitting it by which store actually
@@ -166,6 +237,8 @@ nse_manifest() {
     | LC_ALL=C sort -u > "$work/escrow-present.txt"
 
   local backend; backend=$(nse_backend_name "$NSE_STORE_URL")
+  local tier_missing=$work/tier-missing-prebuilt.txt
+  [ -f "$tier_missing" ] || : > "$tier_missing"
 
   jq -n \
     --slurpfile disc "$disc" \
@@ -174,6 +247,10 @@ nse_manifest() {
     --arg storeUrl "$(nse_url_strip_query "$NSE_STORE_URL")" \
     --arg substituterUrl "$NSE_SUBSTITUTER_URL" \
     --arg replicaUrl "$([ -s "$work/replica-set.txt" ] && printf '%s' "$NSE_REPLICA_URL")" \
+    --arg tierUrl "$NSE_BINARY_TIER" \
+    --rawfile tierMissing "$tier_missing" \
+    --rawfile replicaSet  "$work/replica-set.txt" \
+    --rawfile notProvided "$work/not-provided-set.txt" \
     --arg compression "${NSE_COMPRESSION:-zstd}" \
     --rawfile present  "$work/escrow-present.txt" \
     --rawfile realised "$work/staging-requisites.txt" \
@@ -206,8 +283,9 @@ nse_manifest() {
             elif .escrow.present then "COVERED_NOT_REQUIRED"
             else "NOT_REQUIRED_BY_PLAN" end) ) ) as $sources |
 
+    ($tierMissing | split("\n") | map(select(length>0))) as $tierMiss |
     {
-      schemaVersion: 2,
+      schemaVersion: 3,
       installable: $d.installable,
       flakeRef: $d.flakeRef,
       storeDir: $d.storeDir,
@@ -218,6 +296,17 @@ nse_manifest() {
                 substituterUrl: $substituterUrl,
                 binaryReplicaUrl: (if $replicaUrl == "" then null else $replicaUrl end),
                 compression: $compression },
+      binaryTier: (if $guarantee != "source-origin-independence" then null else {
+        url: $tierUrl,
+        # Objects the tier supplied, objects nobody supplies (the test must
+        # instantiate or rebuild them), and the shortfall that makes the whole
+        # mode unavailable.
+        pathsFromTier:  ($replicaSet  | split("\n") | map(select(length>0)) | length),
+        pathsNotProvided: ($notProvided | split("\n") | map(select(length>0)) | length),
+        prebuiltMissingFromTier: ($tierMiss | length),
+        missingSample: ($tierMiss[0:5]),
+        sufficient: (($tierMiss | length) == 0)
+      } end),
       flakeInputs: $inputs,
       sources: $sources,
       evalTimeFetches: $d.evalTimeFetches,

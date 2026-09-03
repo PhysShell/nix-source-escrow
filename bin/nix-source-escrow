@@ -51,9 +51,16 @@ escrow location (a URL, not necessarily a directory):
                           repository is a first-class target.
   --escrow-substituter URL  what VERIFY and PROVE read from
                           (default: the store URL without its query string)
-  --binary-replica URL    SOURCE_ORIGIN_INDEPENDENCE only: the store standing
-                          in for your approved binary tier
+  --binary-tier URL       SOURCE_ORIGIN_INDEPENDENCE only: the approved binary
+                          cache the prebuilt tier must actually come from
+                          (default: https://cache.nixos.org). Objects are
+                          copied into the replica FROM HERE, never from the
+                          staging build -- see DESIGN.md §12.
+  --binary-replica URL    where that tier is replicated to for the offline test
                           (default: file://<escrow-dir>/replica)
+  --proof-replica DIR     local store the acceptance test replays from when the
+                          escrow substituter is remote
+                          (default: <escrow-dir>/work/proof-replica)
   --compression C         binary-cache compression: zstd|xz|none (default: zstd)
 
 guarantee:
@@ -100,6 +107,8 @@ NSE_INPUT_RESTORE=${NSE_INPUT_RESTORE:-manual}
 nse_store_url_opt=${NSE_STORE_URL:-}
 nse_substituter_opt=${NSE_SUBSTITUTER_URL:-}
 nse_replica_opt=${NSE_REPLICA_URL:-}
+nse_tier_opt=${NSE_BINARY_TIER:-}
+nse_proof_opt=${NSE_PROOF_REPLICA:-}
 
 [ $# -ge 1 ] || { usage; exit 2; }
 case $1 in
@@ -117,6 +126,8 @@ while [ $# -gt 0 ]; do
     --escrow-store) need_value $# "$1"; nse_store_url_opt=$2; shift 2 ;;
     --escrow-substituter) need_value $# "$1"; nse_substituter_opt=$2; shift 2 ;;
     --binary-replica) need_value $# "$1"; nse_replica_opt=$2; shift 2 ;;
+    --binary-tier) need_value $# "$1"; nse_tier_opt=$2; shift 2 ;;
+    --proof-replica) need_value $# "$1"; nse_proof_opt=$(nse_abspath "$2"); shift 2 ;;
     --guarantee) need_value $# "$1"
                  case $2 in
                    escrow-replay|source-origin-independence) NSE_GUARANTEE=$2 ;;
@@ -149,10 +160,13 @@ NSE_STORE_URL=${nse_store_url_opt:-$(nse_default_store_url)}
 NSE_SUBSTITUTER_URL=${nse_substituter_opt:-$(nse_url_strip_query "$NSE_STORE_URL")}
 NSE_REPLICA_URL=${nse_replica_opt:-file://$NSE_DIR/replica}
 NSE_STAGING=${nse_staging_opt:-$NSE_DIR/work/staging}
+NSE_BINARY_TIER=${nse_tier_opt:-https://cache.nixos.org}
+NSE_PROOF_REPLICA=${nse_proof_opt:-$NSE_DIR/work/proof-replica}
 
 export NSE_DIR NSE_CACHE NSE_COMPRESSION NSE_FRESH_STAGING NSE_NO_ISOLATION \
        NSE_INSTALLABLE NSE_STORE_URL NSE_SUBSTITUTER_URL NSE_REPLICA_URL \
-       NSE_GUARANTEE NSE_DUMMY_IFACE NSE_INPUT_RESTORE NSE_STAGING
+       NSE_GUARANTEE NSE_DUMMY_IFACE NSE_INPUT_RESTORE NSE_STAGING \
+       NSE_BINARY_TIER NSE_PROOF_REPLICA
 
 nse_require_cmd nix jq
 

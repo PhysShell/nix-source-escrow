@@ -34,7 +34,7 @@ cheap claim gets quoted as an expensive one.
 
 | guarantee | the escrow holds | the test allows | status |
 |---|---|---|---|
-| `SOURCE_ORIGIN_INDEPENDENCE` | source material only: plan-required fixed-output sources, flake inputs, the flake source | the escrow **plus** your approved binary tier | implemented, `--guarantee source-origin-independence` |
+| `SOURCE_ORIGIN_INDEPENDENCE` | source material only: plan-required fixed-output sources, flake inputs, the flake source | the escrow **plus** a replica of your approved binary tier (`--binary-tier`), filled from that tier and from nothing else | implemented, `--guarantee source-origin-independence` |
 | **`ESCROW_REPLAY`** | the whole realised closure | the escrow **only** | implemented, **default** |
 | `FULL_AIRGAP_REBUILD` | the whole bootstrap source corpus | the escrow only, and every derivation rebuilt from source | **not implemented**, see `DESIGN.md` §12 |
 
@@ -51,6 +51,14 @@ sources), which is a tax rather than a gate if you want it on every dependency
 bump. It proves that losing the *source origins* does not break the build, and
 it says out loud, in the report, that it proves nothing about losing the binary
 tier.
+
+Its prebuilt objects are copied **from the approved tier you name**, never from
+whatever this machine happened to build — otherwise the evidence would claim
+"works given the approved cache" about a cache that never held the object.
+Anything neither escrowed nor held by that tier is handed to nobody and rebuilt
+inside the test. If the tier cannot supply something the build does *not*
+produce for itself, the verdict is `MODE_UNSUPPORTED`: the claim is
+unavailable, which is neither a red escrow nor a green one. `DESIGN.md` §12.
 
 ### Explicitly *not* the guarantee
 
@@ -80,6 +88,25 @@ escrow stops being a directory on your laptop, "the store I push to" and "the
 substituter a consumer configures" stop being the same string. Backend
 credentials go through `NSE_EXTRA_NIX_CONFIG` (`netrc-file`, `access-tokens`,
 the `aws-*` settings) — this tool adds no credential handling of its own.
+
+**A remote escrow is a first-class storage target, not a first-class acceptance
+target.** The acceptance test cuts all egress, so `https://attic.example.com`
+is exactly as unreachable inside the namespace as `github.com` is. Pointing
+`substituters` at it in there and calling a green build a proof would be a lie
+about which store served the bytes. Instead a non-local escrow is
+**materialised into a local proof replica before isolation**, and the test
+replays from that. The evidence records both ends and which one the test used:
+
+```
+DURABLE_ESCROW=https://attic.example.com/escrow
+REPLAYED_FROM=file:///…/work/proof-replica/escrow (materialised, 874 objects)
+```
+
+What that establishes: the durable escrow was asked for every object and
+produced it, and that exact set then replays the build with no network. What it
+does not establish: that the durable store is reachable during a blackout. That
+is its own availability problem, and not what this project is for.
+`DESIGN.md` §13.
 
 ## Non-goals
 
@@ -134,8 +161,8 @@ Not built, on purpose:
    |             evaluate offline  <- the only cover for eval-time     |
    |                                  builtins.fetch*                  |
    |             build                                                 |
-   |   ORIGIN_INDEPENDENCE =                                           |
-   |       PASS | FAIL | NOT_ISOLATED | HARNESS_ERROR                  |
+   |   ORIGIN_INDEPENDENCE = PASS | FAIL                               |
+   |       | NOT_ISOLATED | HARNESS_ERROR | MODE_UNSUPPORTED           |
    +------------------------------------------------------------------+
                                   |
                    RECOVER (v0.1: origin only; SWH = extension point)
@@ -192,12 +219,18 @@ has not yet *run*, so they are not called results:
 nix develop -c ./tests/experiments.sh
 ```
 
-`E1` drops the `dummy0` route-to-nowhere interface (`DESIGN.md` §8), `E2` drops
-the manual flake-input restore so Nix substitutes locked inputs itself
-(`DESIGN.md` §8a), `E3` does both. Outcomes land in
-`escrow/evidence/experiments.json` as CONFIRMED / REFUTED / INCONCLUSIVE. Each
-is a workaround that should be deleted when its experiment comes back
-CONFIRMED on your Nix — and not before.
+`E0` is the control on the current defaults. `E1` drops the `dummy0`
+route-to-nowhere interface (`DESIGN.md` §8), `E2` drops the manual flake-input
+restore so Nix substitutes locked inputs itself (`DESIGN.md` §8a), `E3` does
+both. Outcomes land in `escrow/evidence/experiments.json` as CONFIRMED /
+REFUTED / INCONCLUSIVE. Each is a workaround that should be deleted when its
+experiment comes back CONFIRMED on your Nix — and not before.
+
+`E0` is load-bearing: a broken escrow makes every variant fail, and a naive
+`FAIL → REFUTED` would then write a confident "the workaround IS needed" that
+no run supports. So if `E0` is not green, `E1`–`E3` are not run at all and are
+recorded `INCONCLUSIVE`; and `E3` only answers the composition question when
+`E1` and `E2` are each CONFIRMED on their own.
 
 The negative control on its own — the escrow with its sources deleted must
 **fail**:
@@ -324,10 +357,15 @@ wrong `systems`.
   run print `NOT_RUN` rather than vanishing. The v0.1 CLI got this backwards:
   `set -e` plus an acceptance test returning 1 killed the process before the
   report was written, so the report went missing exactly when it was needed.
-* **A broken harness is its own verdict.** Every isolation step is checked, and
-  a half-applied namespace yields `HARNESS_ERROR` — never a `FAIL` that reads
-  as an accusation against the escrow, and never something `--expect-fail`
-  accepts as a negative control.
+* **A broken harness is its own verdict, and so is an unavailable claim.**
+  Every isolation step is checked, and a half-applied namespace yields
+  `HARNESS_ERROR`. A guarantee whose preconditions do not hold yields
+  `MODE_UNSUPPORTED`. Neither is a `FAIL` that reads as an accusation against
+  the escrow, and neither is accepted by `--expect-fail` as a negative control.
+* **Every result names the code that produced it.** Each evidence file carries
+  `provenance` — commit, dirty flag, Nix version, and the SHA-256 of the
+  manifest and closure it judged — and the report prints `TOOL_COMMIT`. A
+  `CONFIRMED` with no commit attached is a rumour.
 * **The report says which machine, and how it knows.** `HOST` is detected and
   printed alongside `HOST_DETECTED_BY`. An earlier version printed a
   hardcoded `HOST=Windows 11` on every machine, in a tool whose stated rule is
