@@ -38,7 +38,10 @@
             pkgs.curl
             pkgs.iproute2
             pkgs.util-linux # unshare
-            pkgs.git # provenance: which commit produced this evidence
+            # No git: the package carries its revision in
+            # share/nix-source-escrow/build-info.json, stamped in at build
+            # time. The runtime git query is only the dev-checkout fallback,
+            # and a checkout has git by definition (and in the devShell).
           ];
 
           # The package has no .git (the src filter drops it) and an immutable
@@ -62,7 +65,7 @@
             makeWrapper "$out/bin/.nix-source-escrow-wrapped" "$out/bin/nix-source-escrow" \
               --prefix PATH : "${pkgs.lib.makeBinPath [
                 pkgs.jq pkgs.coreutils pkgs.gnused pkgs.gnugrep pkgs.gawk
-                pkgs.curl pkgs.iproute2 pkgs.util-linux pkgs.git
+                pkgs.curl pkgs.iproute2 pkgs.util-linux
               ]}"
             runHook postInstall
           '';

@@ -208,7 +208,7 @@ re-run on the current code**; do that before quoting a number here.
 | `t16` | a remote escrow (a real HTTP binary cache) is materialised into a local proof replica before isolation, the evidence names both ends, and a `file://` escrow is still used directly |
 | `t17` | every evidence file records the revision that produced it, whether the tree was dirty, and the hash of the manifest it judged |
 | `t18` | proving one guarantee against an escrow preserved for another yields `MODE_UNSUPPORTED`, runs no build, names the mismatch rather than the escrow, and is refused as a negative control |
-| `t19` | the **built package** reports a stamped revision and `revisionSource=flake` — the case a test against `$PWD/bin` cannot see |
+| `t19` | the **built package** reports a stamped revision, `revisionSource=flake`, the exact tested HEAD, and a clean source tree — the case a test against `$PWD/bin` cannot see |
 
 Two checks earned their keep during development. `t06`'s content-identity check
 caught a bug in the *test harness* that wrote through a hardlink and corrupted a
@@ -267,7 +267,7 @@ claimed more than the data supported.
 | | defect | fix |
 |---|---|---|
 | **P0** | `--escrow-store` / `--escrow-substituter` accepted any Nix store URL, and PROVE then configured that URL as `substituters` **inside a namespace with no route**. A remote escrow is exactly as unreachable in there as GitHub is, so "the escrow was the only substituter" described a store the test could not reach. "First-class target" was a claim about storage stated as a claim about acceptance. | A non-local escrow is materialised into a local **proof replica** before isolation, and the test replays from that. The evidence records both ends and which was used (`replaySource.durableEscrow`, `escrowUsedByTest`, `escrowMode`, `escrowObjects`), and the docs now separate storage target from acceptance target. Test `t16` runs it against a real HTTP binary cache. `DESIGN.md` §13. |
-| **P0** | `SOURCE_ORIGIN_INDEPENDENCE` filled its binary replica with `closure − sources` copied out of the **staging store**. Staging builds locally whatever it cannot substitute, so an object this machine produced was served to the test as though the approved cache had it — and the evidence read "works given the approved binary tier" about a tier that may never have held it. A fidelity problem, not a trust problem. | The replica is filled **from `--binary-tier` and from nothing else**. `.drv` paths are asked of nobody (the test instantiates them). What the tier lacks is provided to nobody and rebuilt inside the test — correct, and a stronger test. An object staging did *not* build (it carries a cache signature) that the tier also lacks makes the claim unavailable: a new `MODE_UNSUPPORTED` verdict, refused by `--expect-fail`. Tests `t15.1`–`t15.15`. `DESIGN.md` §12. |
+| **P0** | `SOURCE_ORIGIN_INDEPENDENCE` filled its binary replica with `closure − sources` copied out of the **staging store**. Staging builds locally whatever it cannot substitute, so an object this machine produced was served to the test as though the approved cache had it — and the evidence read "works given the approved binary tier" about a tier that may never have held it. A fidelity problem, not a trust problem. | The replica is filled **from `--binary-tier` and from nothing else**. `.drv` paths are asked of nobody (the test instantiates them). What the tier lacks is supplied by nobody, so anything the build needs from that set it has to build — correct, and a stronger test. An object staging did *not* build (it carries a cache signature) that the tier also lacks makes the claim unavailable: a new `MODE_UNSUPPORTED` verdict, refused by `--expect-fail`. Tests `t15.1`–`t15.15`. `DESIGN.md` §12. |
 | **P1** | `experiments.sh` mapped `FAIL → REFUTED` unconditionally. With a broken escrow every variant fails, so it would have written a confident `dummyInterfaceStillNeeded: true` that no run supported — the most confident wrong answer this repository could produce. | `E0` is a baseline: if it is not green, `E1`–`E3` are not run and are recorded `INCONCLUSIVE` with the reason. `E3` is `INCONCLUSIVE` unless `E1` and `E2` are each CONFIRMED alone. `HARNESS_ERROR` / `MODE_UNSUPPORTED` are inconclusive, never refutations. The conclusion fields are `null` when unknown instead of guessing. The rules are a pure function, unit-tested by `u10.1`–`u10.14`. |
 | **P1** | Under `SOURCE_ORIGIN_INDEPENDENCE` the post-build presence check still carried the `ESCROW_REPLAY` argument — "the store was empty and nothing was reachable, so it came from the escrow". With two substituters configured, and an approved cache that may well carry source FODs, that no longer follows. | The escrow is asked directly, before isolation, whether it holds every plan-required source; the count is recorded as `sourcesInEscrowBeforeIsolation` and a shortfall is a `FAIL`. This also makes `test-origin-independence` sound standalone instead of quietly depending on someone having run `verify` first. Test `t15.9`. `DESIGN.md` §11. |
 | **P1** | Nothing bound a result to the code that produced it. `E1 = CONFIRMED` two commits later is a rumour. | Every evidence file carries `provenance`: commit, dirty flag (untracked files count), Nix version, and the SHA-256 of the manifest and closure it judged. The report prints `TOOL_COMMIT`. Tests `u11`, `t17`. `DESIGN.md` §14. |
@@ -426,10 +426,13 @@ below it is written but unmeasured.
    `./tests/experiments.sh`, then `nix build .#nix-source-escrow` and
    `./result/bin/nix-source-escrow --help`, then replace the report block in
    this file with the new `escrow/evidence/report.txt`. Until then this file
-   documents v0.1.0 and three change sets, not a result. Accept the new
-   evidence only if `provenance.toolRevision` names the tested HEAD and
-   `workingTreeDirty` is `false` — a result measured on a dirty tree is a
-   result about nothing in particular. Watch `t15.18`
+   documents v0.1.0 and four change sets, not a result. That acceptance rule —
+   `provenance.toolRevision` names the tested HEAD and `workingTreeDirty` is
+   `false` — is now asserted by `t19.6` and `t19.7` rather than left to a
+   reviewer, so run the suite on a **committed, clean** tree: a result measured
+   on a dirty tree is a result about nothing in particular. Do not use
+   `NSE_TEST_REUSE=1` for the first official run; inherit no staging or escrow
+   from the previous semantics. Watch `t15.18`
    (`notProvidedReachableByTest`) in particular: if it is non-zero, a closure
    copy is reaching further than the accounting claims and the "rebuilt inside
    the test" wording needs revisiting, not the assertion.

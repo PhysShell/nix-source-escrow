@@ -44,7 +44,7 @@ nse_guarantee_proves() {
     escrow-replay)
       printf 'the accepted build completes with every dependency origin and every third-party binary cache unreachable, from an empty store, using only the escrow\n' ;;
     source-origin-independence)
-      printf 'the accepted build completes with every dependency origin unreachable, from an empty store, using the escrow for source material and a replica of the approved binary tier for prebuilt objects; everything neither escrowed nor held by that tier was rebuilt inside the test\n' ;;
+      printf 'the accepted build completes with every dependency origin unreachable, from an empty store, using the escrow for source material and a replica of the approved binary tier for prebuilt objects; anything the build actually needed that neither of those supplied had to be built inside the test\n' ;;
   esac
 }
 nse_guarantee_excludes() {
@@ -176,10 +176,11 @@ nse_prove() {
   # arrived". Measure the stores the test will use, rather than reporting the
   # size of the request as though it were the size of the result.
   #
-  # The check that matters: nothing from notProvidedPaths may be reachable. We
-  # said the acceptance build has to instantiate or rebuild those, and if a
-  # closure copy quietly put one next to it, the claim "it was rebuilt" is
-  # false and the run is a demonstration of nothing.
+  # The check that matters: nothing from notProvidedPaths may be reachable. The
+  # claim is not that every one of them WAS built -- the build may never need a
+  # given path, and forcing it to would be busywork -- it is that none of them
+  # could have been obtained instead of built. A closure copy that quietly put
+  # one next to the build breaks exactly that, so it is measured.
   jq -r '(.notProvidedPaths // [])[]' "$closure" | LC_ALL=C sort -u \
     > "$work/prove-not-provided.txt"
   LC_ALL=C sort -u "$work/prove-escrow-set.txt" "$work/prove-replica-set.txt" \
@@ -633,7 +634,7 @@ elif [ "$substituters_ok" != true ]; then
   reason="substituters were '$effective_substituters', expected exactly '$NSE_SUBSTITUTERS'"
 elif [ "${NSE_REPLAY_AUDITED:-false}" = true ] && [ "${NSE_REPLAY_LEAK:-0}" -ne 0 ]; then
   result=FAIL
-  reason="$NSE_REPLAY_LEAK object(s) the manifest says are provided to nobody were reachable from the test's substituters anyway (nix copy copies closures); 'the test rebuilt them' would not be true"
+  reason="$NSE_REPLAY_LEAK object(s) the manifest says are provided to nobody were reachable from the test's substituters anyway (nix copy copies closures); anything the build needed from that set could have been obtained rather than built"
 elif [ "$NSE_SOURCES_IN_ESCROW" -ne "$NSE_SOURCES_REQUIRED" ]; then
   result=FAIL
   reason="the durable escrow held only $NSE_SOURCES_IN_ESCROW of $NSE_SOURCES_REQUIRED plan-required sources when asked before isolation, so a green build would not be attributable to it"

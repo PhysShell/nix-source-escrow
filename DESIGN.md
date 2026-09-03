@@ -673,8 +673,16 @@ realised closure
 `replicaPaths = tierCandidates ∩ tier`, `notProvidedPaths = closure −
 escrowPaths − replicaPaths`, and `closure.json` records all three so the
 partition is checkable rather than assertable. Nothing anywhere reads a
-signature. The acceptance build is the judge: it rebuilds what nobody supplied,
-or it fails, and either way that is a measurement.
+signature. The acceptance build is the judge: whatever it needs and nobody
+supplied, it has to build, or it fails — and either way that is a measurement.
+
+One sentence of care about the claim. `notProvidedPaths` is "supplied by
+nobody", **not** "built by the test". A build-time dependency of an object the
+tier does supply is never needed in the replay at all, so it is neither
+supplied nor built, and that is a perfectly correct `PASS`. What the guarantee
+therefore says is the narrower and true thing: *anything the build actually
+needed that neither the escrow nor the tier supplied had to be built inside the
+test.* An earlier version of `guarantee.proves` claimed the wider one.
 
 **What `MODE_UNSUPPORTED` is actually for.** Not "one particular cache lacks
 one particular path" — that is a data condition a real build can resolve by
@@ -748,10 +756,11 @@ REPLAY_OBJECTS_REQUESTED=53
 ```
 
 That last line is the one that matters. Under `SOURCE_ORIGIN_INDEPENDENCE` the
-manifest says a set of objects is provided to nobody and the test must rebuild
-them. If a closure copy quietly put one of them next to the build, "it was
-rebuilt" is false and the run demonstrates nothing — so a non-zero
-`notProvidedReachableByTest` is a `FAIL` with that reason, not a footnote.
+manifest says a set of objects is supplied by nobody, so anything the build
+needs from that set it has to build. If a closure copy quietly put one of them
+next to the build, that stops being true — the object could have been obtained
+instead — so a non-zero `notProvidedReachableByTest` is a `FAIL` with that
+reason, not a footnote.
 
 **What this establishes.** Before isolation: the durable escrow was asked for
 every object and produced every one of them. After isolation: that exact set

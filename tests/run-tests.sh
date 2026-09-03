@@ -603,6 +603,20 @@ else
   assert_eq "t19.5 the report prints a resolvable TOOL_COMMIT" \
     "0" "$("$PKG/bin/nix-source-escrow" report --escrow-dir "$PKGDIR" 2>/dev/null \
            | grep -c '^TOOL_COMMIT=unknown')"
+
+  # "there is some SHA in there" is too human a check for a file whose whole
+  # job is binding a result to a revision. This is the stated acceptance rule
+  # for new evidence, so it is asserted rather than left to a reviewer.
+  EXPECTED_REV=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo no-git)
+  if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
+    echo "  note: the working tree is DIRTY, so the package cannot name the tested"
+    echo "        HEAD -- it reports <rev>-dirty. Commit before producing evidence;"
+    echo "        t19.6 and t19.7 are the acceptance rule, not a nit."
+  fi
+  assert_eq "t19.6 the packaged revision is the exact tested HEAD" \
+    "$EXPECTED_REV" "$(jq -r '.provenance.toolRevision' "$PKGENV")"
+  assert_eq "t19.7 and the source it was built from was clean" \
+    "false" "$(jq -r '.provenance.workingTreeDirty' "$PKGENV")"
 fi
 
 # ---------------------------------------------------------------------------

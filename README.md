@@ -375,7 +375,8 @@ wrong `systems`.
 * **Requested is not reachable.** `nix copy` copies closures, so the stores the
   test can actually read are listed and counted, not inferred from the size of
   the request. Anything the manifest says is provided to nobody but turns out
-  to be reachable is a `FAIL`: "the test rebuilt it" would not be true.
+  to be reachable is a `FAIL`: anything the build needed from that set could
+  then have been obtained rather than built.
 * **Every result names the code that produced it.** Each evidence file carries
   `provenance` — revision, where that revision came from, dirty flag, Nix
   version, and the SHA-256 of the manifest and closure it judged — and the
