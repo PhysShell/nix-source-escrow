@@ -1,4 +1,4 @@
-# EVIDENCE — v0.1
+# EVIDENCE
 
 Facts from an actual run, not a summary of intent. Reproduce with:
 
@@ -7,20 +7,36 @@ nix develop
 nix-source-escrow escrow "path:$PWD/fixture#default"
 ```
 
-The run below started by deleting `escrow/` entirely, so the staging store was
-cold and every artefact was re-fetched from its origin before being preserved.
-Machine-readable originals live in `escrow/evidence/*.json`; the block below is
-`escrow/evidence/report.txt` verbatim, with the repository path shortened.
+> **Status of this file.** The report block below is the **v0.1.0** run,
+> verbatim. It predates the second review and the changes made in response to
+> it, and it is kept because it is the record of what was actually measured
+> then — including, in plain sight on the third line, the `HOST=Windows 11`
+> literal that this file used to present as a measured fact.
+>
+> It is **not** the current output. The current report prints extra lines
+> (`HOST_DETECTED_BY`, `GUARANTEE`, `ISOLATION_SETUP`, `DUMMY_INTERFACE`,
+> `FLAKE_INPUT_RESTORE`, `STORE_URL` / `SUBSTITUTER_URL`), `manifest.json` and
+> `closure.json` are at schema 2, and `origin-independence.json` carries a
+> `guarantee` object. **Re-run before quoting any of this**, and replace the
+> block with the new output. Nothing below has been re-measured on the current
+> code; the shell-level units (`tests/unit-shell.sh`, 44 checks) are the only
+> part of this change set with a recorded result, and they pass.
+
+The v0.1.0 run below started by deleting `escrow/` entirely, so the staging
+store was cold and every artefact was re-fetched from its origin before being
+preserved. Machine-readable originals live in `escrow/evidence/*.json`; the
+block below is `escrow/evidence/report.txt` verbatim, with the repository path
+shortened.
 
 ---
 
-## Result
+## Result (v0.1.0, superseded)
 
 ```text
 ENVIRONMENT
 NIX_VERSION=2.34.7
 SYSTEM=x86_64-linux
-HOST=Windows 11
+HOST=Windows 11          <-- the defect: a literal, printed on every machine
 EXECUTION_ENV=WSL2/NixOS 26.11 (Zokor)
 KERNEL=Linux 6.18.33.2-microsoft-standard-WSL2
 CLIENT_IS_TRUSTED_USER=true
@@ -164,7 +180,11 @@ refuse.
 
 ## Automated tests
 
-`nix develop -c ./tests/run-tests.sh` — **72/72 passed**.
+`./tests/unit-shell.sh` — **44/44 passed** on the current code (no Nix needed).
+
+`nix develop -c ./tests/run-tests.sh` — **72/72 passed on v0.1.0**. The suite
+has grown four groups since (`t00`, `t13`, `t14`, `t15`) and **has not been
+re-run on the current code**; do that before quoting a number here.
 
 | group | what it pins down |
 |---|---|
@@ -180,6 +200,10 @@ refuse.
 | `t10` | `postFetch`: **one URL, three distinct Nix identities**, with `stripRoot` isolated as the only variable between two of them |
 | `t11` | flake inputs are locked to a real forge that was demonstrably unreachable, and every one of them — transitive included — was served from the escrow |
 | `t12` | **isolation guard**: a control run yields `NOT_ISOLATED` and exits non-zero; a run that claims isolation but has none is caught by the connectivity probes alone |
+| `t00` | the shell-level units (`tests/unit-shell.sh`): URL parsing and backend naming, presence as a set operation, batching with no ARG_MAX bomb, measured host detection, a report on every failure shape |
+| `t13` | the report's `HOST` is the value `environment.json` recorded, verbatim, with the detection method beside it; the guarantee and its *does not prove* line are printed |
+| `t14` | a failed isolation setup (a deliberately broken `ip` on `PATH`) yields `HARNESS_ERROR`, names the failed operations, does not blame the escrow, and is refused as a negative control |
+| `t15` | `SOURCE_ORIGIN_INDEPENDENCE` end to end: a smaller escrow, a populated binary replica, every plan-required source and flake input still in the escrow itself, and a verdict that explicitly declines the stronger claim |
 
 Two checks earned their keep during development. `t06`'s content-identity check
 caught a bug in the *test harness* that wrote through a hardlink and corrupted a
@@ -189,7 +213,7 @@ see below.
 
 ---
 
-## Defects found in review, and what changed
+## Defects found in the first review, and what changed
 
 An external review of the first iteration found five. All are fixed and each now
 has a test that fails if it returns.
@@ -201,6 +225,30 @@ has a test that fails if it returns.
 | **P2** | Flake-input discovery read only root inputs and assumed the alias equalled the lock node id, so transitive inputs, `follows` and renamed nodes could be missing from the manifest and from verification. | Discovery now walks the full archive tree and the lock node graph in lockstep, resolves `follows` arrays from the root, and deduplicates by store path. The fixture was extended to contain all four cases. Tests `t01.2a`–`t01.2e`. `DESIGN.md` §6. |
 | **P2** | `ESCROW_DISCOVERY_COMPLETE=PASS` while the same report admitted eval-time `builtins.fetch*` were unenumerated — the exact "`UNKNOWN` silently becomes `PASS`" failure the status model exists to prevent. | Added an offline evaluation probe inside the acceptance test, and a third value: completeness is `UNVERIFIED` until that probe has passed under real isolation. Test `t07.10`. `DESIGN.md` §5. |
 | **P2** | The `postFetch` test claimed "one URL, three identities", but the third identity (`fetchFromGitHub`) came from a *different* URL, and no test isolated `stripRoot` as a single variable. | The fixture gained a fourth source: `fetchzip` of the same URL with `stripRoot = true`. Three identities now genuinely come from one URL, and two of them differ in exactly one attribute. `fetchFromGitHub` is asserted separately. Tests `t10.1`–`t10.6`. `DESIGN.md` §3. |
+
+---
+
+## Defects found in the second review, and what changed
+
+A second external review of v0.1.0. The three P0/P1 correctness defects are
+fixed with a test each; the architectural findings changed the shape of the
+tool.
+
+| | defect | fix |
+|---|---|---|
+| **P0** | `HOST=Windows 11` was a **literal** in `lib/report.sh`, printed in every report on every machine — in a tool whose stated rule is that the report says what was demonstrated. It reached this file as a measured fact. | `nse_detect_host` measures it (WSL2 / virtualisation / container / not determined) and records *how it decided*; the report prints `HOST` and `HOST_DETECTED_BY` from that record. `NSE_HOST` lets an operator state one, labelled as operator-supplied. Tests `u05`, `t13`, and a source-wide grep (`u07`). |
+| **P0** | With `set -e`, a `nse_prove` returning 1 killed the `escrow` command **before** the report was written. The report disappeared exactly when it was needed. | The pipeline accumulates stage failures and an `EXIT` trap writes the report on success, on failure, and on an abort inside a stage. Sections with no input print `NOT_RUN`; a run with no evidence at all prints `REPORT=INSUFFICIENT_STATE` rather than nothing. Tests `u08.1`–`u08.9`. |
+| **P0** | The `ip link add dummy0` sequence ran unchecked under `set -uo pipefail`. On a kernel with no `dummy` module the interface never appeared and the run reported `FAIL` — *"build failed under origin blackout"* — blaming the escrow for a broken harness. | Every isolation operation is checked. A failure yields a distinct `HARNESS_ERROR` verdict, records which operations failed, and is refused by `--expect-fail`. Test `t14`. `DESIGN.md` §8, §11. |
+| **P1** | `preserve` ran one `nix path-info` process **per store path** to decide staging-vs-host: 874 processes on the fixture. It then passed the whole path list on one `nix copy` command line — an `Argument list too long` waiting for a real closure. | The staging requisites query already answers the question, so the split is set arithmetic (`comm`) over lists Nix produced once. Copies go through `nse_nix_batched` (default 256 paths per invocation). Tests `u04.1`–`u04.5`. `DESIGN.md` §7. |
+| **P1** | PROVE asserted `substituters == file://$NSE_CACHE`, so the escrow could only ever be a directory this tool created. An organisation's existing Attic / S3 / Artifactory cache could not be used at all. | The escrow is a URL: `--escrow-store` for writes, `--escrow-substituter` for reads, `--binary-replica` for the source-only mode. Presence, content identity and trust composition all go through backend-neutral `nix path-info`, so `file://` is the default rather than the architecture. Tests `u01`, `u02`, `t02.6`–`t02.9`. `DESIGN.md` §10. |
+| **P1** | One name, `ORIGIN_INDEPENDENCE`, covered a claim that costs a copy of the whole realised closure. Running that on every dependency bump is a tax, not a gate. | Two named guarantees: `ESCROW_REPLAY` (default, unchanged strength) and `SOURCE_ORIGIN_INDEPENDENCE` (source material escrowed, approved binary tier allowed). Both write `proves` / `doesNotProve` strings into the evidence so the weak one cannot be quoted as the strong one. Test `t15`. `DESIGN.md` §12. |
+| **P1** | `DESIGN.md` §3 claimed the SWH bridge was blocked by `postFetch` replay in general. That is too broad: SWH carries `nar-sha256` ExtIDs, so a directory can be looked up by the exact Nix identity, and replay never enters the picture on a hit. | §1 and §3 rewritten around *exact ExtID first, reconstruction on a miss*. The rule is now "replay is unnecessary exactly when the archive holds an object whose ExtID equals the expected Nix identity" rather than an enumeration of fetcher features. |
+| **P1** | The manual flake-input restore proves `nix copy` works, not that a stock consumer with a `flake.lock` and a substituter gets its inputs. | `--native-input-restore` runs the primary path the way a consumer would; the manual copy stays as a diagnostic. Which one becomes the default is decided by experiment `E2`, not by argument. `DESIGN.md` §8a. |
+| **P1** | The `dummy0` route-to-nowhere interface is probably unnecessary: Nix only auto-disables substitution when `substitute` is not an explicit override, and the test never set it. | `substitute = true` is now set explicitly. The interface is still created by default — reading `src/nix/main.cc` is not this repo's standard of evidence — and `tests/experiments.sh` `E1` is the run that decides whether it goes. |
+
+Two of these were fixed by argument alone and are therefore **not yet
+demonstrated**: `E1` and `E2` are hypotheses with an experiment attached, not
+results. See KNOWN_GAPS 17.
 
 ---
 
@@ -218,7 +266,9 @@ Honest list. None of these are hidden behind a green result.
 2. **161 of 165 discovered sources are not preserved.** They are the nixpkgs
    bootstrap sources, never fetched because their consumers arrive as prebuilt
    binaries. Reported explicitly as `SOURCES_DISCOVERED_NOT_REQUIRED_BY_PLAN`.
-   Mirroring them is `nixpkgs-swh`'s job.
+   Mirroring them is `nixpkgs-swh`'s job. This is unchanged by the guarantee
+   modes: `SOURCE_ORIGIN_INDEPENDENCE` narrows what is *escrowed*, not what is
+   *discovered*.
 3. The guarantee is per-installable and per-system. Other outputs of the same
    flake, other systems, or a different `nixpkgs.config` produce a different
    graph and need their own run.
@@ -250,14 +300,18 @@ Honest list. None of these are hidden behind a green result.
 
 **Recovery**
 
-8. **No Software Heritage bridge.** The ExtID → SWHID → vault-cook → verify
-   model is researched and written down (`DESIGN.md` §1) but **not implemented
-   and not validated**. No claim of SWH recoverability is made here.
+8. **No Software Heritage bridge.** The recovery model — exact `nar-sha256` /
+   `checksum-*` ExtID lookup first, revision/origin recovery next,
+   reconstruction only on a miss — is researched and written down
+   (`DESIGN.md` §1) but **not implemented and not validated**. Not one SWH
+   request has ever been made from this code. No claim of SWH recoverability
+   is made here.
 9. **`postFetch` replay is unsolved** (`DESIGN.md` §3). Recovering the upstream
    artefact from any archive does not reconstruct a `fetchzip`-class output; you
    must replay unpack + `stripRoot` + the caller's shell in the same `stdenv`
-   and land on the same NAR hash. This is the blocker for item 8, and it is a
-   design constraint, not a TODO.
+   and land on the same NAR hash. It is the *fallback* path for item 8, not a
+   precondition for it — an earlier version of this list said otherwise, and
+   `DESIGN.md` §3 now explains why that was too broad.
 10. `RECOVER` in v0.1 means "the origin, or the escrow". There is no repair path
     for the two `EXTERNAL_RECOVERY` sources beyond the escrow itself and the
     manual `nix-store --add-fixed` procedure nixpkgs documents.
@@ -266,36 +320,83 @@ Honest list. None of these are hidden behind a green result.
 
 11. The acceptance test needs unprivileged user namespaces. It will not run
     where those are disabled.
-12. The test depends on a **behavioural workaround for Nix 2.34.7**: Nix
-    disables all substituters, including `file://` ones, when it decides there
-    is no Internet, so the namespace carries a dummy interface with a route to
-    nowhere (`DESIGN.md` §8). If a future Nix changes that heuristic, revisit.
-    The workaround does not weaken the isolation — the by-address probes prove
-    it, and `t12` proves the verdict does not depend on trusting it.
+12. The test still carries a **behavioural workaround for Nix 2.34.7**: a dummy
+    interface with a route to nowhere, because Nix disables all substituters —
+    `file://` ones included — when it decides there is no Internet
+    (`DESIGN.md` §8). `substitute = true` is now set explicitly and should make
+    it unnecessary, but that is a reading of the Nix sources, not a run. The
+    workaround does not weaken the isolation — the by-address probes prove it,
+    and `t12` proves the verdict does not depend on trusting it.
 13. Trust results are measured on Nix 2.34.7 with this daemon configuration.
     `t09` will fail loudly if that changes, which is the intent.
-14. The escrow is one local directory. No replication, no GC policy, no
-    multi-user access control, no S3 backend. Deliberate for v0.1.
+14. The escrow is addressed by URL and `s3://`, `https://` and `ssh-ng://`
+    backends are wired through the same code as `file://` — but **only the
+    `file://` backend has ever been run**. The non-file path uses
+    `nix path-info --json` for presence and trust classification instead of
+    reading narinfo files, and that branch is untested against a real Attic or
+    S3 cache. There is still no replication, GC policy or access control.
 15. `preserve` requires network — it is the step that fetches from origins while
     they still exist. Only `verify` and the acceptance test are offline.
 16. The acceptance test proves the *escrow* served the sources by elimination
     (empty store, no route, escrow-only substituters). It does not parse
     per-object provenance out of the Nix log.
 
+**The second guarantee**
+
+17. **`E1` and `E2` are unrun experiments, not results.** `substitute = true`
+    should retire the dummy interface, and Nix should substitute locked flake
+    inputs without our manual copy. Both are read out of the Nix sources; both
+    default to the old behaviour until `tests/experiments.sh` says otherwise on
+    a real Nix.
+18. `SOURCE_ORIGIN_INDEPENDENCE` models "your approved binary cache is still
+    up" with a **local replica**, because the harness cuts all egress rather
+    than filtering it selectively. That is an honest model of availability and
+    no model at all of trust: the replica is deliberately not part of the
+    escrow and not archived with it. A version that keeps origins blocked while
+    a real approved cache stays reachable needs a filtering proxy the harness
+    does not have.
+19. The whole change set answering the second review has been **exercised only
+    by `tests/unit-shell.sh`** (44 checks, all passing, no Nix required). The
+    Nix-dependent suite — including the new `t13`, `t14`, `t15` — has not been
+    run on this code, because the machine it was written on has no Nix. Treat
+    the report block above as a v0.1.0 record until you re-run it.
+
 ---
 
 ## What to do next
 
-In the order the value arrives, and not before this iteration is trusted:
+In the order the value arrives. The first item is not optional: everything
+below it is written but unmeasured.
 
-1. S3/MinIO backend for the escrow (the `file://` layout maps over directly).
-2. Flat-`fetchurl` hashed-mirror layer, reusing the `copy-tarballs.pl` key
+1. **Re-run everything on a machine with Nix.** `./tests/run-tests.sh`, then
+   `./tests/experiments.sh`, then replace the report block in this file with
+   the new `escrow/evidence/report.txt`. Until then this file documents
+   v0.1.0 and a change set, not a result.
+2. **Retire the two workarounds the experiments clear.** If `E1` is CONFIRMED,
+   delete the dummy interface and `DESIGN.md` §8. If `E2` is CONFIRMED, make
+   `--native-input-restore` the default and demote the manual copy to a
+   diagnostic. If either is REFUTED, write down *why* — that is a more
+   interesting finding than the fix.
+3. **Run the escrow against a real remote backend.** Attic or an S3 bucket,
+   end to end, so gap 14 stops being a code path and becomes evidence. This is
+   the change that decides whether the tool is adoptable.
+4. **Make the cheap guarantee the CI gate it was designed to be.** Renovate /
+   `update-flake-lock` integration: `preserve → verify →
+   test-origin-independence --guarantee source-origin-independence` as a
+   required check on the update PR, sharing one staging store, so a dependency
+   bump cannot merge until its sources are in escrow — without copying the
+   world on every bump.
+5. **Then the Software Heritage repair layer**, in the order §1 now describes:
+   exact `nar-sha256` / `checksum-*` ExtID hit first, revision/origin recovery
+   next, reconstruction (Disarchive-style for flat artefacts, `postFetch`
+   replay for the rest) only where the first two miss. An archival *check* per
+   source — the equivalent of `guix lint -c archival` — is the cheap half and
+   is worth doing before the recovery half.
+6. Flat-`fetchurl` hashed-mirror layer, reusing the `copy-tarballs.pl` key
    scheme, for sharing tarballs between organisations.
-3. Renovate / `update-flake-lock` integration: run `preserve → verify →
-   test-origin-independence` as a required check on the update PR, so a
-   dependency bump cannot merge until its sources are in escrow.
-4. A `postFetch` replay experiment (gap 9) — the prerequisite for any honest
-   Software Heritage bridge.
-5. Then, and only then, the SWH repair bridge (gap 8).
-6. Explicit IFD / manual-escrow policy, with a real IFD project as the fixture.
-7. `FULL_AIRGAP_REBUILD` as a separate, separately-named guarantee.
+7. Incremental staging: diff the manifest against the escrow and fetch only
+   what is new. `--staging-dir` already lets several escrows share one warm
+   staging store, which is the cheap half of this.
+8. Explicit IFD / manual-escrow policy, with a real IFD project as the fixture.
+9. `FULL_AIRGAP_REBUILD` as a separate, separately-named guarantee — the third
+   row of `DESIGN.md` §12, and the one that needs signing per §4.

@@ -3,7 +3,9 @@
 Keep the sources a Nix build depends on in storage **you** control, and prove
 with a test that the build survives the death of their origins.
 
-Status: **v0.1 proof of concept.** One guarantee, one fixture, real evidence.
+Status: **proof of concept.** Two implemented guarantees, one fixture, evidence
+you can re-run. The escrow is any Nix store you control; the product is the
+proof around it, not the storage.
 
 ---
 
@@ -25,25 +27,59 @@ instead of a hope:
 > For a dependency graph you have already accepted, are the source inputs in
 > storage you control — and does the build still work when the origins are gone?
 
-## Guarantee, v0.1
+## Guarantees
 
-**`ORIGIN_INDEPENDENCE`** — the accepted build completes while every dependency
-origin is unreachable, using only the escrow.
+Three tiers, named separately, because one word covering all of them is how a
+cheap claim gets quoted as an expensive one.
+
+| guarantee | the escrow holds | the test allows | status |
+|---|---|---|---|
+| `SOURCE_ORIGIN_INDEPENDENCE` | source material only: plan-required fixed-output sources, flake inputs, the flake source | the escrow **plus** your approved binary tier | implemented, `--guarantee source-origin-independence` |
+| **`ESCROW_REPLAY`** | the whole realised closure | the escrow **only** | implemented, **default** |
+| `FULL_AIRGAP_REBUILD` | the whole bootstrap source corpus | the escrow only, and every derivation rebuilt from source | **not implemented**, see `DESIGN.md` §12 |
 
 The acceptance test runs the build in an unprivileged network namespace with no
 route to anything, from a **store that starts empty** and a **cold fetcher and
 eval cache**. Origins are probed both by name and by an address resolved before
 entering the namespace, so "it only broke DNS" is not an available explanation.
 
-In this repository, on the machine in `EVIDENCE.md`, that test passes.
+`ESCROW_REPLAY` is the default because it is the strongest claim this harness
+can demonstrate — nobody should get the weaker one by accident.
+`SOURCE_ORIGIN_INDEPENDENCE` exists because the strong one costs a copy of the
+entire realised closure (874 objects, 87 MB, for a fixture that consumes four
+sources), which is a tax rather than a gate if you want it on every dependency
+bump. It proves that losing the *source origins* does not break the build, and
+it says out loud, in the report, that it proves nothing about losing the binary
+tier.
 
 ### Explicitly *not* the guarantee
 
-**`FULL_AIRGAP_REBUILD`** — rebuilding everything from source with no trusted
-binary substituter — is a different, larger claim. The escrow here holds
+`FULL_AIRGAP_REBUILD` is a different, larger claim. The escrow here holds
 prebuilt binaries that originally came from `cache.nixos.org` with its
-signatures. A green `ORIGIN_INDEPENDENCE` does not imply B, and this repo never
-says it does. See `DESIGN.md` §9.
+signatures. A green `ESCROW_REPLAY` does not imply it, and this repo never says
+it does. It also needs signing, for a reason that was measured rather than
+assumed — `DESIGN.md` §4 and §9.
+
+## Where the escrow lives
+
+The escrow is a **URL**, not a directory:
+
+```bash
+# the default: a file:// binary cache under ./escrow
+nix-source-escrow escrow "path:$PWD/fixture#default"
+
+# an Attic / S3 / Artifactory Nix repository you already run
+nix-source-escrow escrow ".#default" \
+  --escrow-store       "s3://our-escrow?region=eu-west-1" \
+  --escrow-substituter "https://cache.example.com/escrow"
+```
+
+`--escrow-store` is where `preserve` writes; `--escrow-substituter` is what
+`verify` and the acceptance test read. They are two settings because once the
+escrow stops being a directory on your laptop, "the store I push to" and "the
+substituter a consumer configures" stop being the same string. Backend
+credentials go through `NSE_EXTRA_NIX_CONFIG` (`netrc-file`, `access-tokens`,
+the `aws-*` settings) — this tool adds no credential handling of its own.
 
 ## Non-goals
 
@@ -53,13 +89,17 @@ Not built, on purpose:
   `nvfetcher` exist. The escrow is a **gate around their output**:
   `candidate -> preserve -> verify -> acceptance test -> only then mergeable`;
 * a replacement for `fetchFromGitHub` or any fetcher;
-* a binary-cache protocol, an object store, or a cache server (a directory is
-  enough to prove the guarantee);
+* a binary-cache protocol, an object store, or a cache server — the escrow is
+  whatever Nix store you already run, addressed by URL. A `file://` directory
+  is the default because it is enough to prove the guarantee, not because it is
+  the architecture;
 * a custom Nix daemon, a build proxy, a GUI, a provenance database, an SBOM
   framework, GC or replication policy;
-* a Software Heritage bridge. SWH is prior art and a plausible *repair* backend,
-  not our substituter, and a correct bridge is blocked on a real problem —
-  `DESIGN.md` §1 and §3.
+* a Software Heritage bridge. SWH is prior art and the right *repair* backend,
+  not a substituter — there is no `narinfo` endpoint and the vault cook is
+  asynchronous. The recovery algorithm is written down (exact `nar-sha256`
+  ExtID lookup first, reconstruction only on a miss) and **not implemented
+  here**; `DESIGN.md` §1 and §3.
 
 ## Architecture
 
@@ -76,8 +116,9 @@ Not built, on purpose:
                                   |
    +------------------------------------------------------------------+
    |  PRESERVE   build into a fresh staging store (never trust yours)  |
-   |             nix flake archive --to  |  nix copy --to              |
-   |                     -> escrow/cache : a file:// binary cache      |
+   |             nix flake archive --to  |  nix copy --to  (batched)   |
+   |                     -> --escrow-store URL                         |
+   |                        file:// (default) | s3:// | https:// | ... |
    +------------------------------------------------------------------+
                                   |
    +------------------------------------------------------------------+
@@ -88,11 +129,13 @@ Not built, on purpose:
                                   |
    +------------------------------------------------------------------+
    |  PROVE      unshare -Ur --net --mount, empty store, cold caches   |
+   |             substituters := --escrow-substituter URL              |
    |             probe reachability (by name AND by address)           |
    |             evaluate offline  <- the only cover for eval-time     |
    |                                  builtins.fetch*                  |
    |             build                                                 |
-   |   ORIGIN_INDEPENDENCE = PASS | FAIL | NOT_ISOLATED                |
+   |   ORIGIN_INDEPENDENCE =                                           |
+   |       PASS | FAIL | NOT_ISOLATED | HARNESS_ERROR                  |
    +------------------------------------------------------------------+
                                   |
                    RECOVER (v0.1: origin only; SWH = extension point)
@@ -126,6 +169,9 @@ nix-source-escrow report
 Tests:
 
 ```bash
+# shell-level units: no Nix, no network, no namespaces. Runs anywhere.
+./tests/unit-shell.sh
+
 # default: re-creates the escrow from nothing, then runs every test
 nix develop -c ./tests/run-tests.sh
 
@@ -133,8 +179,25 @@ nix develop -c ./tests/run-tests.sh
 # it always starts from an empty test store with cold caches either way)
 nix develop -c env NSE_TEST_REUSE=1 ./tests/run-tests.sh
 
+# skip the second, source-only escrow if you only want the strict mode
+nix develop -c env NSE_TEST_SKIP_MODES=1 ./tests/run-tests.sh
+
 nix flake check                                            # shellcheck
 ```
+
+Experiments — questions this repo has read the answer to in the Nix sources but
+has not yet *run*, so they are not called results:
+
+```bash
+nix develop -c ./tests/experiments.sh
+```
+
+`E1` drops the `dummy0` route-to-nowhere interface (`DESIGN.md` §8), `E2` drops
+the manual flake-input restore so Nix substitutes locked inputs itself
+(`DESIGN.md` §8a), `E3` does both. Outcomes land in
+`escrow/evidence/experiments.json` as CONFIRMED / REFUTED / INCONCLUSIVE. Each
+is a workaround that should be deleted when its experiment comes back
+CONFIRMED on your Nix — and not before.
 
 The negative control on its own — the escrow with its sources deleted must
 **fail**:
@@ -144,19 +207,33 @@ nix-source-escrow test-origin-independence "path:$PWD/fixture#default" \
   --escrow-dir ./escrow/work/tests/nosource --expect-fail
 ```
 
+The cheap guarantee, sharing one staging store so the closure is fetched once:
+
+```bash
+nix-source-escrow escrow "path:$PWD/fixture#default" \
+  --escrow-dir ./escrow-src \
+  --guarantee source-origin-independence \
+  --staging-dir ./escrow/work/staging
+```
+
 ## Output
 
 ```
 escrow/
-  cache/                        the escrow: a file:// binary cache
+  cache/                        the escrow, when the backend is the default file://
+  replica/                      SOURCE_ORIGIN_INDEPENDENCE only: the stand-in for
+                                your approved binary tier. NOT part of the escrow
+                                and not meant to be archived with it
   discovery.json                what was found  (canonical, deterministic)
   manifest.json                 what is preserved (canonical, deterministic)
-  closure.json                  every preserved store path (sorted)
+  closure.json                  every preserved store path, split into
+                                escrowPaths / replicaPaths
   evidence/
     environment.json            probe data, timestamped, kept out of the manifest
     verify.json
     trust.json
     origin-independence.json
+    experiments.json            only after tests/experiments.sh
     report.txt
   work/                         staging store, test store, logs (throwaway)
 ```
@@ -242,6 +319,24 @@ wrong `systems`.
 * **The test can fail.** It starts from an empty store with cold caches, and
   the negative controls (`t08`, `t12`) prove it goes red — for a missing source,
   for a missing namespace, and for isolation that is claimed but absent.
+* **A failed run produces MORE evidence, not less.** The report is written on
+  success, on failure, and on an abort partway through — stages that did not
+  run print `NOT_RUN` rather than vanishing. The v0.1 CLI got this backwards:
+  `set -e` plus an acceptance test returning 1 killed the process before the
+  report was written, so the report went missing exactly when it was needed.
+* **A broken harness is its own verdict.** Every isolation step is checked, and
+  a half-applied namespace yields `HARNESS_ERROR` — never a `FAIL` that reads
+  as an accusation against the escrow, and never something `--expect-fail`
+  accepts as a negative control.
+* **The report says which machine, and how it knows.** `HOST` is detected and
+  printed alongside `HOST_DETECTED_BY`. An earlier version printed a
+  hardcoded `HOST=Windows 11` on every machine, in a tool whose stated rule is
+  the line above it — and that literal reached `EVIDENCE.md` as a measured
+  fact. Test `u05`/`t13` and a source-wide grep now make it a build failure.
+* **Cited is not measured.** Coverage figures borrowed from other projects
+  (`DESIGN.md` §1) are labelled as citations, with the caption they actually
+  support — a per-snapshot percentage is not historical coverage, and
+  "successfully disassembled" is not "recoverable end to end".
 * **No claim about Software Heritage recoverability is made**, because none has
   been demonstrated. `DESIGN.md` §1 and §3.
 

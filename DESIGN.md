@@ -1,49 +1,99 @@
 # DESIGN
 
 Only decisions that were expensive to get right, or that a reader would
-otherwise get wrong. Everything here was measured on the machine described in
-`EVIDENCE.md`, not assumed.
+otherwise get wrong. Everything about *this tool's behaviour* was measured on
+the machine described in `EVIDENCE.md`, not assumed.
+
+Two kinds of statement here are not measurements, and both are labelled where
+they appear: figures quoted from upstream projects (§1), and hypotheses read
+out of the Nix sources that this repository has not yet run (§8, §8a). The
+second kind ships with an experiment — `tests/experiments.sh` — rather than
+with a conclusion.
 
 ---
 
 ## 1. Software Heritage is a repair backend, not a substituter
 
-The tempting design is "add Software Heritage as a substituter and the problem
-is solved". It is wrong, in two independent ways.
+Two claims, and only the first was right in the first draft of this file.
 
-**SWH does not speak the binary-cache protocol.** There is no `narinfo`
-endpoint. The real path is a multi-step recovery:
+**SWH is not a substituter.** There is no `narinfo` endpoint, no store-path
+protocol, and the vault cook that materialises a directory is asynchronous and
+rate-limited. Nothing about it fits inside `substituters`. It is a *repair*
+path: it runs when the escrow has a hole, verifies its result against the
+expected Nix hash, writes that result **into** the escrow, and is then never
+consulted again. Subsequent builds must not depend on it.
+
+**SWH stores only the upstream representation — wrong, and this file said it.**
+Software Heritage carries `ExtID`s that map a foreign identity onto an archived
+object, and the relevant ones here are `nar-sha256` (the Nix/Guix recursive-NAR
+identity of a directory tree) alongside `checksum-sha256` / `checksum-sha512`
+for flat artefacts. Guix has driven git-source fallback through NAR-hash lookup
+since early 2024. So for a large class of objects the archive can be asked the
+*exact* question we care about — "do you hold the tree whose NAR hash is X?" —
+and replay never enters the picture.
+
+That changes the recovery algorithm. Exact identity first, reconstruction only
+as a fallback:
 
 ```
-expected NAR hash
-  -> GET /api/1/extid/nar-sha256/<base64url or hex>/     (ExtID lookup)
-  -> SWHID (swh:1:dir:... or swh:1:cnt:...)
-  -> POST /api/1/vault/flat/<swhid>/                     (asynchronous "cook")
-  -> poll until the bundle is ready, download it
-  -> reconstruct the tree
-  -> re-apply whatever transformations the fetcher applied  (see §3)
-  -> verify the expected Nix hash
-  -> only then: put it in our escrow
+expected Nix identity (NAR hash, or flat sha256/sha512)
+      |
+      +-- GET /api/1/extid/<type>/<hash>/          exact ExtID lookup
+      |      hit -> cook -> download -> re-verify the expected hash -> escrow
+      |
+      +-- miss: no object with this identity is archived
+             |
+             +-- origin/revision recovery (swh:1:rev, swh:1:dir from a VCS origin)
+             +-- Disarchive-style tarball reconstruction for flat artefacts
+             +-- replay: unpack + stripRoot + the caller's postFetch, in the
+                 same stdenv, landing on the same NAR hash          (see §3)
 ```
 
-Steps 3 and 4 are asynchronous and can take minutes. Step 6 is the hard one.
-Nothing about this fits inside `substituters`.
+The correct statement of when replay is needed is therefore **not** a list of
+fetcher features. It is one condition:
 
-**SWH stores the upstream representation, not the Nix output.** For a directory
-ingested from a VCS origin, SWH holds the tree as upstream published it. The Nix
-fixed-output hash frequently refers to a tree *after* unpacking, root-stripping
-and `postFetch` — see §3. `nixpkgs-swh`'s `sources.json` carries a `postFetch`
-field precisely because that information is not recoverable from the archived
-object alone.
+> Replay is unnecessary exactly when the archive already holds an object whose
+> ExtID equals the expected Nix identity. How that object came to be archived
+> is somebody else's problem.
 
-Consequence for v0.1: SWH stays an **explicit extension point**, not a
-dependency. The escrow is the substituter; SWH would be a *repair* path that
-runs when the escrow has a hole, writes its verified result **into** the escrow,
-and is then never consulted again. Subsequent builds must not depend on SWH.
+That is both stronger and shorter than enumerating `postFetch`, `stripRoot =
+false` and submodules as "the cases that need replay" — an enumeration that is
+a guess about coverage dressed as a rule.
 
-This is a design constraint, not a TODO: **we do not claim a working SWH bridge,
-and the recovery model above is unverified in this repository.** Claiming
-otherwise before §3 is solved would be dishonest.
+**What this repository claims about SWH: nothing.** The algorithm above is
+researched and written down. It is **not implemented and not validated here**,
+and no SWH lookup has ever run from this code. It is the post-v0.1 repair
+layer, not a dependency.
+
+**Numbers quoted from upstream, and how to read them.** The Guix/SWH
+integration is far ahead of anything Nix has, and it is tempting to quote its
+coverage figures as if they settled the question. They do not, and the way they
+get misquoted is worth writing down:
+
+| figure | what it actually says |
+|---|---|
+| *Preservation of Guix*, overall: ~85% stored, ~9% missing, ~6% unknown | the whole dataset. Git-origin sources score far higher (~97%) than the aggregate |
+| a ~94% "stored" line in the same report | one weekly snapshot, not historical coverage of everything Guix has ever referenced |
+| Disarchive "97.3% of 41,521 tarballs" | successfully **disassembled** — that is a property of the metadata step, not a promise that 97.3% are recoverable end to end today |
+| SWH API rate limits | published per-IP limits change; the anonymous tier is small and the authenticated tier is larger. Treat any number as current-at-time-of-reading |
+
+Every row above is **cited, not measured in this repository.** The rule this
+repo applies to its own results applies to the ones it borrows: a figure with
+the wrong caption is worse than no figure.
+
+The honest comparison is not "Guix has 94% and we have an escrow". It is:
+
+```
+Guix + SWH               an external preservation service plus automatic
+                         recovery, with best-effort coverage you do not control
+
+nix-source-escrow        operator-controlled preservation plus an acceptance
+                         proof, with coverage you can point at and a test that
+                         goes red when it is wrong
+```
+
+Different trust and availability models. The second is not a replacement for
+the first, and the first is not a reason to skip the second.
 
 ---
 
@@ -110,12 +160,28 @@ a *different* URL and therefore proved less than it claimed. The fixture also
 carries a `fetchFromGitHub` source, and `t10.6` asserts it belongs to the same
 transformation class, separately.
 
-**Why this blocks the SWH bridge.** Recovering "the upstream artefact" from SWH
-and stopping there reconstructs none of these. A correct bridge has to replay
-`unpackFile` + `stripRoot` + the caller's `postFetch` shell, in the same
-`stdenv`, and then land on the same NAR hash. That is a build, not a download,
-and it is version-sensitive. Until it is demonstrated end to end, no claim of
-SWH recoverability should be made.
+**What this does and does not block.** An earlier version of this section drew
+the wrong conclusion from the right observation. The observation stands:
+recovering "the upstream artefact" and stopping there reconstructs none of the
+three rows above. The conclusion — *therefore the SWH bridge is blocked* — was
+too broad, because it assumed the archive can only be asked for upstream
+artefacts. It can also be asked for an object **by its NAR identity** (§1), and
+when that lookup hits, none of this transformation machinery is involved.
+
+So the blocker is narrower than it looked:
+
+* **ExtID hit** — the archive holds an object whose `nar-sha256` (or flat
+  `checksum-sha256`/`sha512`) equals what the derivation demands. Fetch,
+  re-verify, done. No replay, whatever the fetcher did.
+* **ExtID miss** — now the transformation matters, and a correct bridge has to
+  replay `unpackFile` + `stripRoot` + the caller's `postFetch` shell in the
+  same `stdenv` and land on the same NAR hash. That is a build, not a download,
+  and it is version-sensitive.
+
+Replay is the fallback path, not the entry path. Until *that* fallback is
+demonstrated end to end, no claim of universal SWH recoverability should be
+made — but "no SWH bridge is possible until postFetch replay is solved" is not
+a claim this file makes any more.
 
 **Why it does not block v0.1.** The escrow preserves the *fixed-output result*
 — the object Nix actually asks for — so no transformation ever has to be
@@ -263,6 +329,17 @@ This also produces the distinction the manifest reports honestly:
 Preserving all 164 would mean mirroring nixpkgs' source corpus, which is
 `nixpkgs-swh`'s job, not ours.
 
+**One query, not one process per path.** `nix-store --query --requisites
+--include-outputs` in the staging store returns exactly the paths that are
+*valid* there — Nix only follows an output edge for an output it actually has.
+So that single query answers both questions this stage needs: what is in
+staging, and what the plan really realised. An earlier version ran `nix
+path-info` once per path to answer the first one: 874 process startups on the
+fixture, and on a 30k-path closure a lunch break. The same fix applies to the
+copy: `nix copy` is called in batches (`NSE_BATCH_SIZE`, default 256), because
+one command line with 30k store paths on it is an `Argument list too long`
+waiting to happen.
+
 ---
 
 ## 8. Gotcha: Nix disables *all* substituters when it thinks it is offline
@@ -284,32 +361,105 @@ naive air-gapped test fails for a reason that has nothing to do with whether the
 escrow is complete — which is a great way to spend an afternoon debugging the
 wrong thing.
 
-The fix in `prove.sh` is a `dummy0` interface inside the namespace with a
-default route to `10.99.0.254`, an address that does not exist:
+**The workaround, and why it is probably unnecessary.** The original fix was a
+`dummy0` interface inside the namespace with a default route to an address that
+does not exist, which satisfies the heuristic while reaching nothing. But the
+heuristic in `src/nix/main.cc` is conditional:
 
-```
-ip link add dummy0 type dummy
-ip addr add 10.99.0.1/24 dev dummy0
-ip route add default via 10.99.0.254 dev dummy0
+```c++
+if (!args.useNet) {
+    // FIXME: should check for command line overrides only.
+    if (!settings.getWorkerSettings().useSubstitutes.overridden)
+        settings.getWorkerSettings().useSubstitutes = false;
+}
 ```
 
-Nix's heuristic is satisfied; nothing is reachable. The evidence records that:
-every origin is probed both by name **and** by an address resolved *before*
-entering the namespace, and the by-address probes time out (`curl` exit 28, no
-route) rather than merely failing to resolve (`curl` exit 6).
+It only disables substitution when `substitute` is *not* an explicit override —
+and the `FIXME` says config files count as overrides too. The v0.1 test never
+set it. `prove.sh` now sets `substitute = true` in its `NIX_CONFIG`, which by
+this reading makes the dummy interface dead weight.
+
+*By this reading.* Reading the source is not this repository's standard of
+evidence, so the dummy interface is still created by default and its removal is
+an experiment with a defined answer:
+
+```bash
+nix develop -c ./tests/experiments.sh
+```
+
+`E1` runs the acceptance test with `--no-dummy-interface` in a namespace with
+genuinely no route; `E2` drops the manual flake-input restore; `E3` does both.
+The results land in `escrow/evidence/experiments.json` as CONFIRMED / REFUTED.
+When `E1` comes back CONFIRMED on your Nix, the interface and this section go.
+
+**Setup is fail-closed now.** The `ip` commands ran unchecked under `set -uo
+pipefail`. On a kernel with no `dummy` module the interface silently never
+appeared, and the run came back `FAIL` with the reason *"build failed under
+origin blackout"* — an accusation against the escrow for a fault in the
+harness. Every isolation operation is now checked, and a failure produces a
+distinct `HARNESS_ERROR` verdict that `--expect-fail` refuses to accept as a
+negative control. Test `t14` forces it by putting a failing `ip` on `PATH`.
+
+The evidence records what the isolation actually achieved either way: every
+origin is probed both by name **and** by an address resolved *before* entering
+the namespace, and the by-address probes time out (`curl` exit 28, no route)
+rather than merely failing to resolve (`curl` exit 6).
 
 Related: glibc NSS reaches `nscd`/`nsncd` over a **unix socket**, which a
 network namespace does not isolate — so name resolution inside the namespace is
 still answered by the host until you also enter a mount namespace and put a
 tmpfs over `/run/nscd`. It cannot move bytes, but the evidence should not have
-to rely on that argument, so the test does both.
+to rely on that argument, so the test does both. NSS isolation is *graded*
+(`full`/`partial`), not fatal: the by-address probes are what carry the
+argument, so a partial result is reported rather than treated as a harness
+error.
+
+---
+
+## 8a. The flake-input restore proves the wrong thing
+
+Before evaluating offline, `prove.sh` copies the locked flake input paths out
+of the escrow into the test store. That was written on the assumption that a
+locked input is re-fetched from its origin unless the store already holds it.
+
+Nix 2.34.7 says otherwise. `Input::getAccessorUnchecked`:
+
+```c++
+/* The tree may already be in the Nix store, or it could be
+   substituted ... So check that. */
+if (isFinal() && getNarHash()) {
+    auto storePath = computeStorePath(store);
+    store.ensurePath(storePath);
+    ...
+}
+```
+
+The store path is computed from the lock's `narHash` and `ensurePath` will pull
+it from a configured substituter. So the manual copy is not needed — and worse,
+it changes what the test demonstrates:
+
+```
+what we want to prove              what the manual restore proves
+---------------------------        ------------------------------
+consumer with flake.lock           our bash script
+  -> configured substituter          -> nix copy
+  -> gets the input                  -> Nix finds it already in the store
+```
+
+Those are different claims, and only the first one is about a real consumer.
+`--native-input-restore` runs the primary path the real way; `E2` in
+`tests/experiments.sh` is the experiment that decides whether it becomes the
+default. The manual copy stays available as a *diagnostic* of the escrow's
+contents, which is the only thing it was ever good at.
 
 ---
 
 ## 9. Isolation mechanism, and what it does and does not prove
 
-`unshare -Ur --net --mount`, unprivileged. Inside: loopback, the dummy device,
-no route out, no NSS. The build runs against a **local store**
+`unshare -Ur --net --mount`, unprivileged. Inside: loopback, optionally the
+dummy device of §8, no route out, no NSS. Every one of those setup steps is
+checked, and a failure is `HARNESS_ERROR`, not a verdict about the escrow. The
+build runs against a **local store**
 (`nix build --store <dir>`), which matters: a local store is served in-process,
 so the namespace actually contains the fetching. Going through the
 `nix-daemon` would not work — the daemon lives outside the namespace and would
@@ -320,9 +470,12 @@ single-entry uid map: `build-users-group = ` (empty, or Nix tries to chown the
 store to `nixbld`) and `require-drop-supplementary-groups = false` (or
 `setgroups` fails).
 
-**What this proves:** the build completed with every origin — and
-`cache.nixos.org` — unreachable, from a store that started empty, with a cold
-fetcher and eval cache, producing the store path the manifest predicted.
+**What this proves:** under `ESCROW_REPLAY`, the build completed with every
+origin — and `cache.nixos.org` — unreachable, from a store that started empty,
+with a cold fetcher and eval cache, producing the store path the manifest
+predicted. Under `SOURCE_ORIGIN_INDEPENDENCE` the same, except that prebuilt
+objects were allowed to come from the binary replica; see §12 for what that
+does and does not buy.
 
 **What it does not prove:** `FULL_AIRGAP_REBUILD`. The escrow here contains
 prebuilt binaries that originally came from `cache.nixos.org`, carrying its
@@ -349,8 +502,15 @@ Read but not adopted, with reasons:
 * **`nixpkgs-swh`** — the prior art for the ExtID/`sources.json` model, and the
   source of the `postFetch` warning in §3. Not a runtime dependency.
 * **`mirror-nix`** — same shape as what `nix copy --to file://` already does.
-* **Attic / a binary-cache server** — a directory is enough for the acceptance
-  test, and a server would add infrastructure without changing the guarantee.
+* **Attic / a binary-cache server, as something to *build*** — still not built,
+  and now visibly not needed: the escrow is addressed by URL
+  (`--escrow-store` / `--escrow-substituter`), so an existing Attic, S3 bucket,
+  HTTPS cache or Artifactory Nix repository is a first-class target with no
+  code here. A `file://` directory is the default and the demo backend, not the
+  architecture. This is the correction to the v0.1 shape, where PROVE asserted
+  `substituters == file://$PWD/escrow/cache` and therefore could not be pointed
+  at anything an organisation already runs — which was the single largest
+  barrier to the tool being usable by anyone.
 
 Not built, on purpose: a dependency updater (Renovate, `update-flake-lock`,
 `nix-update` and `nvfetcher` already exist — the escrow is a *gate* around
@@ -379,14 +539,25 @@ the ones we had shown to be unreachable.
 The verdict is now ordered, and the environmental preconditions come first:
 
 1. `isolationMode == none` → **`NOT_ISOLATED`**. A control run is a distinct
-   third verdict; it can never be `PASS`, whatever the build did.
+   verdict; it can never be `PASS`, whatever the build did.
 2. any origin reachable by name or by address → `FAIL`.
 3. any origin that failed to resolve *before* isolation → `FAIL`. If we never
    learned its address, we cannot claim we proved it unreachable.
-4. substituters not exactly the escrow → `FAIL`. Otherwise a green build would
-   not tell us where the sources came from.
-5. only then: evaluation, build, restored sources, output path, and zero
+4. an isolation setup operation that failed → **`HARNESS_ERROR`**. Reaching
+   this point means nothing was reachable *and* the harness was only
+   half-applied, which is precisely the state that used to be indistinguishable
+   from an incomplete escrow.
+5. substituters not exactly the set this guarantee allows → `FAIL`. Otherwise a
+   green build would not tell us where the sources came from.
+6. only then: evaluation, build, restored sources, output path, and zero
    http(s) fetches in the log.
+
+Measured reachability comes *before* the harness check on purpose: a reachable
+origin invalidates the run whatever the cause, and it is the more specific
+finding. `HARNESS_ERROR` is what is left when the environment was quiet but the
+harness could not prove it built the environment it claims. Neither verdict is
+accepted by `--expect-fail`: a negative control has to fail because the escrow
+was incomplete, not because the test broke.
 
 Reporting follows the same rule. `ORIGIN_HOSTS_PROVEN_UNREACHABLE` is computed
 from the probe results, so it lists what was demonstrated; the intended
@@ -397,3 +568,51 @@ The general form of the mistake is worth naming, because it is easy to repeat:
 subject to that rule.** Test `t12` now runs the two adversarial cases — a
 control run, and a run that *claims* isolation while having none — and requires
 both to refuse.
+
+---
+
+## 12. Three guarantees, named separately
+
+`ORIGIN_INDEPENDENCE` was one word doing two jobs, and the expensive job was
+hiding the cheap one.
+
+| guarantee | escrow holds | acceptance test allows | cost |
+|---|---|---|---|
+| `SOURCE_ORIGIN_INDEPENDENCE` | plan-required fixed-output sources, flake inputs, the flake source | escrow **plus** the approved binary tier | small: sources only |
+| `ESCROW_REPLAY` (default) | the whole realised closure | escrow **only** | large: the closure |
+| `FULL_AIRGAP_REBUILD` (not implemented) | the whole bootstrap source corpus | escrow only, **and everything is built from source** | largest |
+
+**Why the middle one is the default.** It is the strongest thing this harness
+can demonstrate, and it is what v0.1 already proved. It stays the default so
+nobody gets a weaker result by accident.
+
+**Why the first one exists.** `ESCROW_REPLAY` costs a copy of the entire
+realised closure — 874 objects and 87 MB for a fixture that consumes four
+sources. Running that on every Renovate bump is not a gate, it is a tax. The
+cheap mode escrows only the objects that have an origin to lose, and lets the
+prebuilt tier come from a *binary replica* standing in for the approved cache
+your organisation already runs. What it proves is exactly:
+
+> the disappearance of the source origins does not break this build, because
+> the source identities are held by us.
+
+What it does **not** prove is independence from the binary tier. Both strings
+are written into `origin-independence.json` (`guarantee.proves` /
+`guarantee.doesNotProve`) and printed in the report, so the weaker claim cannot
+be quoted as the stronger one.
+
+**What the harness can and cannot do here.** The acceptance test runs with no
+route to anything, in both modes. It does not implement a selective
+allow-github-but-not-cache filter; the "approved binary tier is available" half
+of `SOURCE_ORIGIN_INDEPENDENCE` is modelled by a local replica that the test
+may substitute from. That is an honest model of "the third party is still up"
+and a dishonest model of "the third party is trustworthy" — which is why the
+replica is deliberately *not* part of the escrow, is not archived with it, and
+is named `BINARY_REPLICA_URL` in the report rather than being folded into the
+escrow's object count.
+
+**Why `FULL_AIRGAP_REBUILD` is still only a row in this table.** It needs the
+whole bootstrap source corpus (the 161 in §7) and signing, per §4 row 5:
+locally built, input-addressed, unsigned paths are refused. That is a measured
+prerequisite, not a guess, and it is out of scope until the two implemented
+modes have been run in anger.
