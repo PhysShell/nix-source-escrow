@@ -19,6 +19,16 @@ jobs:
   evidence:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        # 2.34.7 is the version EVIDENCE.md documents and the code was written
+        # against. 2.24.9 is what the runner defaulted to, and run 2 showed the
+        # tool discovers ZERO fixed-output sources on it while reporting a
+        # complete discovery. Which Nix is running is therefore a measured
+        # variable, not an accident of the runner image.
+        nix: [ '2.34.7', '2.24.9' ]
+    name: evidence (nix ${{ matrix.nix }})
 
     steps:
       - name: Check out the full history
@@ -50,12 +60,33 @@ jobs:
           echo "--- disk ---"
           df -h /
 
-      - name: Install Nix
+      - name: Install Nix ${{ matrix.nix }}
         uses: cachix/install-nix-action@v30
         with:
+          install_url: https://releases.nixos.org/nix/nix-${{ matrix.nix }}/install
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = false
+
+      - name: What shape is `nix derivation show` on this Nix?
+        # lib/discover.sh reads `.derivations` and falls back to `{}`. If this
+        # Nix emits a flat map instead of the {version, derivations} envelope,
+        # that fallback turns "I cannot read this" into "there is nothing here"
+        # -- silently, and green. Measured here rather than inferred.
+        run: |
+          nix derivation show "path:$PWD/fixture#default" > /tmp/drvshow.json 2>/dev/null || true
+          echo "top-level keys:"
+          jq -r 'keys | .[0:4] | join(", ")' /tmp/drvshow.json || true
+          jq -r 'if has("derivations")
+                 then "SHAPE: envelope {version, derivations}  version=\(.version // "absent")"
+                 else "SHAPE: flat map, no `derivations` key" end' /tmp/drvshow.json || true
+          echo "derivations discover.sh would see:"
+          jq -r '(.derivations // {}) | length' /tmp/drvshow.json || true
+          echo "derivations actually present:"
+          jq -r '(.derivations // .) | length' /tmp/drvshow.json || true
+          echo "fixed-output outputs actually present:"
+          jq -r '[(.derivations // .)[] | .outputs // {} | to_entries[] | select(.value.hash != null)] | length' \
+            /tmp/drvshow.json || true
 
       - name: Record what is being measured
         run: |
