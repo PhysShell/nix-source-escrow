@@ -1,0 +1,133 @@
+name: evidence run
+
+# The first real execution of this repository's own acceptance suite.
+#
+# It exists because the machine the code was written on has no Nix, and the
+# container it was written in cannot reach github.com at all -- which the
+# fixture depends on by design. Everything under tests/ had been reasoned about
+# and never run.
+#
+# This branch is 6a6687c plus this file and nothing else. The review branch
+# does not move.
+
+on:
+  push:
+    branches: [ 'claude/ci-run-*' ]
+  workflow_dispatch:
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@v4
+        with:
+          # Not shallow: the flake resolves its own revision through git, and a
+          # shallow clone has no revision to resolve. t19 asserts that the
+          # packaged revision equals HEAD, so this is load-bearing.
+          fetch-depth: 0
+
+      - name: Preconditions the acceptance test needs from the kernel
+        run: |
+          set -x
+          uname -a
+          # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor,
+          # and the whole isolation harness is built on `unshare -Ur`.
+          cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          # The dummy interface workaround (DESIGN.md §8) needs the module.
+          # If it is absent, the run says HARNESS_ERROR out loud rather than
+          # blaming the escrow -- which is exactly what t14 exists to prove.
+          sudo modprobe dummy || echo "modprobe dummy FAILED"
+          set +x
+          echo "--- userns ---"
+          unshare -Ur --net --mount true && echo "userns: ok" || echo "userns: DENIED"
+          echo "--- dummy inside a namespace ---"
+          unshare -Ur --net --mount -- ip link add dummy0 type dummy \
+            && echo "dummy: ok" || echo "dummy: unavailable"
+          echo "--- disk ---"
+          df -h /
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+
+      - name: Record what is being measured
+        run: |
+          nix --version
+          echo "HEAD:        $(git rev-parse HEAD)"
+          echo "code base:   6a6687c592858f398e8ebde6a7aaf72d4b98937c"
+          echo "code diff vs that commit, excluding .github/:"
+          git diff --stat 6a6687c592858f398e8ebde6a7aaf72d4b98937c HEAD -- . ':!.github' \
+            || true
+          echo "(empty above means the code under test is byte-identical)"
+          git status --porcelain
+          echo "(empty above means a clean tree, which t19.7 requires)"
+
+      - name: Shell-level units (no Nix needed)
+        run: ./tests/unit-shell.sh
+
+      - name: nix flake check
+        run: nix flake check --print-build-logs
+
+      - name: Acceptance suite (cold, no NSE_TEST_REUSE)
+        run: nix develop -c ./tests/run-tests.sh
+
+      - name: Experiments E0-E3
+        if: always()
+        run: nix develop -c ./tests/experiments.sh
+
+      - name: The packaged executable
+        if: always()
+        run: |
+          nix build .#nix-source-escrow --print-build-logs
+          ./result/bin/nix-source-escrow --help
+          echo "--- stamped build info ---"
+          cat result/share/nix-source-escrow/build-info.json
+
+      - name: ACCEPTANCE READOUT
+        if: always()
+        run: |
+          E=escrow/evidence
+          echo "expected HEAD: $(git rev-parse HEAD)"
+          echo
+          for f in environment.json verify.json trust.json origin-independence.json experiments.json; do
+            [ -f "$E/$f" ] && echo "== $f ==" && jq -c '.provenance // "no provenance"' "$E/$f"
+          done
+          echo
+          echo "== the six conditions =="
+          jq -r '"t15/t16 replay: mode=\(.replaySource.escrowMode) requested=\(.replaySource.objectsRequested) reachable=\(.replaySource.objectsReachableByTest) notProvidedReachable=\(.replaySource.notProvidedReachableByTest)"' \
+            "$E/origin-independence.json" 2>/dev/null || true
+          jq -r '"verdict: \(.result)  guarantee: \(.guarantee.name)  modeSupported: \(.modeSupported)"' \
+            "$E/origin-independence.json" 2>/dev/null || true
+          jq -r '"toolRevision: \(.provenance.toolRevision)  dirty: \(.provenance.workingTreeDirty)  source: \(.provenance.revisionSource)"' \
+            "$E/origin-independence.json" 2>/dev/null || true
+          echo
+          echo "== experiments =="
+          jq -r '.experiments[] | "\(.id) \(.outcome)  result=\(.result // "not run")  \(.outcomeReason)"' \
+            "$E/experiments.json" 2>/dev/null || echo "(no experiments.json)"
+          jq -r '"conclusion: dummyStillNeeded=\(.conclusion.dummyInterfaceStillNeeded) manualRestoreStillNeeded=\(.conclusion.manualInputRestoreStillNeeded) combinedSafe=\(.conclusion.combinedDefaultSafe)"' \
+            "$E/experiments.json" 2>/dev/null || true
+          echo
+          echo "== report.txt =="
+          cat "$E/report.txt" 2>/dev/null || echo "(no report.txt)"
+
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence
+          path: |
+            escrow/evidence/
+            escrow/manifest.json
+            escrow/closure.json
+            escrow/discovery.json
+            escrow/work/**/*.log
+            escrow/unit-shell.log
+          if-no-files-found: warn
+          retention-days: 14
