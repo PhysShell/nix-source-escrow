@@ -87,6 +87,29 @@ jobs:
           echo "fixed-output outputs actually present:"
           jq -r '[(.derivations // .)[] | .outputs // {} | to_entries[] | select(.value.hash != null)] | length' \
             /tmp/drvshow.json || true
+          # 2.24.9 reports COVERED=146 / EXTERNAL_RECOVERY=19 / WITH_POSTFETCH=0
+          # where 2.34.7 reports 163 / 2 / 3, on a byte-identical closure. The
+          # graph is the same, so the difference is in how the ATTRIBUTES of a
+          # derivation are represented -- and lib/discover.sh reads the origin
+          # URL out of `structuredAttrs` or `env`. Which of those exists, and
+          # what is in them, is measured here before anything is changed.
+          echo "how a fixed-output derivation carries its attributes:"
+          jq -r '(.derivations // .) | to_entries
+                 | map(select(.value.outputs // {} | to_entries | any(.value.hash != null)))
+                 | .[0:3][]
+                 | "  \(.key)",
+                   "    structuredAttrs key: \(.value | has("structuredAttrs"))",
+                   "    env.__json key:      \((.value.env // {}) | has("__json"))",
+                   "    env keys of interest: \((.value.env // {}) | keys
+                                                 | map(select(test("^(url|urls|postFetch|outputHash.*)$")))
+                                                 | join(","))"' \
+            /tmp/drvshow.json || true
+          echo "fixed-output derivations with NO url and NO urls anywhere we look:"
+          jq -r '[(.derivations // .)[]
+                  | select(.outputs // {} | to_entries | any(.value.hash != null))
+                  | select((((.structuredAttrs // {}) + (.env // {}))
+                            | (has("url") or has("urls"))) | not)] | length' \
+            /tmp/drvshow.json || true
 
       - name: Record what is being measured
         run: |

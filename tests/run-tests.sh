@@ -676,11 +676,31 @@ else
   LIAR=$WORK/lying-tier
   rm_store "$LIAR"; mkdir -p "$LIAR"
   command cp -a "$ESCROW/cache" "$LIAR/cache"
-  # Keep the narinfo, remove the bytes it promises.
-  VICTIM=$(find "$LIAR/cache" -maxdepth 1 -name '*.narinfo' \
-           | head -1 | xargs -r sed -n 's/^URL: //p')
-  if [ -z "$VICTIM" ] || [ ! -f "$LIAR/cache/$VICTIM" ]; then
-    bad "t20.1 a tier that lies about one object can be constructed" "no nar to remove"
+  # Keep the narinfo, remove the bytes it promises. The victim has to be an
+  # object the tier is actually ASKED about, or the test proves nothing: under
+  # source-origin-independence that is the closure minus the sources minus the
+  # .drv files, so pick the first narinfo that qualifies rather than the first
+  # narinfo full stop.
+  #
+  # No `find | head` here. head exits, find takes SIGPIPE, pipefail turns that
+  # into a failed command substitution and set -e ends the entire suite -- which
+  # is exactly how this test killed run 7 before it could print a result.
+  jq -r '(.sources[]? | select(.storePath != null) | .storePath),
+         (.flakeInputs[]?.storePath)' "$ESCROW/manifest.json" \
+    | sort -u > "$WORK/lying-tier.sources"
+  VICTIM=""; VICTIM_PATH=""
+  while IFS= read -r narinfo; do
+    sp=$(awk '/^StorePath: /{print substr($0,12); exit}' "$narinfo")
+    case $sp in *.drv) continue ;; esac
+    if grep -qxF "$sp" "$WORK/lying-tier.sources"; then continue; fi
+    u=$(awk '/^URL: /{print substr($0,6); exit}' "$narinfo")
+    if [ -n "$u" ] && [ -f "$LIAR/cache/$u" ]; then
+      VICTIM=$u; VICTIM_PATH=$sp; break
+    fi
+  done < <(find "$LIAR/cache" -maxdepth 1 -name '*.narinfo' | sort)
+  if [ -z "$VICTIM" ]; then
+    bad "t20.1 a tier that lies about one object can be constructed" \
+        "no non-source, non-.drv nar to remove"
   else
     rm -f "$LIAR/cache/$VICTIM"
     ok "t20.1 a tier that lies about one object can be constructed"
@@ -714,6 +734,8 @@ else
         "1" "$(grep -c 'BINARY_TIER_ERROR' "$WORK/lying-run.log" || true)"
       assert_eq "t20.5 the failure names the object the tier would not hand over" \
         "1" "$(grep -c 'still claims to hold' "$WORK/lying-run.log" || true)"
+      assert_ne "t20.6 and it is the object whose bytes were removed" \
+        "0" "$(grep -c -- "$VICTIM_PATH" "$WORK/lying-run.log" || true)"
     fi
     kill "$LIAR_PID" 2>/dev/null || :
     trap - EXIT
