@@ -1130,3 +1130,56 @@ amputation that leaves every observable in place is a much stronger statement
 about the mechanism: it says the confirmed behaviour did not depend on the
 parts we removed, which is exactly what `E1`–`E3` claim and cannot themselves
 prove — they measure a *disabled* workaround, not an *absent* one.
+
+### 17a. The pre-registration had a defect, and it was found before the run
+
+Written the same day as §17 and **before** the deletion commit, which is the
+only place this belongs.
+
+§17 requires, as a condition of `REMOVAL_VALIDATED`:
+
+```
+E0                = BASELINE_OK
+E1 / E2 / E3      = CONFIRMED
+```
+
+That criterion is **unsatisfiable by the change it pre-registers**, and not
+because of anything about the change. `E0`–`E3` are defined by toggling exactly
+the two mechanisms being deleted:
+
+```
+E0   --dummy-interface     --manual-input-restore     (the legacy baseline)
+E1   --no-dummy-interface  --manual-input-restore
+E2   --dummy-interface     --native-input-restore
+E3   --no-dummy-interface  --native-input-restore     (today's default)
+```
+
+Delete the mechanisms and there is no independent variable left to vary. An
+experiment cannot outlive its own manipulandum. Requiring `E1 = CONFIRMED`
+after the removal is requiring a measurement that cannot be taken — and the
+tempting move, once the run comes back without those lines, is to decide
+afterwards that they were never really part of the criterion. That is the
+failure mode §17 exists to prevent, so it gets corrected here instead, in
+advance, with the reasoning visible.
+
+**The amendment.**
+
+* `E0`–`E3` are **retired at the deletion commit**, not carried forward. Their
+  final values are frozen in `evidence-runs.json` and in the run table in
+  `EVIDENCE.md`: `CONFIRMED` on both Nix versions, in every run from 6 to 11,
+  each with `E0` green. Those measurements are the *justification* for the
+  deletion; they cannot also be its *acceptance test*.
+* What survives is `E3`'s content, and it survives in the place that matters:
+  once the workarounds do not exist, the default acceptance path **is** the
+  `E3` configuration. `t07` — the acceptance criterion — `t15` and `t16`
+  already run it and already assert on it. After the removal they are not
+  merely *analogous* to `E3`; they are `E3`, with no flag left to disable.
+* `REMOVAL_VALIDATED` therefore drops the `E` lines and keeps everything else
+  in §17 unchanged, with one addition: `tests/experiments.sh` must be retired
+  in the same commit rather than left calling flags that no longer parse. A
+  harness that silently stops measuring is worse than one that is deleted.
+
+The rest of §17 stands as written, `closureSha256` included. Note what this
+amendment does **not** do: it does not relax a single observable of the system
+under test. It removes a requirement that was never about the system at all —
+only about the instrument, which the change dismantles on purpose.
