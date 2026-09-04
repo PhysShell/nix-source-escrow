@@ -240,8 +240,21 @@ assert_eq "t07.8 NSS was isolated too, so DNS was not merely broken" \
 # every origin unreachable.
 assert_ne "t07.9 the flake inputs the plan locks were counted, not assumed" \
   "0" "$(jq -r ".flakeInputsRequired // 0" "$OI")"
-assert_eq "t07.9a every one of them is in the test store, with no network" \
-  "true" "$(jq -r '.flakeInputsPresentAfterBuild == .flakeInputsRequired' "$OI")"
+# The first version of this asserted ALL of them, and the run answered 2 of 4.
+# That is Nix behaving correctly: a locked input is materialised when evaluation
+# reaches it, and one the evaluation never touches is never fetched. So the
+# claim is the one the mechanism actually makes -- the inputs the fixture itself
+# locks, by NAME, were obtained in a store that started empty with every origin
+# unreachable. A count alone would pass on any two.
+assert_eq "t07.9a the inputs the fixture locks were obtained offline, by name" \
+  "gitignore-src nixpkgs" \
+  "$(jq -r '(.flakeInputsPresentAfterBuildNames // []) | sort | join(" ")' "$OI")"
+assert_eq "t07.9b and every input it did materialise is one the escrow holds" \
+  "true" \
+  "$(jq -r --slurpfile m "$MANIFEST" '
+       ([$m[0].flakeInputs[] | select(.escrow.present) | .name]) as $held
+       | ((.flakeInputsPresentAfterBuildNames // []) | all(. as $n | $held | index($n) != null))
+     ' "$OI")"
 assert_eq "t07.10 evaluation itself succeeded offline (covers eval-time builtins.fetch*)" \
   "clean" "$(jq -r ".offlineEvalProbe" "$OI")"
 assert_eq "t07.11 the escrow was the only substituter" \

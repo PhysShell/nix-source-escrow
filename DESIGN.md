@@ -1183,3 +1183,46 @@ code that decides `t07.7`. It has been reporting `4/4` correctly because the
 paths really were there, and would have reported `4/4` just as confidently if
 they had not been. Fixed in the same commit, named here rather than folded in
 silently; it can only lower a count, never raise one.
+
+### 17c. And the repair over-claimed in the other direction
+
+Run 17, commit `102d5a1`. Every pre-registered observable still unchanged —
+`closureSha256` still `9243083e…f8ec`, discovery still `165/163/2/3/38`,
+`REQUIRED_SOURCES_PRESENT_AFTER_BUILD` still `4/4` after the null-counting fix
+(so that count was right, just unsoundly derived) — and `t00`–`t20` came back
+**144/1**. The new failure is the new assertion:
+
+```
+FLAKE_INPUTS_PRESENT_AFTER_BUILD = 2/4
+t07.9a  every one of them is in the test store, with no network   -> false
+```
+
+**2 of 4 is Nix being correct.** A locked flake input is materialised when
+evaluation *reaches* it; one the evaluation never touches is never fetched,
+because nothing ever asks for its accessor. The fixture locks two inputs and
+uses both; the other two are transitive entries in the lock that this
+particular output's evaluation does not visit. "All four are in the test store"
+is not a property the mechanism has ever had.
+
+So `t07.9` went from asserting nothing (`0 == 0` about a command that never ran)
+to asserting too much, in one commit. Both are the same error underneath —
+writing down what the test's *name* suggests instead of what the mechanism
+*promises* — and the second one at least failed loudly on first contact, which
+is the whole difference between the two.
+
+The assertion now says what the mechanism promises, and says it by **name**:
+
+```
+flakeInputsPresentAfterBuildNames = ["gitignore-src", "nixpkgs"]
+```
+
+`t07.9a` requires exactly those two — the inputs the fixture itself locks —
+obtained in a store that started empty with every origin unreachable. A bare
+count would have passed on any two. `t07.9b` requires that every input Nix did
+materialise is one the escrow holds, so nothing can arrive from somewhere the
+evidence does not account for. The report prints the names next to the count,
+with a note saying why the count is normally below the total — a reader who
+sees `2/4` should not have to rediscover this section.
+
+The number itself is now evidence: if a future Nix changes *which* locked inputs
+an offline evaluation needs, that list changes and `t07.9a` goes red.

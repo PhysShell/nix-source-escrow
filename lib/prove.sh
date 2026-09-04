@@ -560,32 +560,32 @@ step=post-checks
 # 227 in run 6, still live in the post-check that decides t07.7. It happens to
 # have been reporting 4/4 correctly, because the paths really were there; it
 # would have reported 4/4 just as confidently if they had not been.
-present_count() {
+present_paths() {
   jq -r 'if type=="array"
-         then [ .[] | select(. != null and (.path? != null)) ] | length
-         else [ to_entries[] | select(.value != null) ] | length end'
+         then (.[] | select(. != null and (.path? != null)) | .path)
+         else (to_entries[] | select(.value != null) | .key) end'
 }
 
 # One query for the whole set; the per-path loop is only the fallback for a
-# batch Nix refuses outright.
-count_present_in_teststore() {
+# batch Nix refuses outright. Prints the paths rather than counting them, so a
+# caller can say WHICH ones: "2 of 4" is a number, and the two names are the
+# finding.
+present_in_teststore() {
   local -a paths=("$@")
-  local answer n
-  [ "${#paths[@]}" -gt 0 ] || { printf '0\n'; return 0; }
+  local answer p
+  [ "${#paths[@]}" -gt 0 ] || return 0
   if answer=$(nix path-info --store "$NSE_TESTSTORE" --json "${paths[@]}" 2>/dev/null); then
-    printf '%s\n' "$answer" | present_count
+    printf '%s\n' "$answer" | present_paths
     return 0
   fi
-  n=0
   for p in "${paths[@]}"; do
-    if nix path-info --store "$NSE_TESTSTORE" "$p" >/dev/null 2>&1; then n=$((n + 1)); fi
+    if nix path-info --store "$NSE_TESTSTORE" "$p" >/dev/null 2>&1; then printf '%s\n' "$p"; fi
   done
-  printf '%s\n' "$n"
 }
 
 mapfile -t required_paths < <(jq -r '.sources[] | select(.plan.requiredByPlan) | .storePath' "$NSE_MANIFEST")
 required=${#required_paths[@]}
-restored=$(count_present_in_teststore "${required_paths[@]+"${required_paths[@]}"}")
+restored=$(present_in_teststore "${required_paths[@]+"${required_paths[@]}"}" | grep -c . || :)
 
 # The flake inputs, in the store the isolated build actually used.
 #
@@ -593,12 +593,23 @@ restored=$(count_present_in_teststore "${required_paths[@]+"${required_paths[@]}
 # `restoreExit`, the exit code of a `nix copy` that the default path never ran,
 # so it asserted 0 == 0 about a command that did not execute. The manual copy
 # is gone (DESIGN.md §8a); the property it was supposed to stand for is real
-# and is measured here -- every locked input, transitive ones included, present
-# in a store that started empty with every origin unreachable, put there by
-# Nix substituting from the escrow and by nothing else.
+# and is measured here.
+#
+# The first honest version of it over-claimed in the other direction, and the
+# run said so: 2 of 4. Nix materialises a locked input when evaluation reaches
+# it, and an input the evaluation never touches is never fetched -- correct
+# behaviour, and the reason "all four are in the test store" is simply false.
+# So the NAMES are recorded, not just the count: WHICH locked inputs the
+# offline evaluation actually needed is the fact, and it is one a future Nix
+# could change.
 mapfile -t input_paths < <(jq -r '.flakeInputs[] | select(.storePath != null) | .storePath' "$NSE_MANIFEST")
 inputs_required=${#input_paths[@]}
-inputs_present=$(count_present_in_teststore "${input_paths[@]+"${input_paths[@]}"}")
+present_in_teststore "${input_paths[@]+"${input_paths[@]}"}" > "$NSE_WORK/prove-inputs-present.txt"
+inputs_present=$(grep -c . "$NSE_WORK/prove-inputs-present.txt" || :)
+inputs_present_names=$(jq -r --rawfile present "$NSE_WORK/prove-inputs-present.txt" '
+  ($present | split("\n") | map(select(length > 0))) as $p
+  | [ .flakeInputs[] | select(.storePath != null and (.storePath | IN($p[]))) | .name ]
+  | sort | join(",")' "$NSE_MANIFEST")
 
 expected_out=$(jq -r '.expectedOutputs[0] // ""' "$NSE_MANIFEST")
 
@@ -681,6 +692,7 @@ jq -n \
   --argjson buildRc "$build_rc" --argjson evalRc "$eval_rc" \
   --argjson required "$required" --argjson restored "$restored" \
   --argjson inputsRequired "$inputs_required" --argjson inputsPresent "$inputs_present" \
+  --arg inputsPresentNames "$inputs_present_names" \
   --argjson httpFetches "$net_lines" \
   --argjson outMatches "$out_matches" \
   --argjson reachableOrigins "$reachable_origins" \
@@ -704,6 +716,8 @@ jq -n \
     offlineEvalProbe:(if $evalRc == 0 then "clean" else "failed" end),
     sourcesRequired:$required, sourcesRestored:$restored,
     flakeInputsRequired:$inputsRequired, flakeInputsPresentAfterBuild:$inputsPresent,
+    flakeInputsPresentAfterBuildNames:
+      (if $inputsPresentNames == "" then [] else ($inputsPresentNames|split(",")) end),
     httpFetchesInBuildLog:$httpFetches,
     reachableOriginCount:$reachableOrigins,
     unresolvedOriginCount:$unresolvedOrigins,
