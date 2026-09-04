@@ -31,6 +31,25 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > each. **A fresh frozen run is required before anything here becomes canonical
 > evidence.**
 >
+> **Runs since, on the same fixture and the same matrix.** Each is a cold run
+> with no `NSE_TEST_REUSE`. `ESCROW_REPLAY` passes on **both** Nix versions in
+> every one of them, with an identical `closureSha256`, and
+> `E0/E1/E2/E3 = BASELINE_OK / CONFIRMED / CONFIRMED / CONFIRMED` on both.
+>
+> | run | 2.34.7 | 2.24.9 | what it found |
+> |---|---|---|---|
+> | 6 | 117 / 18 | 108 / 27 | the presence P0: `"path": null` read as present, `nix copy` then died fetching an object no cache could hold |
+> | 7 | died in `t20` | died in `t20` | `find … \| head` + `pipefail` + `set -e`: the new test aborted the suite before it could print a result |
+> | 8 | **all steps green** | 135 / 9 | first fully green leg. All nine remaining failures are one finding: the 2.24.9 derivation-attribute gap |
+>
+> The nine are `t01.3`, `t01.4`, `t01.7` and all of `t10` — every one an
+> assertion about an origin URL, a hash mode or a `postFetch`. On 2.24.9
+> discovery reports `COVERED=146 / EXTERNAL_RECOVERY=19 / WITH_POSTFETCH=0`
+> against `163 / 2 / 3` on 2.34.7, for a byte-identical closure and the same 638
+> derivations and 165 fixed-output sources. It is a defect in what the evidence
+> says about **origins**, not in what the escrow **holds**. Unfixed, on purpose:
+> see `DESIGN.md` §15a.
+>
 > **Status of the block below.** The report block below is the **v0.1.0** run,
 > verbatim. It predates the second review and the changes made in response to
 > it, and it is kept because it is the record of what was actually measured
@@ -454,11 +473,11 @@ Honest list. None of these are hidden behind a green result.
     `file://` stores. Both are honest today only because a materialised proof
     replica is always local — a future non-file replay target would need the
     audit extended rather than assumed.
-19. The change sets answering the second, third and fourth reviews have been
-    **exercised only by `tests/unit-shell.sh`** (69 checks, all passing, no Nix
-    required). The Nix-dependent suite — including the new `t13`–`t19` — has
-    not been run on this code, because the machine it was written on has no
-    Nix. Treat the report block above as a v0.1.0 record until you re-run it.
+19. Superseded by the run table at the top of this file. The Nix-dependent
+    suite HAS now been run: fully green on Nix 2.34.7, 135/9 on 2.24.9 with
+    every failure attributable to the one open finding. What remains true is
+    that the **report block below** is still the v0.1.0 record and has not been
+    replaced with a current one.
 
 ---
 

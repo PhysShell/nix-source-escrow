@@ -881,6 +881,62 @@ between you and a confident wrong answer.
 
 ---
 
+## 15a. What the runs after it found, including two instruments that measured themselves
+
+Fixing the four defects in §15 got the suite far enough to fail somewhere new,
+which is the only useful kind of progress here.
+
+**Run 6** got 117/18 on 2.34.7 and died in the binary tier. The cause was the
+presence parser: `nix path-info --json` answers `"<path>": null` for an object
+it does not have and exits `0`, and reading `keys[]` turned every path we asked
+about into a path the tier held. Fixed in §16; every `t15` assertion, including
+the three added to catch exactly this, has been green since.
+
+**Run 7** was green from `t01` to `t19` and then died inside `t20` — the test
+added in the same commit as the fix it guards — because of
+
+```
+find … -name '*.narinfo' | head -1 | xargs …
+```
+
+`head` exits, `find` takes `SIGPIPE`, `pipefail` makes the substitution fail,
+and `set -e` ends the suite before it can print a result.
+
+**Run 8**, on 2.34.7, is the first end-to-end green: every step of the matrix
+leg, the full acceptance suite included. On 2.24.9 it is 135/9, and all nine
+failures are one finding (below). It also revealed the second self-measuring
+instrument: the probe step added to diagnose that very finding ran
+`nix derivation show` **without `-r`**, so its document held one derivation —
+the top-level one, which is not fixed-output — and it answered "no fixed-output
+derivations found" about a graph with 165 of them.
+
+Three defects in three runs where the harness reported on itself rather than on
+the code: a test that aborted its own suite, a probe that measured its own
+invocation, and (in `u14.3`) an assertion that could only pass while the code
+under it was fail-open. The rule in §16 is about parsing an answer; these are
+about *asking the question*, and they fail the same way — silently, and green.
+A test or probe is only evidence if you can say what a red one would have
+looked like.
+
+**The one open finding.** On Nix 2.24.9 discovery reports `COVERED=146`,
+`EXTERNAL_RECOVERY=19`, `WITH_POSTFETCH=0` where 2.34.7 reports `163`, `2` and
+`3` — on a **byte-identical closure** (`closureSha256` matches exactly) with the
+same 638 derivations and the same 165 fixed-output sources. The graph is
+identical; what differs is how a derivation carries its *attributes*, and
+`urlsOf` reads the origin URL out of `structuredAttrs` or `env`. Nine tests
+name it precisely: `t01.3`, `t01.4`, `t01.7` and all of `t10`, every one an
+assertion about a URL, a hash mode or a `postFetch`. `ESCROW_REPLAY` still
+passes on that version, so this is a defect in what the evidence *says about
+origins*, not in what the escrow *holds*.
+
+It is not fixed here, and the reason is the subject of this section. There is a
+plausible story (`__structuredAttrs`, exposed as a parsed object by one version
+and as an `env` blob by the other) and no measurement, and a fix written to a
+plausible story is how three of the four defects in §15 got written in the
+first place.
+
+---
+
 ## 16. Empty is data only after a successful parse
 
 The rule, stated once, because three separate defects were the same violation

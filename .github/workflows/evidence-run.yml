@@ -74,7 +74,11 @@ jobs:
         # that fallback turns "I cannot read this" into "there is nothing here"
         # -- silently, and green. Measured here rather than inferred.
         run: |
-          nix derivation show "path:$PWD/fixture#default" > /tmp/drvshow.json 2>/dev/null || true
+          # -r, like lib/discover.sh uses. Without it this document holds ONE
+          # derivation -- the top-level one, which is not fixed-output -- so
+          # every question below about fixed-output attributes answered "none
+          # found" and the probe measured itself instead of Nix. Run 8.
+          nix derivation show -r "path:$PWD/fixture#default" > /tmp/drvshow.json 2>/dev/null || true
           echo "top-level keys:"
           jq -r 'keys | .[0:4] | join(", ")' /tmp/drvshow.json || true
           jq -r 'if has("derivations")
@@ -96,13 +100,16 @@ jobs:
           echo "how a fixed-output derivation carries its attributes:"
           jq -r '(.derivations // .) | to_entries
                  | map(select(.value.outputs // {} | to_entries | any(.value.hash != null)))
-                 | .[0:3][]
+                 | .[0:2][]
                  | "  \(.key)",
+                   "    top-level keys:      \(.value | keys | join(","))",
                    "    structuredAttrs key: \(.value | has("structuredAttrs"))",
                    "    env.__json key:      \((.value.env // {}) | has("__json"))",
-                   "    env keys of interest: \((.value.env // {}) | keys
-                                                 | map(select(test("^(url|urls|postFetch|outputHash.*)$")))
-                                                 | join(","))"' \
+                   "    ALL env keys:        \((.value.env // {}) | keys | join(","))"' \
+            /tmp/drvshow.json || true
+          echo "fixed-output derivations counted the way discover.sh counts them:"
+          jq -r '[(.derivations // .)[]
+                  | select(.outputs // {} | to_entries | any(.value.hash != null))] | length' \
             /tmp/drvshow.json || true
           echo "fixed-output derivations with NO url and NO urls anywhere we look:"
           jq -r '[(.derivations // .)[]
