@@ -913,5 +913,38 @@ tool. Enforced in four places:
   (`NSE_JQ_CLASSIFY`), because JSON has exactly one answer to "what is an empty
   field" and two hand-rolled parsers had two different ones.
 
-Tests `u12`, `u13` and `u14` fail if any of these regress, and they need no Nix
-to run.
+* `nix path-info --json` answers `"<path>": null` for a path the store does
+  not have, and exits `0`. `keys[]` therefore reported **everything asked
+  about** as present. `nse_pathinfo_present_keys` keeps only non-null values,
+  understands the object and array shapes, and **errors** on a third — because
+  "I cannot read this answer" is not "nothing is here". This is the same rule
+  one level lower than the others: a key is structure, a non-null value is the
+  fact.
+
+Tests `u12`, `u13`, `u14` and `u15` fail if any of these regress, and they need
+no Nix to run.
+
+### 16a. The corollary the fifth review added: a claim is not a delivery
+
+The rule above is about reading an answer. Its twin is about acting on one.
+A store saying it holds a path and a path arriving are two facts, and the
+distance between them is exactly where `SOURCE_ORIGIN_INDEPENDENCE` lives:
+
+```
+tier CLAIMS path        (probe)
+tier DELIVERS path      (materialise, then RE-QUERY the destination)
+```
+
+So the binary tier is probed and materialised as separate stages with separate
+evidence, `materializedRoots` is read back out of the destination rather than
+inferred from the request, and a copy that fails is **classified**:
+
+* the source still claims to hold it -> `BINARY_TIER_ERROR`, the run dies;
+* the source has revised its claim   -> recorded in `tier-revised-absent.txt`;
+* an unexplained gap                 -> fatal.
+
+There is deliberately no fourth branch. Relabelling an ambiguous failure as
+"unavailable from the tier" would hand it to the acceptance build as something
+the test is *permitted* to rebuild, and the verdict would then be measuring the
+harness's confusion rather than the tier. Test `t20` drives this with an HTTP
+tier that serves a `.narinfo` for a `.nar` it does not have.

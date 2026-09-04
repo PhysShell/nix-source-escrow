@@ -96,7 +96,7 @@ require-drop-supplementary-groups = false" \
 
   nse_copy_set "$work/escrow-set.txt" "$NSE_STORE_URL" "escrow" "$staging" "$work"
 
-  if [ -s "$work/replica-set.txt" ]; then
+  if [ "$NSE_GUARANTEE" = source-origin-independence ]; then
     # Written through a URL carrying the compression parameter: a file:// binary
     # cache with no `compression` defaults to xz, which is a very slow way to
     # store prebuilt binaries nobody intends to archive.
@@ -107,12 +107,12 @@ require-drop-supplementary-groups = false" \
         replica_store="$NSE_REPLICA_URL?compression=${NSE_COMPRESSION:-zstd}"
       fi
     fi
-    # FROM THE TIER, never from staging. This is the whole point: an object
-    # copied out of the staging store proves that *this machine* could produce
-    # it, which is not the claim SOURCE_ORIGIN_INDEPENDENCE makes.
-    nse_log "replica: copying $(wc -l < "$work/replica-set.txt") paths from the approved binary tier $NSE_BINARY_TIER -> $replica_store"
-    nse_nix_batched "$work/replica-set.txt" copy --from "$NSE_BINARY_TIER" --to "$replica_store" \
-      || nse_die "copying the prebuilt tier from '$NSE_BINARY_TIER' failed"
+    nse_tier_materialise "$work" "$NSE_BINARY_TIER" "$replica_store" "$NSE_REPLICA_URL"
+    # not-provided is recomputed from what ARRIVED, never from what was claimed.
+    LC_ALL=C comm -23 "$work/preserve-set.txt" \
+      <(LC_ALL=C sort -u "$work/escrow-set.txt" "$work/replica-set.txt") \
+      > "$work/not-provided-set.txt"
+    nse_log "binary tier: $(wc -l < "$work/replica-set.txt") materialised, $(wc -l < "$work/not-provided-set.txt") provided to nobody (the test instantiates or rebuilds those)"
   fi
 
   jq -n \
@@ -133,26 +133,17 @@ require-drop-supplementary-groups = false" \
   nse_manifest
 }
 
-# Decide what the approved binary tier has to supply, ask it, and write down
-# the answer.
+# PROBE: what does the approved binary tier say it has?
 #
-# The first version of this mode filled the replica with `preserve-set -
-# escrow-set` copied out of the STAGING store, which quietly made the claim
-# untrue: an object staging happened to build locally was served to the
-# acceptance test as though the approved cache had it.
+# Probing and materialising are two different observations and are kept apart,
+# because conflating them is how this stage lied twice. v1 filled the replica
+# from the STAGING store, so an object this machine built was served as though
+# the cache had it. v2 read a cache signature as proof of substitution, which
+# is not a law of Nix. v3 asked the tier properly and then believed the answer
+# without checking it -- and the answer was wrong, because `nix path-info
+# --json` reports an absent path as `"path": null` and the parser counted keys.
 #
-# The second version overcorrected. It read a cache signature on a staging path
-# as proof the path had been SUBSTITUTED, and then refused the whole mode when
-# the approved tier lacked such a path. Both halves of that were wrong. A
-# signature is not proof of substitution -- Nix signs locally built paths too
-# when `secret-key-files` is set -- and more importantly, "the previous staging
-# run chose to download X" says nothing about whether X can be built. The mode
-# already allows a rebuild for everything the tier does not hold, so a signed
-# path has no special metaphysical status.
-#
-# So there is no heuristic here at all. The tier supplies what it has; whatever
-# nobody holds is handed to nobody, and the acceptance build is the judge of
-# whether it can be produced. That is a measurement, not a guess.
+# So this function only ASKS. nse_tier_materialise finds out what is true.
 nse_binary_replica() {
   local work=$1
 
@@ -164,14 +155,78 @@ nse_binary_replica() {
   # category error.
   grep -v '\.drv$' "$work/non-source-set.txt" > "$work/tier-candidates.txt" || :
 
-  nse_log "binary tier: asking $NSE_BINARY_TIER for $(wc -l < "$work/tier-candidates.txt") prebuilt objects"
+  nse_log "binary tier: asking $NSE_BINARY_TIER about $(wc -l < "$work/tier-candidates.txt") prebuilt objects"
   nse_store_present "$NSE_BINARY_TIER" < "$work/tier-candidates.txt" \
-    | LC_ALL=C sort -u > "$work/replica-set.txt"
-  LC_ALL=C comm -23 "$work/preserve-set.txt" \
-    <(LC_ALL=C sort -u "$work/escrow-set.txt" "$work/replica-set.txt") \
-    > "$work/not-provided-set.txt"
+    | LC_ALL=C sort -u > "$work/tier-present.txt" \
+    || nse_die "could not read a presence answer from the binary tier '$NSE_BINARY_TIER'"
+  nse_log "binary tier: claims to hold $(wc -l < "$work/tier-present.txt") of them"
+  return 0
+}
 
-  nse_log "binary tier: $(wc -l < "$work/replica-set.txt") supplied, $(wc -l < "$work/not-provided-set.txt") provided to nobody (the test instantiates or rebuilds those)"
+# MATERIALISE: find out which of those objects the tier will actually hand over.
+#
+# "The tier says it has X" and "X arrived" are different facts, and the gap
+# between them is recorded rather than smoothed over. A copy that fails is
+# classified, never swallowed:
+#
+#   the tier now says it does not have it   -> a revised answer. The object is
+#                                              provided to nobody, and the
+#                                              acceptance build must produce it
+#   anything else (transport, auth, 404 on
+#   a path still claimed, corruption)       -> BINARY_TIER_ERROR, hard failure
+#
+# Turning every copy failure into "not provided, rebuild it" would quietly
+# convert an outage, an expired credential or a corrupt narinfo into a
+# statistic. That is how a proof tool becomes a marketing department.
+nse_tier_materialise() {
+  local work=$1 from=$2 to_write=$3 to_read=$4
+  cp "$work/tier-present.txt" "$work/tier-requested.txt"
+  : > "$work/tier-revised-absent.txt"
+
+  local n_req; n_req=$(wc -l < "$work/tier-requested.txt")
+  [ "$n_req" -gt 0 ] || { : > "$work/replica-set.txt"; return 0; }
+  nse_log "replica: materialising $n_req objects from the approved tier $from -> $to_write"
+
+  if ! nse_nix_batched "$work/tier-requested.txt" copy --from "$from" --to "$to_write"; then
+    nse_warn "a batched copy from '$from' failed; retrying per object to classify it"
+    local p
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      if nse_nix copy --from "$from" --to "$to_write" "$p" >/dev/null 2>&1; then continue; fi
+      # Ask the source again about this one object. A revised "absent" is a
+      # legitimate answer; anything else is an operational failure.
+      if printf '%s\n' "$p" | nse_store_present "$from" | grep -qxF "$p"; then
+        nse_die "the binary tier '$from' still claims to hold $p but will not hand it over.
+       That is a transport, authentication or integrity failure, not an absence,
+       and relabelling it 'not provided' would turn an outage into a statistic.
+       BINARY_TIER_ERROR."
+      fi
+      printf '%s\n' "$p" >> "$work/tier-revised-absent.txt"
+    done < "$work/tier-requested.txt"
+  fi
+
+  # What is in the replica is a fact about the replica, asked of the replica --
+  # not "the copy command returned 0". `nix copy` is recursive, so the store
+  # may hold more than these; only the requested roots are counted here.
+  nse_store_present "$to_read" < "$work/tier-requested.txt" \
+    | LC_ALL=C sort -u > "$work/replica-set.txt" \
+    || nse_die "could not read back the binary replica at '$to_read'"
+
+  LC_ALL=C comm -23 "$work/tier-requested.txt" "$work/replica-set.txt" \
+    > "$work/tier-claimed-not-materialised.txt"
+  local n_gap; n_gap=$(wc -l < "$work/tier-claimed-not-materialised.txt")
+  if [ "$n_gap" -ne 0 ]; then
+    nse_warn "the binary tier claimed $n_gap object(s) it did not deliver:"
+    head -3 "$work/tier-claimed-not-materialised.txt" >&2
+    # Only a revised absence explains a gap. Anything else is unexplained, and
+    # an unexplained gap is not evidence of anything.
+    if [ -n "$(LC_ALL=C comm -23 "$work/tier-claimed-not-materialised.txt" \
+                 <(LC_ALL=C sort -u "$work/tier-revised-absent.txt"))" ]; then
+      nse_die "objects vanished between the tier's presence answer and the copy,
+       and the tier did not revise its answer for them. The gap is unexplained,
+       so it cannot be recorded as 'the tier does not have it'. BINARY_TIER_ERROR."
+    fi
+  fi
   return 0
 }
 
@@ -217,8 +272,11 @@ nse_manifest() {
     | LC_ALL=C sort -u > "$work/escrow-present.txt"
 
   local backend; backend=$(nse_backend_name "$NSE_STORE_URL")
-  local tier_candidates=$work/tier-candidates.txt
-  [ -f "$tier_candidates" ] || : > "$tier_candidates"
+  local f
+  for f in tier-candidates tier-present tier-requested replica-set \
+           tier-claimed-not-materialised not-provided-set; do
+    [ -f "$work/$f.txt" ] || : > "$work/$f.txt"
+  done
 
   jq -n \
     --slurpfile disc "$disc" \
@@ -228,7 +286,10 @@ nse_manifest() {
     --arg substituterUrl "$NSE_SUBSTITUTER_URL" \
     --arg replicaUrl "$([ -s "$work/replica-set.txt" ] && printf '%s' "$NSE_REPLICA_URL")" \
     --arg tierUrl "$NSE_BINARY_TIER" \
-    --rawfile tierRequested "$tier_candidates" \
+    --rawfile tierCandidates "$work/tier-candidates.txt" \
+    --rawfile tierPresent    "$work/tier-present.txt" \
+    --rawfile tierRequested  "$work/tier-requested.txt" \
+    --rawfile tierGap        "$work/tier-claimed-not-materialised.txt" \
     --rawfile replicaSet  "$work/replica-set.txt" \
     --rawfile notProvided "$work/not-provided-set.txt" \
     --arg compression "${NSE_COMPRESSION:-zstd}" \
@@ -280,16 +341,24 @@ nse_manifest() {
                 substituterUrl: $substituterUrl,
                 binaryReplicaUrl: (if $replicaUrl == "" then null else $replicaUrl end),
                 compression: $compression },
-      binaryTier: (if $guarantee != "source-origin-independence" then null else {
-        url: $tierUrl,
-        # What we asked the tier for, what it supplied, and what is therefore
-        # provided to nobody -- the acceptance build has to instantiate or
-        # rebuild that last set, and whether it can is for the acceptance test
-        # to answer, not for this stage to predict.
-        pathsRequested:   ($tierRequested | split("\n") | map(select(length>0)) | length),
-        pathsFromTier:    ($replicaSet    | split("\n") | map(select(length>0)) | length),
-        pathsNotProvided: ($notProvided   | split("\n") | map(select(length>0)) | length)
-      } end),
+      binaryTier: (if $guarantee != "source-origin-independence" then null else
+        def n($s): ($s | split("\n") | map(select(length>0)) | length);
+        {
+          url: $tierUrl,
+          # Probing and materialising are separate observations. "The tier says
+          # it has X" and "X arrived" were once one number, and that number was
+          # wrong: `nix path-info --json` answers "path": null for an object it
+          # does not have, so 227 candidates became 227 "supplied", including
+          # one this machine had just built. They are counted apart now, and a
+          # non-zero claimedButNotMaterialized is visible in the evidence even
+          # when the acceptance build goes on to succeed without those objects.
+          candidates:                n($tierCandidates),
+          present:                   n($tierPresent),
+          materializationRequested:  n($tierRequested),
+          materializedRoots:         n($replicaSet),
+          claimedButNotMaterialized: n($tierGap),
+          notProvided:               n($notProvided)
+        } end),
       flakeInputs: $inputs,
       sources: $sources,
       evalTimeFetches: $d.evalTimeFetches,

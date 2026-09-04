@@ -186,7 +186,9 @@ nse_report() {
              (if .binaryTier == null then "APPROVED_BINARY_TIER=(none)" else
                 "APPROVED_BINARY_TIER=" + .binaryTier.url end),
              (if .binaryTier == null then empty else
-                "  ASKED_TIER_FOR=\(.binaryTier.pathsRequested)  SUPPLIED_BY_TIER=\(.binaryTier.pathsFromTier)  PROVIDED_TO_NOBODY=\(.binaryTier.pathsNotProvided)" end),
+                "  TIER_CANDIDATES=\(.binaryTier.candidates)  TIER_CLAIMS=\(.binaryTier.present)  MATERIALISED=\(.binaryTier.materializedRoots)" end),
+             (if .binaryTier == null then empty else
+                "  CLAIMED_BUT_NOT_MATERIALISED=\(.binaryTier.claimedButNotMaterialized)  PROVIDED_TO_NOBODY=\(.binaryTier.notProvided)" end),
              "COMPRESSION=" + (.escrow.compression // "unknown"),
              "FLAKE_INPUTS_PRESERVED=\(.counts.flakeInputsPresent)/\(.counts.flakeInputs)",
              "SOURCES_REQUIRED_BY_PLAN=\(.counts.sourcesRequiredByPlan)",

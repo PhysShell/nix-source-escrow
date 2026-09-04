@@ -384,16 +384,70 @@ assert_eq "u14.1 bash really does keep the export attribute on a local" \
 offenders=$(grep -nE '^\s*local\s+(-[a-zA-Z]+\s+)?(out|src|name|system|builder|args|outputs|pname|version)(\s|=|$)' \
               "$ROOT"/lib/*.sh "$ROOT/bin/nix-source-escrow" || :)
 assert_eq "u14.2 no lib function locals a name stdenv exports" "" "$offenders"
-# End to end: a large value must not reach a child through the environment.
-big=$(head -c 300000 /dev/zero | tr '\0' 'x')
+# End to end, and the failure mode exactly as it happened -- which the earlier
+# form of this test did NOT reproduce. `nix develop` exports a SMALL $out: a
+# store path, a hundred bytes. The bug was that `local out` inside
+# nse_store_present INHERITED that export attribute, so the multi-hundred-KB
+# path-info document the function then assigned to it became an environment
+# variable of every child, and the next exec died E2BIG (126).
+#
+# So the fixture has to put the bulk where the bug put it: in the store's
+# ANSWER, not in the caller's environment. A caller that exports a 300KB $out
+# itself has already broken exec for everything it runs, us included; that is
+# the caller's defect and no parser can survive it.
+big=$(python3 - <<'PYEOF'
+import json
+print(json.dumps({"/nix/store/%s-p" % str(i).rjust(32, "a"): {"narSize": 1}
+                  for i in range(4000)}))
+PYEOF
+)
+u14_3="u14.3 fixture is large enough that exec would fail if it were exported"
+if [ "${#big}" -gt 200000 ]; then ok "$u14_3"; else bad "$u14_3" "only ${#big} bytes"; fi
 rc=0
-( export out="$big"
+count=$(
+  export out=/nix/store/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-thing
   . "$ROOT/lib/common.sh"
   # shellcheck disable=SC2317,SC2329  # called indirectly, through nse_store_present
-  nse_nix() { printf '{}\n'; }
+  nse_nix() { printf '%s\n' "$big"; }
   printf '/nix/store/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-x\n' \
-    | nse_store_present "https://example.invalid" >/dev/null 2>&1 ) || rc=$?
-assert_eq "u14.3 a store query survives an exported multi-hundred-KB \$out" "0" "$rc"
+    | nse_store_present "https://example.invalid" | wc -l) || rc=$?
+assert_eq "u14.4 a large store answer does not travel in the environment" "0" "$rc"
+assert_eq "u14.5 ...and every path it reports is read back" "4000" "$count"
+
+# ---------------------------------------------------------------------------
+head_ "u15  a path Nix reports as null is ABSENT, not present"
+# The P0 the first source-mode run died of. `nix path-info --json` does not omit
+# a path it cannot find and does not fail: it emits `"<path>": null` and exits
+# 0. Both measured Nix versions do this. The parser took `keys[]`, so every
+# path we ASKED about came back present -- 227 candidates in, 227 "supplied"
+# out, including a store path this machine had built minutes earlier that no
+# public cache could hold. `nix copy` then went looking for it.
+mixed='{"/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-present":{"narSize":1},
+        "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-absent":null,
+        "/nix/store/cccccccccccccccccccccccccccccccc-present2":{"narSize":2}}'
+assert_eq "u15.1 only the paths with a non-null value come back" \
+  "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-present /nix/store/cccccccccccccccccccccccccccccccc-present2" \
+  "$(printf '%s' "$mixed" | nse_pathinfo_present_keys | paste -sd' ' -)"
+assert_eq "u15.2 the absent one is never reported present" \
+  "0" "$(printf '%s' "$mixed" | nse_pathinfo_present_keys | grep -c 'absent' || true)"
+assert_eq "u15.3 an all-null answer means nothing is present, not everything" \
+  "0" "$(printf '{"/nix/store/dddddddddddddddddddddddddddddddd-x":null}' \
+         | nse_pathinfo_present_keys | wc -l)"
+assert_eq "u15.4 the array shape is understood too" \
+  "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-x" \
+  "$(printf '[{"path":"/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-x"}]' | nse_pathinfo_present_keys)"
+rc=0; printf '"a bare string"' | nse_pathinfo_present_keys >/dev/null 2>&1 || rc=$?
+assert_ne "u15.5 an unrecognised shape FAILS rather than reporting nothing present" "0" "$rc"
+rc=0; printf 'not json at all' | nse_pathinfo_present_keys >/dev/null 2>&1 || rc=$?
+assert_ne "u15.6 and so does a non-JSON answer" "0" "$rc"
+# The end-to-end shape of the defect: a store query must not report a path
+# present just because it was asked about.
+# shellcheck disable=SC2317,SC2329  # called indirectly, through nse_store_present
+nse_nix() { printf '{"/nix/store/ffffffffffffffffffffffffffffffff-asked":null}\n'; }
+assert_eq "u15.7 nse_store_present reports nothing present for an all-null answer" \
+  "0" "$(printf '/nix/store/ffffffffffffffffffffffffffffffff-asked\n' \
+         | nse_store_present "https://example.invalid" | wc -l)"
+unset -f nse_nix
 
 # ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"

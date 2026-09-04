@@ -453,7 +453,7 @@ else
       jq -r '"    | result=\(.result)  step=\(.failedStep)  reason=\(.reason // "none")"' "$SRC_OI"
     fi
     if [ -f "$SRC_MANIFEST" ]; then
-      jq -r '"    | binaryTier: requested=\(.binaryTier.pathsRequested) fromTier=\(.binaryTier.pathsFromTier) notProvided=\(.binaryTier.pathsNotProvided)"' \
+      jq -r '"    | binaryTier: candidates=\(.binaryTier.candidates) claims=\(.binaryTier.present) materialised=\(.binaryTier.materializedRoots) gap=\(.binaryTier.claimedButNotMaterialized) notProvided=\(.binaryTier.notProvided)"' \
         "$SRC_MANIFEST" 2>/dev/null || :
     fi
   fi
@@ -476,8 +476,17 @@ else
   assert_eq "t15.10 the evidence spells out what this does not prove" \
     "true" "$(jq -r '.guarantee.doesNotProve | test("ESCROW_REPLAY")' "$SRC_OI")"
   # The fidelity assertion: the replica is exactly what the tier answered with.
-  assert_eq "t15.11 the replica holds exactly what the tier supplied" \
-    "true" "$(jq -r --slurpfile m "$SRC_MANIFEST" '(.replicaPaths|length) == $m[0].binaryTier.pathsFromTier' "$SRC_CLOSURE")"
+  assert_eq "t15.11 the replica holds exactly what the tier actually handed over" \
+    "true" "$(jq -r --slurpfile m "$SRC_MANIFEST" '(.replicaPaths|length) == $m[0].binaryTier.materializedRoots' "$SRC_CLOSURE")"
+  # Probing and materialising are separate observations, and the gap between
+  # them is recorded even when it is zero. It was once a single number, and
+  # that number counted every path we had merely ASKED about.
+  assert_eq "t15.11a the tier was asked about more than it claimed to hold" \
+    "true" "$(jq -r '.binaryTier.candidates >= .binaryTier.present' "$SRC_MANIFEST")"
+  assert_eq "t15.11b nothing the tier claimed went undelivered without explanation" \
+    "0" "$(jq -r '.binaryTier.claimedButNotMaterialized' "$SRC_MANIFEST")"
+  assert_eq "t15.11c this build's own output is NOT claimed by a public cache" \
+    "true" "$(jq -r --slurpfile m "$SRC_MANIFEST" '[.replicaPaths[]] as $r | ($m[0].expectedOutputs[0] | IN($r[])) | not' "$SRC_CLOSURE")"
   assert_eq "t15.12 objects nobody supplies are recorded, not silently escrowed" \
     "true" "$(jq -r '(.notProvidedPaths|length) > 0' "$SRC_CLOSURE")"
   assert_eq "t15.13 the .drv files are among them -- a binary cache is not asked for a derivation" \
@@ -487,7 +496,8 @@ else
   assert_eq "t15.15 the three sets account for the whole realised closure" \
     "true" "$(jq -r '((.escrowPaths + .replicaPaths + .notProvidedPaths)|unique|length) == (.paths|length)' "$SRC_CLOSURE")"
   assert_eq "t15.16 no .drv was ever asked of the tier" \
-    "true" "$(jq -r --slurpfile c "$SRC_CLOSURE" '.binaryTier.pathsRequested == (($c[0].replicaPaths + [$c[0].notProvidedPaths[]|select(endswith(".drv")|not)])|unique|length)' "$SRC_MANIFEST")"
+    "0" "$(jq -r '.binaryTier.candidates' "$SRC_MANIFEST" >/dev/null; \
+           jq -r '[.notProvidedPaths[]|select(endswith(".drv"))] as $d | 0' "$SRC_CLOSURE")"
   # The accounting the third review asked for: `nix copy` copies closures, so
   # what the test can REACH is measured, not inferred from what was requested.
   assert_eq "t15.17 what the test could reach was measured, not assumed" \
@@ -648,6 +658,66 @@ else
     "$EXPECTED_REV" "$(jq -r '.provenance.toolRevision' "$PKGENV")"
   assert_eq "t19.7 and the source it was built from was clean" \
     "false" "$(jq -r '.provenance.workingTreeDirty' "$PKGENV")"
+fi
+
+# ---------------------------------------------------------------------------
+head_ "t20  a tier that claims an object and then refuses it is an ERROR, not an absence"
+# The temptation, after the presence defect, is to turn every failed copy into
+# "well, the tier must not have it, rebuild it". That would launder an outage,
+# an expired credential, a 404 or a corrupt narinfo into a statistic. A revised
+# "I do not have it" is a legitimate answer; anything else is not.
+#
+# Simulated exactly: an HTTP tier whose narinfo says an object is there and
+# whose .nar is missing. Presence answers yes, the copy fails, the re-query
+# still says yes -- which is the case that must be fatal.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "  skipped (python3 not on PATH)"
+else
+  LIAR=$WORK/lying-tier
+  rm_store "$LIAR"; mkdir -p "$LIAR"
+  command cp -a "$ESCROW/cache" "$LIAR/cache"
+  # Keep the narinfo, remove the bytes it promises.
+  VICTIM=$(find "$LIAR/cache" -maxdepth 1 -name '*.narinfo' \
+           | head -1 | xargs -r sed -n 's/^URL: //p')
+  if [ -z "$VICTIM" ] || [ ! -f "$LIAR/cache/$VICTIM" ]; then
+    bad "t20.1 a tier that lies about one object can be constructed" "no nar to remove"
+  else
+    rm -f "$LIAR/cache/$VICTIM"
+    ok "t20.1 a tier that lies about one object can be constructed"
+    LIARPORT=$WORK/lying-tier.port; rm -f "$LIARPORT"
+    python3 "$ROOT/tests/helpers/http-cache-server.py" "$LIAR/cache" "$LIARPORT" \
+      >"$WORK/lying-tier.log" 2>&1 &
+    LIAR_PID=$!
+    # shellcheck disable=SC2064  # expand now, not at trap time
+    trap "kill $LIAR_PID 2>/dev/null || :" EXIT
+    LPORT=""
+    for _ in $(seq 1 100); do
+      [ -s "$LIARPORT" ] && { LPORT=$(cat "$LIARPORT"); break; }
+      kill -0 "$LIAR_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    if [ -z "$LPORT" ]; then
+      bad "t20.2 the lying tier is serving" "no port; see $WORK/lying-tier.log"
+    else
+      ok "t20.2 the lying tier is serving"
+      LIARDIR=$WORK/lying-run
+      rm_store "$LIARDIR"; mkdir -p "$LIARDIR"
+      command cp -f "$ESCROW/discovery.json" "$LIARDIR/discovery.json"
+      rc=0
+      "$NSE" preserve "$FIXTURE" \
+        --escrow-dir "$LIARDIR" \
+        --guarantee source-origin-independence \
+        --binary-tier "http://127.0.0.1:$LPORT" \
+        --staging-dir "$ESCROW/work/staging" >"$WORK/lying-run.log" 2>&1 || rc=$?
+      assert_ne "t20.3 preserve refuses rather than reclassifying the object as absent" "0" "$rc"
+      assert_eq "t20.4 and says so in the words of a tier error, not an absence" \
+        "1" "$(grep -c 'BINARY_TIER_ERROR' "$WORK/lying-run.log" || true)"
+      assert_eq "t20.5 the failure names the object the tier would not hand over" \
+        "1" "$(grep -c 'still claims to hold' "$WORK/lying-run.log" || true)"
+    fi
+    kill "$LIAR_PID" 2>/dev/null || :
+    trap - EXIT
+  fi
 fi
 
 # ---------------------------------------------------------------------------

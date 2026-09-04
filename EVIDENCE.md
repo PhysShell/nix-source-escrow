@@ -312,6 +312,27 @@ made without the data to support them.
 
 ---
 
+## Defects found in the fifth review, and what changed
+
+These came out of the **first real execution** of the suite (GitHub Actions,
+Nix 2.34.7 and 2.24.9). Four of the five earlier rounds were reviews of code.
+This one is a review of measurements, and it found the thing every previous
+round had walked past: the presence check at the bottom of everything was
+answering "yes" to every question it was ever asked.
+
+| | defect | fix |
+|---|---|---|
+| **P0** | `nse_store_present` read `nix path-info --json` with `keys[]`. Nix does **not** omit a path it cannot find and does **not** fail the command: it emits `"<path>": null` and exits `0`. That is `InvalidPath` → `jsonObject = nullptr` with the key still added, in **both** measured versions (2.24.9 and 2.34.7). So `ABSENT → "path": null → keys[] → PRESENT`, and 227 tier candidates went in and 227 "supplied" came out — including a store path this machine had built ten minutes earlier that no public cache could hold. `nix copy` then tried to fetch it and the run died. Structural presence read as semantic presence: the same defect family as every other entry in this file, sitting under all of them. | `nse_pathinfo_present_keys` keeps only entries whose value is non-null, understands both the object and the array shape, and **errors** on any third shape rather than returning nothing. Every remote-backend presence query goes through it, not only the binary tier; `file://` was never affected because it stats a narinfo. Unit tests `u15.1`–`u15.7`. |
+| **P0** | The binary tier reported one number where there were two facts. "The tier says it holds *N*" and "*N* objects arrived" were the same field, so a tier that claims a path and then cannot serve it was indistinguishable from a tier that never claimed it — and the difference is the whole of `SOURCE_ORIGIN_INDEPENDENCE`. A per-path fallback would have hidden this behind 227 process spawns instead of fixing it. | Probe and materialisation are separate stages with separate evidence: `candidates`, `present` (claimed), `materializationRequested`, `materializedRoots` (**re-queried from the destination**, not assumed from the request), `claimedButNotMaterialized`, `notProvided`. A copy failure is **classified**, never relabelled: if the source still claims to hold a path it would not give up, that is `BINARY_TIER_ERROR` and the run dies. An ambiguous failure is never quietly promoted to "unavailable, so the test may rebuild it". Test `t20` runs it against an HTTP tier that keeps the `.narinfo` and deletes the `.nar`. |
+| **P1** | `nse_store_pathinfo` — the metadata reader that feeds trust classification — had the identical null blindness in its map form, so an absent path could enter the sample set as an object with no `ca` and no `sigs`. | Null entries are dropped in both shapes before the map is built. |
+| **P1** | `u14.3` was a **false pass**. It exported a 300 KB `$out` and asserted the query returned `0` — but a single 300 KB environment string exceeds `MAX_ARG_STRLEN`, so *every* `exec` in that subshell fails, `jq` included. It only ever went green because the old parser ignored `jq`'s exit status. The instant the parser began failing closed, the test went red: a test that could only pass while the code under it was fail-open, and it would have argued for putting the fail-open back. | Rewritten to put the bulk where the bug put it — in the store's **answer**, with `$out` exported at the size `nix develop` actually exports it. `u14.4` fails if the internal name is ever exported again; `u14.5` checks all 4000 paths are read back, so the test cannot pass by returning nothing. |
+
+The first two are the reason `a471627` stays labelled a pre-fix diagnostic
+bundle and is not promoted to canonical evidence: its `binaryTier` numbers were
+produced by the parser described in the first row.
+
+---
+
 ## KNOWN_GAPS
 
 Honest list. None of these are hidden behind a green result.

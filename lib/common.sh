@@ -194,27 +194,54 @@ nse_store_present() {
     done
     return 0
   fi
-  # Backend-neutral: ask Nix, in batches. A batch containing one absent path
-  # fails as a whole, so only that batch falls back to per-path queries.
+  # Backend-neutral: ask Nix, in batches.
   #
-  # NOTE the variable name. `local out` does NOT clear the export attribute if
-  # the caller already exported `out` -- and `nix develop` exports `$out`. A
-  # multi-megabyte path-info document then travels in the environment of every
-  # child process, and the next exec dies with E2BIG (exit 126). That is
-  # measured, not theorised: it is what killed the whole source-mode run.
-  # nse_no_stdenv_names in tests/unit-shell.sh keeps these names out.
+  # THE DEFECT THIS REPLACES. `nix path-info --json` does not omit a path it
+  # cannot find and does not fail the command: it emits `"<path>": null` and
+  # exits 0. Both measured Nix versions (2.24.9 and 2.34.7) do this. The old
+  # parser took `keys[]`, so every path we ASKED about came back as present:
+  #
+  #     ABSENT -> "path": null -> keys[] -> PRESENT
+  #
+  # 227 candidates went in and 227 "supplied" came out, including a store path
+  # this machine had built ten minutes earlier that no public cache could
+  # possibly hold. `nix copy` then tried to fetch it and the whole run died.
+  #
+  # This is the same family as every other defect here -- structural presence
+  # mistaken for semantic presence -- and it made remote-backend presence
+  # unsound everywhere, not only for the binary tier. The file:// path was
+  # never affected: it stats a narinfo.
+  #
+  # An unrecognised response shape is fatal, not empty.
   local -a chunk
   local pathinfo_json p
   while mapfile -t -n "$NSE_BATCH_SIZE" chunk && [ "${#chunk[@]}" -gt 0 ]; do
     if pathinfo_json=$(nse_nix path-info --store "$url" --json "${chunk[@]}" 2>/dev/null); then
-      printf '%s\n' "$pathinfo_json" | jq -r 'if type=="array" then .[].path else keys[] end'
+      printf '%s\n' "$pathinfo_json" | nse_pathinfo_present_keys || return 1
     else
+      # A batch can still fail outright (a malformed object, a transport
+      # error). Ask per path, and let each answer stand on its own.
       for p in "${chunk[@]}"; do
-        if nse_nix path-info --store "$url" "$p" >/dev/null 2>&1; then printf '%s\n' "$p"; fi
+        if pathinfo_json=$(nse_nix path-info --store "$url" --json "$p" 2>/dev/null); then
+          printf '%s\n' "$pathinfo_json" | nse_pathinfo_present_keys || return 1
+        fi
       done
     fi
   done
   return 0
+}
+
+# stdin: a `nix path-info --json` document. stdout: the paths it says EXIST.
+#
+# `null` is the answer for "I do not have this", and it is the whole point of
+# this function. An unrecognised shape exits non-zero rather than yielding
+# nothing, because "I cannot read this" is not "there is nothing here".
+nse_pathinfo_present_keys() {
+  jq -r '
+    if   type == "object" then (to_entries[] | select(.value != null) | .key)
+    elif type == "array"  then (.[] | select(. != null and (.path? != null)) | .path)
+    else error("unrecognised `nix path-info --json` response shape: \(type)")
+    end'
 }
 
 # Path metadata for a whole set, as JSONL -- one object per line:
@@ -287,7 +314,8 @@ nse_store_pathinfo() {
     while mapfile -t -u "$fd" -n "$NSE_BATCH_SIZE" chunk && [ "${#chunk[@]}" -gt 0 ]; do
       if pathinfo_json=$(nse_nix path-info --store "$url" --json "${chunk[@]}" 2>/dev/null); then
         printf '%s\n' "$pathinfo_json" \
-          | jq 'if type=="array" then (map({key:.path, value:.})|from_entries) else . end'
+          | jq 'if type=="array" then (map(select(.path? != null)) | map({key:.path, value:.}) | from_entries)
+                else with_entries(select(.value != null)) end'
       else
         # One malformed or absent object fails the whole batch, so fall back
         # to asking per path -- for that batch only.
@@ -295,7 +323,8 @@ nse_store_pathinfo() {
         for p in "${chunk[@]}"; do
           if pathinfo_json=$(nse_nix path-info --store "$url" --json "$p" 2>/dev/null); then
             printf '%s\n' "$pathinfo_json" \
-              | jq 'if type=="array" then (map({key:.path, value:.})|from_entries) else . end'
+              | jq 'if type=="array" then (map(select(.path? != null)) | map({key:.path, value:.}) | from_entries)
+                    else with_entries(select(.value != null)) end'
           fi
         done
       fi
