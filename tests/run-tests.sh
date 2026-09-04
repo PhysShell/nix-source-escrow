@@ -435,6 +435,20 @@ else
   SRC_CLOSURE=$SRC/closure.json
 
   assert_eq "t15.1 the source-only guarantee passes end to end" "0" "$rc"
+  if [ "$rc" -ne 0 ]; then
+    # A failing test that points at a log file is useless to anyone reading CI
+    # output. Print the reason here.
+    echo "    --- why t15 failed: last 25 lines of srcmode.log ---"
+    tail -25 "$WORK/srcmode.log" 2>/dev/null | sed 's/^/    | /'
+    if [ -f "$SRC_OI" ]; then
+      echo "    --- its verdict ---"
+      jq -r '"    | result=\(.result)  step=\(.failedStep)  reason=\(.reason // "none")"' "$SRC_OI"
+    fi
+    if [ -f "$SRC_MANIFEST" ]; then
+      jq -r '"    | binaryTier: requested=\(.binaryTier.pathsRequested) fromTier=\(.binaryTier.pathsFromTier) notProvided=\(.binaryTier.pathsNotProvided)"' \
+        "$SRC_MANIFEST" 2>/dev/null || :
+    fi
+  fi
   assert_eq "t15.2 the manifest names the weaker guarantee" \
     "source-origin-independence" "$(jq -r '.guarantee' "$SRC_MANIFEST")"
   assert_eq "t15.3 and the approved binary tier it was built against" \

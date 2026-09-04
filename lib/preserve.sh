@@ -269,6 +269,11 @@ nse_manifest() {
       flakeRef: $d.flakeRef,
       storeDir: $d.storeDir,
       guarantee: $guarantee,
+      # Which shape of `nix derivation show` this graph was read from. The
+      # report printed "unrecorded, 0 derivations" because the manifest never
+      # carried it -- a reporting gap in the very field added to make the
+      # 2.24.9 defect visible.
+      derivationDocument: $d.derivationDocument,
       topLevelDerivation: $d.topLevelDerivation,
       expectedOutputs: ($outpaths | split("\n") | map(select(length>0)) | sort),
       escrow: { backend: $backend, url: $storeUrl, storeUrl: $storeUrl,
