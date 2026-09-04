@@ -141,12 +141,13 @@
     }
   ],
   "retiredExperiments": {
-    "retiredAtCommit": "PENDING-THIS-COMMIT",
+    "retiredAtCommit": "913df97007250e8c55bcae700036d856a8c1679c",
     "note": [
       "E0-E3 were retired together with the two mechanisms they toggled, because",
       "the experiment's independent variable was those mechanisms. DESIGN.md 17a.",
       "These are their final values, frozen as the justification for the deletion.",
-      "A measurement cannot be both the reason for a change and its acceptance test."
+      "A measurement cannot be both the reason for a change and its acceptance test.",
+      "retiredAtCommit is the commit that DELETED them, recorded by a later commit; the same measured/recorded split as run 11's measuredCommit vs evidenceRecordedBy."
     ],
     "hypotheses": {
       "E0": "control: both legacy workarounds ON. Baseline; if not green nothing below is attributable.",
