@@ -44,6 +44,7 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > | 9 | all steps green | 135 / 9 | the probe added to diagnose that finding ran `nix derivation show` without `-r` and measured its own invocation |
 > | 10 | all steps green | 135 / 9 | the probe, fixed, named the outliers: 17 `__structuredAttrs` derivations carrying their attributes in `env.__json` |
 > | **11** | **all steps green** | **all steps green** | **144 / 0 and 144 / 0.** The canonical result below |
+> | 15 | 143 / 1 | 143 / 1 | the **removal** run (`913df97`). Every pre-registered observable unchanged from run 11, `closureSha256` included. The one failure is `t07.9`, which asserted `.restoreExit == 0` — the exit code of a `nix copy` the default path never ran. `DESIGN.md` §17b |
 >
 > The nine are `t01.3`, `t01.4`, `t01.7` and all of `t10` — every one an
 > assertion about an origin URL, a hash mode or a `postFetch`. On 2.24.9

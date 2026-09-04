@@ -1125,3 +1125,61 @@ The rest of §17 stands as written, `closureSha256` included. Note what this
 amendment does **not** do: it does not relax a single observable of the system
 under test. It removes a requirement that was never about the system at all —
 only about the instrument, which the change dismantles on purpose.
+
+### 17b. What the removal run actually returned
+
+Run 15, commit `913df97`, judged against §17 and §17a exactly as they were
+written before it.
+
+**Every pre-registered observable is unchanged from run 11**, on both Nix
+versions: `unit-shell` 111/0, `flake check` pass,
+`FOD_SOURCES=165 COVERED=163 EXTERNAL_RECOVERY=2 WITH_POSTFETCH=3
+ON_KNOWN_FORGE=38`, 638 derivations, 874 objects, `ORIGIN_INDEPENDENCE=PASS`,
+and
+
+```
+closureSha256 = 9243083eb0146c72362229c734fa78f6b3b1200eab9a8be06ccbbe8fe7daf8ec
+```
+
+identical across both versions and equal to run 11's. The hash that §17 said
+must not move did not move, so no paragraph explaining a new one is needed —
+which was the point of naming it in advance.
+
+`t00`–`t20` came back **143/1** on both legs, and the one failure is the
+finding:
+
+```
+t07.9 flake inputs were restored from the escrow with no network
+      assert  .restoreExit == 0
+```
+
+`restoreExit` was `restore_rc`, the exit code of the manual `nix copy`. On the
+default path that block was gated behind `NSE_INPUT_RESTORE = manual` and never
+executed, so `restore_rc` kept the `0` it was initialised with. **The test
+asserted `0 == 0` about a command that did not run**, under a name promising a
+property it never touched. It has been vacuous since `native` became the
+default, and nothing could have revealed it except deleting the field it read.
+
+That is the fifth instrument in this project that could not go red, and the
+first one caught by a pre-registered criterion rather than by accident. §17's
+red table calls for reverting when a test outside the deleted path fails; this
+one *is* inside it — its only subject was the deleted mechanism — but §17a's
+allowance was conditioned on naming such tests **in the deletion commit**, and
+this one was not named because it was not noticed. So it is recorded as a miss
+in the pre-registration, not waved through.
+
+**The repair is not a deletion.** `t07.9`'s *name* described something real that
+nothing else asserts: `t11` checks the inputs are in the escrow and that GitHub
+was unreachable, not that the inputs reached the store the build used. So
+`prove.sh` now measures it — `flakeInputsRequired` and
+`flakeInputsPresentAfterBuild`, counted in the test store after the isolated
+build — and `t07.9`/`t07.9a` assert the count is non-zero and complete. A test
+that cannot fail is worse than no test; replacing it with one that can is the
+only honest way to close this.
+
+While repairing it, the same post-check was found counting
+`nix path-info --json` with `keys | length` — the run-6 P0, still live in the
+code that decides `t07.7`. It has been reporting `4/4` correctly because the
+paths really were there, and would have reported `4/4` just as confidently if
+they had not been. Fixed in the same commit, named here rather than folded in
+silently; it can only lower a count, never raise one.

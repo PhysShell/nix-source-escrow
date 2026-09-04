@@ -275,6 +275,7 @@ nse_report() {
              "OFFLINE_EVAL_PROBE=" + .offlineEvalProbe,
              "HTTP_FETCHES_IN_BUILD_LOG=\(.httpFetchesInBuildLog)",
              "REQUIRED_SOURCES_PRESENT_AFTER_BUILD=\(.sourcesRestored)/\(.sourcesRequired)",
+             "FLAKE_INPUTS_PRESENT_AFTER_BUILD=\(.flakeInputsPresentAfterBuild // "not recorded")/\(.flakeInputsRequired // "?")",
              "OUTPUT_PATH=" + .builtOutput,
              "OUTPUT_MATCHES_MANIFEST=" + (.outputMatches|tostring),
              "",

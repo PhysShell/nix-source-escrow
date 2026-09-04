@@ -232,8 +232,16 @@ assert_eq "t07.7 every plan-required source ended up in the clean test store" \
   "true" "$(jq -r '.sourcesRestored == .sourcesRequired' "$OI")"
 assert_eq "t07.8 NSS was isolated too, so DNS was not merely broken" \
   "full" "$(jq -r ".nssIsolation" "$OI")"
-assert_eq "t07.9 flake inputs were restored from the escrow with no network" \
-  "0" "$(jq -r ".restoreExit" "$OI")"
+# t07.9 read `.restoreExit` -- the exit code of a `nix copy` the default path
+# never ran, initialised to 0 and left there. It asserted 0 == 0 about a command
+# that did not execute, under a name promising something else entirely, and it
+# was vacuous from the day `native` became the default. The property is now
+# measured for real: every locked input, in a store that started empty with
+# every origin unreachable.
+assert_ne "t07.9 the flake inputs the plan locks were counted, not assumed" \
+  "0" "$(jq -r ".flakeInputsRequired // 0" "$OI")"
+assert_eq "t07.9a every one of them is in the test store, with no network" \
+  "true" "$(jq -r '.flakeInputsPresentAfterBuild == .flakeInputsRequired' "$OI")"
 assert_eq "t07.10 evaluation itself succeeded offline (covers eval-time builtins.fetch*)" \
   "clean" "$(jq -r ".offlineEvalProbe" "$OI")"
 assert_eq "t07.11 the escrow was the only substituter" \

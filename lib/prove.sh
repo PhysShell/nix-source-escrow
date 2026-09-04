@@ -551,21 +551,54 @@ fi
 # One query for the whole set; the per-path loop is only the fallback for a
 # batch Nix refuses.
 step=post-checks
+
+# How many of these paths does the test store actually hold?
+#
+# `nix path-info --json` answers `"<path>": null` for a path it does not have
+# and exits 0. This function used to count `keys | length`, so an absent path
+# was counted as present -- the same P0 that made the binary tier claim 227 of
+# 227 in run 6, still live in the post-check that decides t07.7. It happens to
+# have been reporting 4/4 correctly, because the paths really were there; it
+# would have reported 4/4 just as confidently if they had not been.
+present_count() {
+  jq -r 'if type=="array"
+         then [ .[] | select(. != null and (.path? != null)) ] | length
+         else [ to_entries[] | select(.value != null) ] | length end'
+}
+
+# One query for the whole set; the per-path loop is only the fallback for a
+# batch Nix refuses outright.
+count_present_in_teststore() {
+  local -a paths=("$@")
+  local answer n
+  [ "${#paths[@]}" -gt 0 ] || { printf '0\n'; return 0; }
+  if answer=$(nix path-info --store "$NSE_TESTSTORE" --json "${paths[@]}" 2>/dev/null); then
+    printf '%s\n' "$answer" | present_count
+    return 0
+  fi
+  n=0
+  for p in "${paths[@]}"; do
+    if nix path-info --store "$NSE_TESTSTORE" "$p" >/dev/null 2>&1; then n=$((n + 1)); fi
+  done
+  printf '%s\n' "$n"
+}
+
 mapfile -t required_paths < <(jq -r '.sources[] | select(.plan.requiredByPlan) | .storePath' "$NSE_MANIFEST")
 required=${#required_paths[@]}
-restored=0
-if [ "$required" -gt 0 ]; then
-  if present=$(nix path-info --store "$NSE_TESTSTORE" --json "${required_paths[@]}" 2>/dev/null); then
-    restored=$(printf '%s\n' "$present" \
-               | jq -r 'if type=="array" then length else (keys|length) end')
-  else
-    for p in "${required_paths[@]}"; do
-      if nix path-info --store "$NSE_TESTSTORE" "$p" >/dev/null 2>&1; then
-        restored=$((restored + 1))
-      fi
-    done
-  fi
-fi
+restored=$(count_present_in_teststore "${required_paths[@]+"${required_paths[@]}"}")
+
+# The flake inputs, in the store the isolated build actually used.
+#
+# This is the measurement t07.9 always claimed to make and never did: it read
+# `restoreExit`, the exit code of a `nix copy` that the default path never ran,
+# so it asserted 0 == 0 about a command that did not execute. The manual copy
+# is gone (DESIGN.md §8a); the property it was supposed to stand for is real
+# and is measured here -- every locked input, transitive ones included, present
+# in a store that started empty with every origin unreachable, put there by
+# Nix substituting from the escrow and by nothing else.
+mapfile -t input_paths < <(jq -r '.flakeInputs[] | select(.storePath != null) | .storePath' "$NSE_MANIFEST")
+inputs_required=${#input_paths[@]}
+inputs_present=$(count_present_in_teststore "${input_paths[@]+"${input_paths[@]}"}")
 
 expected_out=$(jq -r '.expectedOutputs[0] // ""' "$NSE_MANIFEST")
 
@@ -647,6 +680,7 @@ jq -n \
   --arg guaranteeName "$NSE_GUARANTEE_NAME" \
   --argjson buildRc "$build_rc" --argjson evalRc "$eval_rc" \
   --argjson required "$required" --argjson restored "$restored" \
+  --argjson inputsRequired "$inputs_required" --argjson inputsPresent "$inputs_present" \
   --argjson httpFetches "$net_lines" \
   --argjson outMatches "$out_matches" \
   --argjson reachableOrigins "$reachable_origins" \
@@ -669,6 +703,7 @@ jq -n \
     buildExit:$buildRc, offlineEvalExit:$evalRc,
     offlineEvalProbe:(if $evalRc == 0 then "clean" else "failed" end),
     sourcesRequired:$required, sourcesRestored:$restored,
+    flakeInputsRequired:$inputsRequired, flakeInputsPresentAfterBuild:$inputsPresent,
     httpFetchesInBuildLog:$httpFetches,
     reachableOriginCount:$reachableOrigins,
     unresolvedOriginCount:$unresolvedOrigins,
