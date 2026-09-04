@@ -47,8 +47,20 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > discovery reports `COVERED=146 / EXTERNAL_RECOVERY=19 / WITH_POSTFETCH=0`
 > against `163 / 2 / 3` on 2.34.7, for a byte-identical closure and the same 638
 > derivations and 165 fixed-output sources. It is a defect in what the evidence
-> says about **origins**, not in what the escrow **holds**. Unfixed, on purpose:
-> see `DESIGN.md` §15a.
+> says about **origins**, not in what the escrow **holds**.
+>
+> **Run 10 measured it and it is now fixed.** Two causes. The schemas disagree
+> about the map KEY as well as the envelope, so `drvPath` was
+> `/nix/store//nix/store/…drv` on every 2.24.9 run. And the 17 sources are
+> `__structuredAttrs` derivations, whose attributes are a parsed
+> `structuredAttrs` object on 2.34.7 and the JSON **string** `env.__json` on
+> 2.24.9 — 17 of them, plus the 2 real minimal-bootstrap sources, is the 19.
+> Both fixed, with `u12.5a`/`u12.5b` and `u16.1`–`u16.7`. `DESIGN.md` §15a has
+> the route, which is worth more than the fix: the right hypothesis was told on
+> no evidence, then **refuted** on no evidence by a probe that sampled the first
+> two fixed-output derivations in the document — both plain `fetchurl`, both
+> identical on the two versions. Naming the outliers settled in one run what
+> counting them had not settled in three.
 >
 > **Status of the block below.** The report block below is the **v0.1.0** run,
 > verbatim. It predates the second review and the changes made in response to

@@ -461,6 +461,47 @@ assert_eq "u15.7 nse_store_present reports nothing present for an all-null answe
 unset -f nse_nix
 
 # ---------------------------------------------------------------------------
+head_ "u16  a derivation's attributes survive both ways of carrying them"
+# MEASURED in CI, both shapes taken verbatim from the two Nix versions. A
+# derivation with __structuredAttrs = true puts its attributes in
+# `structuredAttrs` on 2.34.7 and in the STRING `env.__json` on 2.24.9. Reading
+# only the first two places saw {"__json": ..., "out": ...} -- no url, no urls,
+# no postFetch -- and filed 17 sources with perfectly good origins under
+# "can never be re-fetched upstream". Nothing about that was visible in a
+# report: the count simply moved.
+# shellcheck disable=SC2031  # u14 sources common.sh in a subshell; this is the outer one
+jqattr() { jq -r "$NSE_JQ_DRV_ATTRS $1"; }
+printf '%s' '{"name":"hello.tar.gz","env":{"out":"/nix/store/x"},
+  "structuredAttrs":{"urls":["https://ftp.gnu.org/h.tar.gz"],"postFetch":"unpack",
+                     "stripRoot":true}}' > "$TMP/sa-parsed.json"
+printf '%s' '{"name":"hello.tar.gz","env":{"out":"/nix/store/x",
+  "__json":"{\"urls\":[\"https://ftp.gnu.org/h.tar.gz\"],\"postFetch\":\"unpack\",\"stripRoot\":true}"}}' \
+  > "$TMP/sa-json.json"
+printf '%s' '{"name":"plain.patch","env":{"out":"/nix/store/y",
+  "url":"https://example.org/p.patch","urls":"https://example.org/p.patch"}}' \
+  > "$TMP/sa-env.json"
+printf '%s' '{"name":"bootstrap","env":{"out":"/nix/store/z"}}' > "$TMP/sa-none.json"
+printf '%s' '{"name":"broken","env":{"out":"/nix/store/w","__json":"{not json"}}' \
+  > "$TMP/sa-bad.json"
+
+assert_eq "u16.1 parsed structuredAttrs yields the origin URL" \
+  "https://ftp.gnu.org/h.tar.gz" "$(jqattr 'nse_urls_of(.)[]' < "$TMP/sa-parsed.json")"
+assert_eq "u16.2 the SAME derivation as env.__json yields the SAME URL" \
+  "https://ftp.gnu.org/h.tar.gz" "$(jqattr 'nse_urls_of(.)[]' < "$TMP/sa-json.json")"
+assert_eq "u16.3 postFetch is found through env.__json too, so hash mode is right" \
+  "unpack unpack" \
+  "$(jqattr 'nse_attr(.;"postFetch")' < "$TMP/sa-parsed.json") $(jqattr 'nse_attr(.;"postFetch")' < "$TMP/sa-json.json")"
+assert_eq "u16.4 and so is stripRoot, with its type intact" \
+  "true true" \
+  "$(jqattr 'nse_attr(.;"stripRoot")' < "$TMP/sa-parsed.json") $(jqattr 'nse_attr(.;"stripRoot")' < "$TMP/sa-json.json")"
+assert_eq "u16.5 a plain env derivation still works, string urls split" \
+  "https://example.org/p.patch" "$(jqattr 'nse_urls_of(.)[]' < "$TMP/sa-env.json")"
+assert_eq "u16.6 a derivation with no origin at all reports none" \
+  "0" "$(jqattr 'nse_urls_of(.) | length' < "$TMP/sa-none.json")"
+rc=0; jqattr 'nse_urls_of(.)' < "$TMP/sa-bad.json" >/dev/null 2>&1 || rc=$?
+assert_ne "u16.7 an env.__json that is not JSON FAILS, it is not no attributes" "0" "$rc"
+
+# ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"
 # A comment may name the old bug; an emitted line may not. Anchoring at the
 # start of a non-comment line is what separates the two.

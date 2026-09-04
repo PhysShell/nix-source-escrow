@@ -104,7 +104,7 @@ allow-import-from-derivation = false" \
     --slurpfile archive "$work/flake-archive.json" \
     --slurpfile meta "$work/flake-metadata.json" \
     --slurpfile drvs "$work/drvs.json" \
-    '
+    "$NSE_JQ_DRV_ATTRS"'
     def host($u):
       if ($u|type) != "string" then null
       elif ($u | test("^[a-zA-Z][a-zA-Z0-9+.-]*://")) then
@@ -141,19 +141,11 @@ allow-import-from-derivation = false" \
                + walkInputs($nodes; $root; $child; $cid; $aliasPath + [$a]) )
         | add // [] );
 
-    def attr($d; $k):
-      (($d.structuredAttrs // {}) as $s | ($d.env // {}) as $e
-       | if ($s|has($k)) then $s[$k]
-         elif ($e|has($k)) then $e[$k]
-         else null end);
-
-    def urlsOf($d):
-      ( attr($d;"urls") ) as $u
-      | if ($u|type)=="array" then $u
-        elif ($u|type)=="string" and ($u|length)>0 then ($u|split(" ")|map(select(length>0)))
-        else ( attr($d;"url") ) as $s
-             | if ($s|type)=="string" and ($s|length)>0 then [$s] else [] end
-        end;
+    # attr/urlsOf live in lib/common.sh as NSE_JQ_DRV_ATTRS, prepended to this
+    # program, because they have to understand `env.__json` and that rule is
+    # worth unit-testing without a Nix in sight (u16).
+    def attr($d; $k): nse_attr($d; $k);
+    def urlsOf($d):   nse_urls_of($d);
 
     ($meta[0].locks.nodes // {})   as $nodes |
     ($meta[0].locks.root // "root") as $lockRoot |

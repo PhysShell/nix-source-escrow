@@ -929,11 +929,45 @@ assertion about a URL, a hash mode or a `postFetch`. `ESCROW_REPLAY` still
 passes on that version, so this is a defect in what the evidence *says about
 origins*, not in what the escrow *holds*.
 
-It is not fixed here, and the reason is the subject of this section. There is a
-plausible story (`__structuredAttrs`, exposed as a parsed object by one version
-and as an `env` blob by the other) and no measurement, and a fix written to a
-plausible story is how three of the four defects in §15 got written in the
-first place.
+**Resolved, by measurement, in run 10.** Two things were wrong, and the second
+one is the finding:
+
+* **The key.** The envelope keys its map by the bare object name
+  (`013mqc5…-expr-strcmp.patch.drv`); the flat map keys it by the full store
+  path. `discover.sh` built `drvPath` as `"$storedir/" + key`, so every 2.24.9
+  run recorded `/nix/store//nix/store/…drv` for all 638 derivations.
+  `nse_drv_map` now normalises the key for both schemas. `u12` could not have
+  caught it: both its fixtures used a full path and `u12.5` compared the map
+  *length*.
+* **The 17.** They are `__structuredAttrs` derivations, and the two versions put
+  those attributes in different places:
+
+```
+2.34.7   "structuredAttrs": { "urls": [...], "postFetch": ..., "stripRoot": true }
+2.24.9   "env": { "__json": "{\"urls\":[...],...}", "out": ... }
+```
+
+  Reading only `structuredAttrs` and `env` saw `{"__json": …, "out": …}` — no
+  `url`, no `urls`, no `postFetch` — and filed 17 sources that have perfectly
+  good origins under `EXTERNAL_RECOVERY`, "can never be re-fetched upstream,
+  only restored from a cache". Exactly 17, which with the 2 genuinely
+  origin-less minimal-bootstrap sources is the 19 that version reported. §16
+  again, one level further down: a representation we could not read became an
+  object with nothing in it, and the only trace was a count that moved.
+
+The route to it is the part worth keeping. The `__structuredAttrs` story was
+told *first*, on no evidence, and then declared dead — also on no evidence,
+because the probe printed the first two fixed-output derivations in the
+document and both were plain `fetchurl` with identical attributes on both
+versions. A non-representative sample refuted a correct hypothesis as
+confidently as it would have confirmed a wrong one. What settled it was making
+the probe **name** the derivations that differed instead of counting them: 17
+lines reading `__json,out` and two reading `outputHash,…`, and the arithmetic
+closed on the spot.
+
+`nse_attr` / `nse_urls_of` now live in `lib/common.sh` as `NSE_JQ_DRV_ATTRS`,
+read `env.__json` when there is no parsed `structuredAttrs`, and **error** on an
+`env.__json` that is not JSON. Tests `u16.1`–`u16.7`, no Nix required.
 
 ---
 

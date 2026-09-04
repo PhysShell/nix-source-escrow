@@ -291,6 +291,50 @@ nse_store_meta() {
   return 0
 }
 
+# Reading the attributes of a derivation out of `nix derivation show`.
+#
+# MEASURED, on the two versions in CI, after two wrong stories had been told
+# about the same numbers. A derivation built with `__structuredAttrs = true`
+# carries its attributes in two different places:
+#
+#   2.34.7 (envelope v4)  "structuredAttrs": { "urls": [...], "postFetch": ... }
+#   2.24.9 (flat map)     "env": { "__json": "{\"urls\":[...],...}", "out": ... }
+#
+# Reading only `structuredAttrs` and `env` therefore saw `{"__json": ..., "out":
+# ...}` on 2.24.9 -- no `url`, no `urls`, no `postFetch` -- and classified 17
+# sources that have perfectly good origins as EXTERNAL_RECOVERY: "this can
+# never be re-fetched upstream, only restored from a cache". Exactly 17, which
+# with the 2 genuinely origin-less minimal-bootstrap sources is the 19 that
+# version reported. It is the §16 rule again: a representation we could not
+# read became an object with nothing in it.
+#
+# `env.__json` that is not JSON is an ERROR. A derivation whose attributes
+# cannot be read is not a derivation with no attributes.
+# shellcheck disable=SC2016,SC2034  # a jq program, consumed by lib/discover.sh
+NSE_JQ_DRV_ATTRS='def nse_structured_attrs($d):
+  if ($d | has("structuredAttrs")) and ($d.structuredAttrs != null)
+  then $d.structuredAttrs
+  elif (($d.env // {}) | has("__json"))
+  then ($d.env.__json
+        | try fromjson
+          catch error("nix derivation show gave an env.__json that is not JSON"))
+  else {} end;
+
+def nse_attr($d; $k):
+  (nse_structured_attrs($d)) as $s | ($d.env // {}) as $e
+  | if   ($s|has($k)) then $s[$k]
+    elif ($e|has($k)) then $e[$k]
+    else null end;
+
+def nse_urls_of($d):
+  (nse_attr($d;"urls")) as $u
+  | if   ($u|type)=="array" then $u
+    elif ($u|type)=="string" and ($u|length)>0
+      then ($u | split(" ") | map(select(length>0)))
+    else (nse_attr($d;"url")) as $s
+         | if ($s|type)=="string" and ($s|length)>0 then [$s] else [] end
+    end;'
+
 # Classify one metadata record. The single definition both VERIFY and TRUST
 # use, so they cannot disagree about what "signed" means again.
 # shellcheck disable=SC2034  # consumed by lib/verify.sh and lib/trust.sh
