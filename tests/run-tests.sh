@@ -438,8 +438,16 @@ else
   if [ "$rc" -ne 0 ]; then
     # A failing test that points at a log file is useless to anyone reading CI
     # output. Print the reason here.
-    echo "    --- why t15 failed: last 25 lines of srcmode.log ---"
-    tail -25 "$WORK/srcmode.log" 2>/dev/null | sed 's/^/    | /'
+    # The tail was the evidence report, which correctly said the pipeline
+    # failed -- and said nothing about why, because nse_die writes its message
+    # far earlier. Print the error itself, and the stage progress around it.
+    echo "    --- why t15 failed: the error ---"
+    grep -n -m3 -E 'nix-source-escrow: (error|warning):|error:' "$WORK/srcmode.log" 2>/dev/null \
+      | sed 's/^/    ! /' || echo "    ! (no error line found)"
+    echo "    --- stage progress (==> lines) ---"
+    grep -n '^==>' "$WORK/srcmode.log" 2>/dev/null | tail -12 | sed 's/^/    | /'
+    echo "    --- last 12 lines ---"
+    tail -12 "$WORK/srcmode.log" 2>/dev/null | sed 's/^/    | /'
     if [ -f "$SRC_OI" ]; then
       echo "    --- its verdict ---"
       jq -r '"    | result=\(.result)  step=\(.failedStep)  reason=\(.reason // "none")"' "$SRC_OI"
