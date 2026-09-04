@@ -41,6 +41,9 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > | 6 | 117 / 18 | 108 / 27 | the presence P0: `"path": null` read as present, `nix copy` then died fetching an object no cache could hold |
 > | 7 | died in `t20` | died in `t20` | `find … \| head` + `pipefail` + `set -e`: the new test aborted the suite before it could print a result |
 > | 8 | **all steps green** | 135 / 9 | first fully green leg. All nine remaining failures are one finding: the 2.24.9 derivation-attribute gap |
+> | 9 | all steps green | 135 / 9 | the probe added to diagnose that finding ran `nix derivation show` without `-r` and measured its own invocation |
+> | 10 | all steps green | 135 / 9 | the probe, fixed, named the outliers: 17 `__structuredAttrs` derivations carrying their attributes in `env.__json` |
+> | **11** | **all steps green** | **all steps green** | **144 / 0 and 144 / 0.** The canonical result below |
 >
 > The nine are `t01.3`, `t01.4`, `t01.7` and all of `t10` — every one an
 > assertion about an origin URL, a hash mode or a `postFetch`. On 2.24.9
@@ -62,27 +65,161 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > identical on the two versions. Naming the outliers settled in one run what
 > counting them had not settled in three.
 >
-> **Status of the block below.** The report block below is the **v0.1.0** run,
-> verbatim. It predates the second review and the changes made in response to
-> it, and it is kept because it is the record of what was actually measured
-> then — including, in plain sight on the third line, the `HOST=Windows 11`
-> literal that this file used to present as a measured fact.
->
-> It is **not** the current output. The current report prints extra lines
-> (`HOST_DETECTED_BY`, `GUARANTEE`, `ISOLATION_SETUP`, `DUMMY_INTERFACE`,
-> `FLAKE_INPUT_RESTORE`, `STORE_URL` / `SUBSTITUTER_URL`), `manifest.json` and
-> `closure.json` are at schema 2, and `origin-independence.json` carries a
-> `guarantee` object, and every evidence file now carries a `provenance` block.
-> **Re-run before quoting any of this**, and replace the block with the new
-> output. Nothing below has been re-measured on the current
-> code; the shell-level units (`tests/unit-shell.sh`, 69 checks) are the only
-> part of this change set with a recorded result, and they pass.
+> **Run 11 (`783bc5a`) is green on both Nix versions, every step**, and its
+> report is the canonical Result section below. The **v0.1.0** block that
+> follows it is kept as history, not as evidence: it predates the second review
+> and carries, in plain sight on its third line, the `HOST=Windows 11` literal
+> this file used to present as a measured fact.
+
+---
+
+## Result (canonical): run 11, commit `783bc5a`, 2026-09-04
+
+GitHub Actions, `ubuntu-latest`, a matrix over Nix **2.34.7** and **2.24.9**.
+Cold: no `NSE_TEST_REUSE`, `escrow/` created from nothing, staging store empty,
+every artefact re-fetched from its origin before being preserved. Every step of
+both matrix legs is green.
+
+| | 2.34.7 | 2.24.9 |
+|---|---|---|
+| `tests/unit-shell.sh` | 102 / 0 | 102 / 0 |
+| `nix flake check` (shellcheck) | pass | pass |
+| `tests/run-tests.sh` (`t00`–`t20`) | **144 / 0** | **144 / 0** |
+| `E0 / E1 / E2 / E3` | BASELINE_OK / CONFIRMED / CONFIRMED / CONFIRMED | same |
+| `closureSha256` | `9243083e…f8ec` | **the same** |
+
+The two versions now agree on every discovery number as well
+(`COVERED=163`, `EXTERNAL_RECOVERY=2`, `WITH_POSTFETCH=3`, `ON_KNOWN_FORGE=38`),
+which they did not before `783bc5a`. The only difference either report shows is
+the one that is a fact about Nix: `DERIVATION_DOCUMENT=envelope v4` against
+`flat-map vabsent`, both over the same 638 derivations.
+
+The block below is the 2.34.7 leg's `escrow/evidence/report.txt` verbatim, with
+the runner's repository path shortened to `$PWD`. The 2.24.9 leg's differs only
+in `NIX_VERSION`, `DERIVATION_DOCUMENT`, `CLIENT_IS_TRUSTED_USER=1` (older Nix
+prints `1`, not `true`) and the DNS addresses in the probe lines.
+Machine-readable originals are in the run's `evidence` artifact.
+
+```text
+ENVIRONMENT
+NIX_VERSION=2.34.7
+SYSTEM=x86_64-linux
+HOST=virtualised (microsoft)
+HOST_DETECTED_BY=systemd-detect-virt
+EXECUTION_ENV=Ubuntu 24.04.4 LTS
+KERNEL=Linux 6.17.0-1022-azure
+CLIENT_IS_TRUSTED_USER=true
+AMBIENT_REQUIRE_SIGS=true
+AMBIENT_HASHED_MIRRORS=(unset)
+TOOL_COMMIT=783bc5a9c8ac [git-checkout] (clean)
+
+DISCOVERY
+INSTALLABLE=path:$PWD/fixture#default
+FLAKE_INPUTS=4
+  INPUT_TREE_EDGES_WALKED=6
+  INPUTS_UNRESOLVED_IN_LOCK=0
+FOD_SOURCES=165
+COVERED=163
+EXTERNAL_RECOVERY=2
+QUARANTINED=0
+UNKNOWN=0
+UNSUPPORTED=0
+  HASH_MODE_FLAT=159  HASH_MODE_NAR=6
+  WITH_POSTFETCH=3
+  ON_KNOWN_FORGE=38
+DERIVATION_DOCUMENT=envelope v4, 638 derivations
+IFD_DETECTED=absent
+EVAL_TIME_FETCH_STATIC_ENUMERATION=impossible
+EVAL_TIME_FETCH_OFFLINE_PROBE=clean
+ESCROW_DISCOVERY_COMPLETE=PASS
+  note: eval-time builtins.fetch* are unenumerable statically, but evaluation succeeded offline with an empty cache under network isolation, so none needed the network
+  note: 2 fixed-output source(s) have no origin URL at all (nixpkgs minimal-bootstrap); they can never be re-fetched upstream, only restored from a cache/escrow
+
+ESCROW
+GUARANTEE=escrow-replay
+BACKEND=local-file-binary-cache
+STORE_URL=file://$PWD/escrow/cache
+SUBSTITUTER_URL=file://$PWD/escrow/cache
+BINARY_REPLICA_URL=(none: the escrow holds the whole closure)
+APPROVED_BINARY_TIER=(none)
+COMPRESSION=zstd
+FLAKE_INPUTS_PRESERVED=4/4
+SOURCES_REQUIRED_BY_PLAN=4
+SOURCES_PRESERVED=4
+SOURCES_MISSING=0
+SOURCES_DISCOVERED_NOT_REQUIRED_BY_PLAN=161
+OBJECTS_REALISED=874
+  IN_ESCROW=874
+  IN_BINARY_REPLICA=0
+  PROVIDED_TO_NOBODY=0 (the test instantiates or rebuilds these)
+OBJECTS_PRESENT=874/874
+OBJECTS_NAR_VERIFIED=874/874
+NAR_INTEGRITY_SCOPE=full-closure
+NAR_INTEGRITY=OK
+CONTENT_IDENTITY_VERIFIED=4
+CONTENT_IDENTITY_MISMATCH=0
+ESCROW_VERIFY=PASS
+
+TRUST
+REQUIRE_SIGS_DURING_PROBE=true
+ESCROW_IS_SIGNED=false
+ESCROW_KEY_IN_TRUSTED_PUBLIC_KEYS=false
+SIGNING_KEYS_CREATED=0
+  content-addressed source, no trusted keys      -> ok
+  content-addressed source, cache.nixos.org key  -> ok
+  input-addressed + signed, cache.nixos.org key  -> ok
+  input-addressed + signed, no trusted keys      -> denied
+  input-addressed + unsigned, cache.nixos.org key-> denied
+SOURCE_SIGNATURE_REQUIRED=false
+ESCROW_OBJECTS_CONTENT_ADDRESSED=820
+ESCROW_OBJECTS_SIGNATURE_ONLY=53
+ESCROW_OBJECTS_UNSIGNED_INPUT_ADDRESSED=1
+TEST=PASS
+
+NETWORK ACCEPTANCE
+GUARANTEE=ESCROW_REPLAY
+  proves: the accepted build completes with every dependency origin and every third-party binary cache unreachable, from an empty store, using only the escrow
+  does not prove: FULL_AIRGAP_REBUILD: the escrow holds prebuilt binaries that came from cache.nixos.org, so this does not show the graph can be rebuilt from source alone
+NETWORK_ISOLATION=user+network+mount namespace (unshare -Ur --net --mount)
+ISOLATION_MODE=namespaces
+ISOLATION_SETUP=ok
+DUMMY_INTERFACE=absent
+NSS_ISOLATION=full
+ORIGIN_HOSTS_PROVEN_UNREACHABLE=github.com,codeload.github.com,raw.githubusercontent.com,gitlab.com,ftp.gnu.org
+ORIGIN_HOSTS_REACHABLE=none
+CACHE_NIXOS_ORG_ALLOWED=false
+DURABLE_ESCROW=file://$PWD/escrow/cache
+REPLAYED_FROM=file://$PWD/escrow/cache (direct, 874 objects)
+MODE_SUPPORTED=true
+REPLAY_OBJECTS_REQUESTED=874
+  REACHABLE_BY_TEST=874  ARRIVED_AS_CLOSURE=0
+  NOT_PROVIDED_BUT_REACHABLE=0
+SOURCES_IN_ESCROW_BEFORE_ISOLATION=4/4
+SUBSTITUTERS_ONLY_ESCROW=true
+SUBSTITUTERS_AS_CONFIGURED=true
+EFFECTIVE_SUBSTITUTERS=file://$PWD/escrow/cache
+FLAKE_INPUT_RESTORE=native
+PROBE_METHOD=curl by name and by address pre-resolved outside the namespace
+OFFLINE_EVAL_PROBE=clean
+HTTP_FETCHES_IN_BUILD_LOG=0
+REQUIRED_SOURCES_PRESENT_AFTER_BUILD=4/4
+OUTPUT_PATH=/nix/store/kfmaahsrnil10qp66f3dnisv557bpa3a-escrow-fixture-0.1
+OUTPUT_MATCHES_MANIFEST=true
+
+ORIGIN_INDEPENDENCE=PASS
+  probe github.com [140.82.112.3]: byName=false (curl 6), byAddress=false (curl 7)
+  probe codeload.github.com [140.82.114.9]: byName=false (curl 6), byAddress=false (curl 7)
+  probe raw.githubusercontent.com [185.199.111.133]: byName=false (curl 6), byAddress=false (curl 7)
+  probe gitlab.com [172.65.251.78]: byName=false (curl 6), byAddress=false (curl 7)
+  probe ftp.gnu.org [209.51.188.20]: byName=false (curl 6), byAddress=false (curl 7)
+  probe cache.nixos.org [146.75.29.91]: byName=false (curl 6), byAddress=false (curl 7)
+```
+
+---
 
 The v0.1.0 run below started by deleting `escrow/` entirely, so the staging
 store was cold and every artefact was re-fetched from its origin before being
-preserved. Machine-readable originals live in `escrow/evidence/*.json`; the
-block below is `escrow/evidence/report.txt` verbatim, with the repository path
-shortened.
+preserved. It is kept for the record of what was measured then.
 
 ---
 
@@ -236,11 +373,12 @@ refuse.
 
 ## Automated tests
 
-`./tests/unit-shell.sh` — **69/69 passed** on the current code (no Nix needed).
+`./tests/unit-shell.sh` — **102/102 passed**, on both Nix versions in run 11
+(it needs no Nix; it runs on the matrix anyway because it is free).
 
-`nix develop -c ./tests/run-tests.sh` — **72/72 passed on v0.1.0**. The suite
-has grown four groups since (`t00`, `t13`, `t14`, `t15`) and **has not been
-re-run on the current code**; do that before quoting a number here.
+`nix develop -c ./tests/run-tests.sh` — **144/144 passed on Nix 2.34.7 and
+144/144 on Nix 2.24.9**, cold, in run 11 (`783bc5a`). `t20` joined the suite in
+run 8 and passes on both.
 
 | group | what it pins down |
 |---|---|
@@ -264,6 +402,7 @@ re-run on the current code**; do that before quoting a number here.
 | `t17` | every evidence file records the revision that produced it, whether the tree was dirty, and the hash of the manifest it judged |
 | `t18` | proving one guarantee against an escrow preserved for another yields `MODE_UNSUPPORTED`, runs no build, names the mismatch rather than the escrow, and is refused as a negative control |
 | `t19` | the **built package** reports a stamped revision, `revisionSource=flake`, the exact tested HEAD, and a clean source tree — the case a test against `$PWD/bin` cannot see |
+| `t20` | a binary tier that serves a `narinfo` for a `.nar` it does not have yields `BINARY_TIER_ERROR` and names the object, rather than reclassifying it as "the tier does not have it, let the build rebuild it" |
 
 Two checks earned their keep during development. `t06`'s content-identity check
 caught a bug in the *test harness* that wrote through a hardlink and corrupted a
@@ -485,39 +624,30 @@ Honest list. None of these are hidden behind a green result.
     `file://` stores. Both are honest today only because a materialised proof
     replica is always local — a future non-file replay target would need the
     audit extended rather than assumed.
-19. Superseded by the run table at the top of this file. The Nix-dependent
-    suite HAS now been run: fully green on Nix 2.34.7, 135/9 on 2.24.9 with
-    every failure attributable to the one open finding. What remains true is
-    that the **report block below** is still the v0.1.0 record and has not been
-    replaced with a current one.
+19. Closed. The Nix-dependent suite has been run cold on both Nix versions and
+    is 144/0 on each (run 11, `783bc5a`), and the canonical Result section is
+    that run's report rather than the v0.1.0 one.
 
 ---
 
 ## What to do next
 
-In the order the value arrives. The first item is not optional: everything
-below it is written but unmeasured.
+In the order the value arrives.
 
-1. **Re-run everything on a machine with Nix.** `./tests/run-tests.sh`, then
-   `./tests/experiments.sh`, then `nix build .#nix-source-escrow` and
-   `./result/bin/nix-source-escrow --help`, then replace the report block in
-   this file with the new `escrow/evidence/report.txt`. Until then this file
-   documents v0.1.0 and four change sets, not a result. That acceptance rule —
-   `provenance.toolRevision` names the tested HEAD and `workingTreeDirty` is
-   `false` — is now asserted by `t19.6` and `t19.7` rather than left to a
-   reviewer, so run the suite on a **committed, clean** tree: a result measured
-   on a dirty tree is a result about nothing in particular. Do not use
-   `NSE_TEST_REUSE=1` for the first official run; inherit no staging or escrow
-   from the previous semantics. Watch `t15.18`
-   (`notProvidedReachableByTest`) in particular: if it is non-zero, a closure
-   copy is reaching further than the accounting claims and the "rebuilt inside
-   the test" wording needs revisiting, not the assertion.
-2. **Retire the two workarounds the experiments clear.** If `E1` is CONFIRMED,
-   delete the dummy interface and `DESIGN.md` §8. If `E2` is CONFIRMED, make
-   `--native-input-restore` the default and demote the manual copy to a
-   diagnostic. If either is REFUTED, write down *why* — that is a more
-   interesting finding than the fix. If `E0` is not green, fix that first and
-   read nothing else from that run.
+1. ~~**Re-run everything on a machine with Nix.**~~ **Done** — run 11
+   (`783bc5a`), cold, on Nix 2.34.7 and 2.24.9, committed clean tree, 144/0 on
+   each. `t15.18` (`notProvidedReachableByTest`) is `0`, so the closure copy is
+   not reaching further than the accounting claims. The eleven runs it took are
+   the run table at the top of this file, and the five defects they surfaced are
+   `DESIGN.md` §15 and §15a.
+2. **Retire the two workarounds the experiments cleared.** `E1`, `E2` and `E3`
+   are CONFIRMED on **both** Nix versions across every run since 6, with `E0`
+   green each time, so the conclusion is attributable: the dummy interface and
+   the manual input restore are both unnecessary. They are already off by
+   default. What is left is deletion — the dummy-interface code path and
+   `DESIGN.md` §8 with it, and demoting the manual copy to a diagnostic — plus
+   `experiments.json` still printing `measured on: unknown` where it should
+   print the Nix version it ran against.
 3. **Run the escrow against a real remote backend.** Attic or an S3 bucket,
    end to end, with credentials, so gap 14 stops being an HTTP-server test and
    becomes deployment evidence.
