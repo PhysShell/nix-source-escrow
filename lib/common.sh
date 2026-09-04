@@ -450,9 +450,20 @@ nse_drv_schema() {
 # The derivation map itself, whichever shape it arrived in.
 nse_drv_map() {
   local f=$1
+  # The two schemas also disagree about the KEY, which was measured only after
+  # the schema difference had already been fixed:
+  #
+  #   2.34.7 envelope : "013mqc5...-expr-strcmp.patch.drv"
+  #   2.24.9 flat map : "/nix/store/013mqc5...-expr-strcmp.patch.drv"
+  #
+  # discover.sh builds drvPath as "$storedir/" + key, so on 2.24.9 every
+  # derivation path it recorded was /nix/store//nix/store/... -- a path that
+  # exists nowhere. Keys are normalised to the bare object name here, once, so
+  # neither caller has to know which Nix produced the document.
+  local norm='with_entries(.key |= sub("^.*/"; ""))'
   case $(nse_drv_schema "$f") in
-    envelope) jq '.derivations' "$f" ;;
-    flat-map) jq '.' "$f" ;;
+    envelope) jq ".derivations | $norm" "$f" ;;
+    flat-map) jq "$norm" "$f" ;;
     *)        return 1 ;;
   esac
 }

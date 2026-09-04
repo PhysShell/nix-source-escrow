@@ -117,6 +117,20 @@ jobs:
                   | select((((.structuredAttrs // {}) + (.env // {}))
                             | (has("url") or has("urls"))) | not)] | length' \
             /tmp/drvshow.json || true
+          # 2 of these on 2.34.7, 19 on 2.24.9, and both counts were produced by
+          # the SAME jq over the two documents -- so the 17 are a real
+          # difference between the documents, not between two readings of one.
+          # Naming them is what identifies the class; the counts alone have
+          # supported three different stories already.
+          echo "...and this is who they are (name | builder | env keys):"
+          jq -r '(.derivations // .) | to_entries[]
+                 | select(.value.outputs // {} | to_entries | any(.value.hash != null))
+                 | select((((.value.structuredAttrs // {}) + (.value.env // {}))
+                           | (has("url") or has("urls"))) | not)
+                 | "  \(.value.name // (.key | sub("^.*/";"")))"
+                   + " | \(.value.builder // "?" | sub("^.*/";""))"
+                   + " | \((.value.env // {}) | keys | join(","))"' \
+            /tmp/drvshow.json || true
 
       - name: Record what is being measured
         run: |

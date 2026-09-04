@@ -315,7 +315,10 @@ head_ "u12  an unreadable derivation document is not an empty one"
 # Measured on two Nix versions in CI: 2.34.7 emits {version, derivations} and
 # 2.24.9 emits a flat map. discover.sh read `.derivations // {}`, so on the flat
 # shape it saw ZERO derivations and the whole run went green about nothing.
-printf '{"version":4,"derivations":{"/nix/store/a.drv":{"outputs":{"out":{"path":"/p"}}}}}' > "$TMP/env.json"
+# The fixtures carry the key form each version really emits. They used to use a
+# full path in BOTH, so u12.5 -- which compared only the map LENGTH -- could not
+# have gone red on the key defect that was sitting there the whole time.
+printf '{"version":4,"derivations":{"a.drv":{"outputs":{"out":{"path":"/p"}}}}}' > "$TMP/env.json"
 printf '{"/nix/store/a.drv":{"outputs":{"out":{"path":"/p"}}}}' > "$TMP/flat.json"
 printf '{"totally":"different"}' > "$TMP/unk.json"
 : > "$TMP/empty.json"
@@ -329,6 +332,14 @@ assert_eq "u12.4 an empty document says unknown too" \
   "unknown" "$(nse_drv_schema "$TMP/empty.json")"
 assert_eq "u12.5 both known shapes normalise to the same map" \
   "1 1" "$(nse_drv_map "$TMP/env.json" | jq -r length) $(nse_drv_map "$TMP/flat.json" | jq -r length)"
+# The same map means the same KEYS, not merely the same count. discover.sh
+# builds a derivation path as "$storedir/" + key; a key that is already a full
+# path produced /nix/store//nix/store/... on every 2.24.9 run.
+assert_eq "u12.5a and to the same keys, whichever version wrote it" \
+  "a.drv a.drv" \
+  "$(nse_drv_map "$TMP/env.json" | jq -r 'keys[]') $(nse_drv_map "$TMP/flat.json" | jq -r 'keys[]')"
+assert_eq "u12.5b a key is never a path, so prefixing a store dir is safe" \
+  "" "$(nse_drv_map "$TMP/flat.json" | jq -r 'keys[] | select(test("/"))')"
 rc=0; nse_drv_map "$TMP/unk.json" >/dev/null 2>&1 || rc=$?
 assert_ne "u12.6 an unknown shape REFUSES rather than returning an empty map" "0" "$rc"
 rc=0; nse_drv_map "$TMP/empty.json" >/dev/null 2>&1 || rc=$?
