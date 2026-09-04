@@ -20,6 +20,52 @@
   "ciBranch": "claude/ci-run-6a6687c",
   "runs": [
     {
+      "run": 18,
+      "workflowRunId": 33901778840,
+      "measuredCommit": "a4f07ea366a921b81f03565a3e032b69be5f94f5",
+      "kind": "post-minimization canonical",
+      "canonical": true,
+      "verdict": "REMOVAL_VALIDATED",
+      "results": {
+        "nix-2.34.7": {
+          "unitShell": "111/0",
+          "flakeCheck": "pass",
+          "acceptance": "146/0"
+        },
+        "nix-2.24.9": {
+          "unitShell": "111/0",
+          "flakeCheck": "pass",
+          "acceptance": "146/0"
+        }
+      },
+      "observables": {
+        "fodSources": 165,
+        "covered": 163,
+        "externalRecovery": 2,
+        "withPostfetch": 3,
+        "onKnownForge": 38,
+        "derivations": 638,
+        "objectsRealised": 874,
+        "closureSha256": "9243083eb0146c72362229c734fa78f6b3b1200eab9a8be06ccbbe8fe7daf8ec",
+        "closureSha256EqualToRun11": true,
+        "closureSha256IdenticalAcrossNixVersions": true,
+        "requiredSourcesPresentAfterBuild": "4/4",
+        "flakeInputsPresentAfterBuild": "2/4",
+        "flakeInputsPresentAfterBuildNames": [
+          "gitignore-src",
+          "nixpkgs"
+        ],
+        "flakeInputNamesIdenticalAcrossNixVersions": true,
+        "originIndependence": "PASS on both"
+      },
+      "note": [
+        "Closes the minimization phase. The dummy interface and the manual",
+        "flake-input restore are gone from the code, and every observable \u00a717",
+        "pre-registered is equal to run 11's. The canonical Result block in",
+        "EVIDENCE.md is this run's report."
+      ]
+    },
+    {
       "run": 17,
       "workflowRunId": 33900529936,
       "measuredCommit": "102d5a13b389c9bc841d9e875981055d048d6fe2",
@@ -263,5 +309,6 @@
       "content": "E3's configuration is now the only one there is; t07, t15 and t16 run and assert it on every suite execution.",
       "rules": "lib/experiment.sh keeps nse_experiment_outcome and NSE_EXPERIMENTS_SUMMARY_JQ, unit-tested by u10 and u17."
     }
-  }
+  },
+  "canonicalRun": 18
 }

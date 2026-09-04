@@ -46,6 +46,7 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > | **11** | **all steps green** | **all steps green** | **144 / 0 and 144 / 0.** The canonical result below |
 > | 15 | 143 / 1 | 143 / 1 | the **removal** run (`913df97`). Every pre-registered observable unchanged from run 11, `closureSha256` included. The one failure is `t07.9`, which asserted `.restoreExit == 0` — the exit code of a `nix copy` the default path never ran. `DESIGN.md` §17b |
 >> | 17 | 144 / 1 | 144 / 1 | the repair (`102d5a1`). Observables still unchanged. The repaired `t07.9a` asserted all four flake inputs are in the test store; the answer is **2 of 4**, and 2 of 4 is Nix being correct. `DESIGN.md` §17c |
+>> | **18** | **146 / 0** | **146 / 0** | `a4f07ea`. Minimization closed: both workarounds deleted, every pre-registered observable equal to run 11's, and the two versions agree on which locked inputs an offline evaluation needs. **The canonical result below** |
 >
 > The nine are `t01.3`, `t01.4`, `t01.7` and all of `t10` — every one an
 > assertion about an origin URL, a hash mode or a `postFetch`. On 2.24.9
@@ -67,14 +68,16 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > identical on the two versions. Naming the outliers settled in one run what
 > counting them had not settled in three.
 >
-> **Run 11 (`783bc5a`) is green on both Nix versions, every step**, and its
-> report is the canonical Result section below. Three commit identities are
+> **Run 18 (`a4f07ea`) is green on both Nix versions, every step**, and its
+> report is the canonical Result section below. Run 11 (`783bc5a`) was the
+> first such run; run 18 is the same system with the two workarounds **removed**. Three commit identities are
 > kept apart on purpose, here and in the machine-readable `evidence-runs.json`:
 >
 > ```
-> run_11.measured_commit      = 783bc5a   the tree the suite actually executed
-> run_11.evidence_recorded_by = d72dbbf   documentation only (EVIDENCE.md, 1 file),
->                                         necessarily later, and NOT itself measured
+> run_18.measured_commit      = a4f07ea   the tree the suite actually executed
+> run_18.evidence_recorded_by = (this commit)  documentation only, necessarily
+>                                         later, and NOT itself measured
+> removal_commit              = 913df97   where the two workarounds were deleted
 > review_reference_commit     = 6a6687c   the frozen review subject; has never moved
 > ```
 >
@@ -87,32 +90,39 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 
 ---
 
-## Result (canonical): run 11, commit `783bc5a`, 2026-09-04
+## Result (canonical): run 18, commit `a4f07ea`, 2026-09-04
 
 GitHub Actions, `ubuntu-latest`, a matrix over Nix **2.34.7** and **2.24.9**.
 Cold: no `NSE_TEST_REUSE`, `escrow/` created from nothing, staging store empty,
 every artefact re-fetched from its origin before being preserved. Every step of
 both matrix legs is green.
 
+This is the **post-minimization** state: the `dummy0` route-to-nowhere interface
+and the manual flake-input pre-copy are deleted, not switched off, and the
+experiment that measured them unnecessary is retired with them
+(`DESIGN.md` §8, §8a, §17–§17c).
+
 | | 2.34.7 | 2.24.9 |
 |---|---|---|
-| `tests/unit-shell.sh` | 102 / 0 | 102 / 0 |
+| `tests/unit-shell.sh` | 111 / 0 | 111 / 0 |
 | `nix flake check` (shellcheck) | pass | pass |
-| `tests/run-tests.sh` (`t00`–`t20`) | **144 / 0** | **144 / 0** |
-| `E0 / E1 / E2 / E3` | BASELINE_OK / CONFIRMED / CONFIRMED / CONFIRMED | same |
-| `closureSha256` | `9243083e…f8ec` | **the same** |
+| `tests/run-tests.sh` (`t00`–`t20`) | **146 / 0** | **146 / 0** |
+| `closureSha256` | `9243083e…f8ec` | **the same, and equal to run 11's** |
 
-The two versions now agree on every discovery number as well
-(`COVERED=163`, `EXTERNAL_RECOVERY=2`, `WITH_POSTFETCH=3`, `ON_KNOWN_FORGE=38`),
-which they did not before `783bc5a`. The only difference either report shows is
-the one that is a fact about Nix: `DERIVATION_DOCUMENT=envelope v4` against
-`flat-map vabsent`, both over the same 638 derivations.
+The two versions agree on every discovery number
+(`COVERED=163`, `EXTERNAL_RECOVERY=2`, `WITH_POSTFETCH=3`, `ON_KNOWN_FORGE=38`)
+and on which locked flake inputs an offline evaluation needs
+(`gitignore-src`, `nixpkgs`). The only difference either report shows is the one
+that is a fact about Nix: `DERIVATION_DOCUMENT=envelope v4` against
+`flat-map vabsent`, over the same 638 derivations.
 
 The block below is the 2.34.7 leg's `escrow/evidence/report.txt` verbatim, with
 the runner's repository path shortened to `$PWD`. The 2.24.9 leg's differs only
 in `NIX_VERSION`, `DERIVATION_DOCUMENT`, `CLIENT_IS_TRUSTED_USER=1` (older Nix
 prints `1`, not `true`) and the DNS addresses in the probe lines.
-Machine-readable originals are in the run's `evidence` artifact.
+Machine-readable originals are in the run's `evidence` artifact;
+`evidence-runs.json` indexes every run and keeps measured / recorded / frozen
+commits apart.
 
 ```text
 ENVIRONMENT
@@ -125,7 +135,7 @@ KERNEL=Linux 6.17.0-1022-azure
 CLIENT_IS_TRUSTED_USER=true
 AMBIENT_REQUIRE_SIGS=true
 AMBIENT_HASHED_MIRRORS=(unset)
-TOOL_COMMIT=783bc5a9c8ac [git-checkout] (clean)
+TOOL_COMMIT=a4f07ea366a9 [git-checkout] (clean)
 
 DISCOVERY
 INSTALLABLE=path:$PWD/fixture#default
@@ -197,7 +207,6 @@ GUARANTEE=ESCROW_REPLAY
 NETWORK_ISOLATION=user+network+mount namespace (unshare -Ur --net --mount)
 ISOLATION_MODE=namespaces
 ISOLATION_SETUP=ok
-DUMMY_INTERFACE=absent
 NSS_ISOLATION=full
 ORIGIN_HOSTS_PROVEN_UNREACHABLE=github.com,codeload.github.com,raw.githubusercontent.com,gitlab.com,ftp.gnu.org
 ORIGIN_HOSTS_REACHABLE=none
@@ -212,28 +221,23 @@ SOURCES_IN_ESCROW_BEFORE_ISOLATION=4/4
 SUBSTITUTERS_ONLY_ESCROW=true
 SUBSTITUTERS_AS_CONFIGURED=true
 EFFECTIVE_SUBSTITUTERS=file://$PWD/escrow/cache
-FLAKE_INPUT_RESTORE=native
 PROBE_METHOD=curl by name and by address pre-resolved outside the namespace
 OFFLINE_EVAL_PROBE=clean
 HTTP_FETCHES_IN_BUILD_LOG=0
 REQUIRED_SOURCES_PRESENT_AFTER_BUILD=4/4
+FLAKE_INPUTS_PRESENT_AFTER_BUILD=2/4 (gitignore-src, nixpkgs)
+  note: Nix materialises a locked input when evaluation reaches it; one it never touches is never fetched, so this is normally fewer than the total
 OUTPUT_PATH=/nix/store/kfmaahsrnil10qp66f3dnisv557bpa3a-escrow-fixture-0.1
 OUTPUT_MATCHES_MANIFEST=true
 
 ORIGIN_INDEPENDENCE=PASS
-  probe github.com [140.82.112.3]: byName=false (curl 6), byAddress=false (curl 7)
-  probe codeload.github.com [140.82.114.9]: byName=false (curl 6), byAddress=false (curl 7)
-  probe raw.githubusercontent.com [185.199.111.133]: byName=false (curl 6), byAddress=false (curl 7)
+  probe github.com [172.182.252.133]: byName=false (curl 6), byAddress=false (curl 7)
+  probe codeload.github.com [140.82.116.10]: byName=false (curl 6), byAddress=false (curl 7)
+  probe raw.githubusercontent.com [185.199.108.133]: byName=false (curl 6), byAddress=false (curl 7)
   probe gitlab.com [172.65.251.78]: byName=false (curl 6), byAddress=false (curl 7)
   probe ftp.gnu.org [209.51.188.20]: byName=false (curl 6), byAddress=false (curl 7)
-  probe cache.nixos.org [146.75.29.91]: byName=false (curl 6), byAddress=false (curl 7)
+  probe cache.nixos.org [151.101.201.91]: byName=false (curl 6), byAddress=false (curl 7)
 ```
-
----
-
-The v0.1.0 run below started by deleting `escrow/` entirely, so the staging
-store was cold and every artefact was re-fetched from its origin before being
-preserved. It is kept for the record of what was measured then.
 
 ---
 
@@ -390,9 +394,10 @@ refuse.
 `./tests/unit-shell.sh` — **102/102 passed**, on both Nix versions in run 11
 (it needs no Nix; it runs on the matrix anyway because it is free).
 
-`nix develop -c ./tests/run-tests.sh` — **144/144 passed on Nix 2.34.7 and
-144/144 on Nix 2.24.9**, cold, in run 11 (`783bc5a`). `t20` joined the suite in
-run 8 and passes on both.
+`nix develop -c ./tests/run-tests.sh` — **146/146 passed on Nix 2.34.7 and
+146/146 on Nix 2.24.9**, cold, in run 18 (`a4f07ea`), the post-minimization
+state. `t20` joined the suite in run 8; `t07.9a`/`t07.9b` replaced a vacuous
+`t07.9` in run 18 (`DESIGN.md` §17b, §17c).
 
 | group | what it pins down |
 |---|---|

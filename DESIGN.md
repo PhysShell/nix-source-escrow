@@ -1226,3 +1226,43 @@ sees `2/4` should not have to rediscover this section.
 
 The number itself is now evidence: if a future Nix changes *which* locked inputs
 an offline evaluation needs, that list changes and `t07.9a` goes red.
+
+### 17d. Verdict: REMOVAL_VALIDATED
+
+Run 18, commit `a4f07ea`. Green on every step of both matrix legs.
+
+```
+                     nix 2.34.7      nix 2.24.9
+  unit-shell          111 / 0         111 / 0
+  flake check         pass            pass
+  t00-t20             146 / 0         146 / 0
+
+  FOD_SOURCES=165  COVERED=163  EXTERNAL_RECOVERY=2
+  WITH_POSTFETCH=3  ON_KNOWN_FORGE=38  638 derivations   both versions
+  REQUIRED_SOURCES_PRESENT_AFTER_BUILD = 4/4            both versions
+  FLAKE_INPUTS_PRESENT_AFTER_BUILD     = 2/4            both versions
+                                         (gitignore-src, nixpkgs)
+
+  closureSha256 = 9243083eb0146c72362229c734fa78f6b3b1200eab9a8be06ccbbe8fe7daf8ec
+                  identical across versions, and equal to run 11's
+```
+
+Every observable §17 pre-registered before the deletion is unchanged. The
+system does not notice that the dummy interface and the manual flake-input
+restore are gone, which is exactly the claim `E1`–`E3` made and could not
+themselves prove: they measured a *disabled* workaround, this measures an
+*absent* one.
+
+Two things are stronger than they were before the amputation, not merely
+unchanged. `t07`, `t15` and `t16` now run the `E3` configuration with no flag
+left to disable, so a future Nix that reinstates the offline-substituter
+behaviour turns them red rather than being quietly worked around. And
+`FLAKE_INPUTS_PRESENT_AFTER_BUILD` is a real number where `restoreExit` was a
+constant: the two versions agree on *which* locked inputs an offline evaluation
+needs, and if that ever changes, `t07.9a` says so.
+
+The cost of getting here was four runs and three wrong assertions in a row —
+one that asserted nothing, one that asserted too much, and a pre-registration
+whose own acceptance criterion could not be met by the change it
+pre-registered. All three were caught before they could be written up as a
+result, and §17a, §17b and §17c say which was which.
