@@ -134,6 +134,9 @@ nse_report() {
              "  HASH_MODE_FLAT=\(.counts.sourcesFlatHash)  HASH_MODE_NAR=\(.counts.sourcesNarHash)",
              "  WITH_POSTFETCH=\(.counts.sourcesWithPostFetch)",
              "  ON_KNOWN_FORGE=\(.counts.sourcesOnKnownForge)",
+             "DERIVATION_DOCUMENT=" + ((.derivationDocument.schema // "unrecorded")
+                                       + " v" + ((.derivationDocument.version // "?")|tostring)
+                                       + ", \(.derivationDocument.derivations // 0) derivations"),
              "IFD_DETECTED=" + .evalTimeFetches.ifd.status,
              "EVAL_TIME_FETCH_STATIC_ENUMERATION=" + .evalTimeFetches.staticEnumeration,
              "EVAL_TIME_FETCH_OFFLINE_PROBE=" + $evalProbe,
@@ -141,10 +144,19 @@ nse_report() {
                (if (.counts.sourcesUnknown != 0 or .counts.sourcesUnsupported != 0
                     or .counts.flakeInputsUnknown != 0 or .evalTimeFetches.ifd.status != "absent")
                 then "PARTIAL"
+                # Zero fixed-output sources in a graph that builds something is
+                # far likelier to be a discovery failure than a graph with no
+                # sources -- it is exactly what a mis-read derivation document
+                # produced, green, on Nix 2.24.9. Never PASS on it.
+                elif .counts.sources == 0
+                then "UNVERIFIED"
                 elif ($evalProbe != "clean" or $isoMode != "namespaces")
                 then "UNVERIFIED"
                 else "PASS" end)' "$m"
       jq -r --arg evalProbe "$eval_probe" --arg isoMode "$isolation_mode" '
+             if .counts.sources == 0
+               then "  gap: NO fixed-output sources were discovered at all. For a graph that builds anything this is far more likely to be a failure to read the derivation document than a graph without sources; discovery read a \(.derivationDocument.schema // "?") document with \(.derivationDocument.derivations // 0) derivation(s)"
+               else empty end,
              if .counts.sourcesUnknown != 0
                then "  gap: \(.counts.sourcesUnknown) source(s) with no attributable origin" else empty end,
              if .counts.sourcesUnsupported != 0

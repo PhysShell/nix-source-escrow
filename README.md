@@ -225,12 +225,16 @@ has not yet *run*, so they are not called results:
 nix develop -c ./tests/experiments.sh
 ```
 
-`E0` is the control on the current defaults. `E1` drops the `dummy0`
-route-to-nowhere interface (`DESIGN.md` §8), `E2` drops the manual flake-input
-restore so Nix substitutes locked inputs itself (`DESIGN.md` §8a), `E3` does
-both. Outcomes land in `escrow/evidence/experiments.json` as CONFIRMED /
-REFUTED / INCONCLUSIVE. Each is a workaround that should be deleted when its
-experiment comes back CONFIRMED on your Nix — and not before.
+`E0` is the control, and it names the legacy workarounds explicitly rather than
+relying on the defaults — an experiment whose baseline drifts with the thing it
+measures answers nothing. `E1` drops the `dummy0` route-to-nowhere interface
+(`DESIGN.md` §8), `E2` drops the manual flake-input restore so Nix substitutes
+locked inputs itself (`DESIGN.md` §8a), `E3` drops both.
+
+**These have run.** On Nix 2.34.7: `E0 BASELINE_OK`, `E1/E2/E3 CONFIRMED`. Both
+workarounds are therefore **off by default**, and `--dummy-interface` /
+`--manual-input-restore` turn them back on. The result is established for
+2.34.7 and for no other version until tested — run this on yours.
 
 `E0` is load-bearing: a broken escrow makes every variant fail, and a naive
 `FAIL → REFUTED` would then write a confident "the workaround IS needed" that
@@ -372,6 +376,12 @@ wrong `systems`.
   What is *not* one of these: a cache that lacks a path. That is a data
   condition a real build can resolve by building the thing, and the build is
   left to answer it.
+* **Empty is data only after a successful parse.** `MISSING`, `UNPARSEABLE` and
+  `UNKNOWN_SCHEMA` are not `EMPTY`, and where a build plan guarantees a
+  non-empty result, observing zero is `FAIL`/`UNVERIFIED` and never `PASS`.
+  This is not a slogan: the first real execution found three separate defects
+  that were all this one mistake, each producing a confident green report about
+  nothing. `DESIGN.md` §15 and §16.
 * **Requested is not reachable.** `nix copy` copies closures, so the stores the
   test can actually read are listed and counted, not inferred from the size of
   the request. Anything the manifest says is provided to nobody but turns out

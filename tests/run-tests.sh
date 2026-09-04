@@ -487,19 +487,28 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "  skipped (python3 not on PATH; it serves the throwaway HTTP cache)"
 else
   HTTPLOG=$WORK/http-cache.log
-  python3 -m http.server 0 --bind 127.0.0.1 --directory "$ESCROW/cache" \
+  PORTFILE=$WORK/http-cache.port
+  rm -f "$PORTFILE"
+  # The port comes from a file the helper writes atomically, not from scraping
+  # http.server's startup sentence out of a redirected stdout. That is how this
+  # group failed in CI: the log was empty because the line was still in a stdio
+  # buffer, the test timed out, and t16.2-t16.8 never ran at all -- so the whole
+  # remote-escrow path was recorded as unverified on the strength of a
+  # buffering artefact.
+  python3 "$ROOT/tests/helpers/http-cache-server.py" "$ESCROW/cache" "$PORTFILE" \
     >"$HTTPLOG" 2>&1 &
   HTTP_PID=$!
   # shellcheck disable=SC2064  # $HTTP_PID must expand now, not at trap time
   trap "kill $HTTP_PID 2>/dev/null || :" EXIT
   PORT=""
   for _ in $(seq 1 100); do
-    PORT=$(sed -n 's/.*port \([0-9][0-9]*\).*/\1/p' "$HTTPLOG" | head -1)
-    [ -n "$PORT" ] && break
+    [ -s "$PORTFILE" ] && { PORT=$(cat "$PORTFILE"); break; }
+    kill -0 "$HTTP_PID" 2>/dev/null || break
     sleep 0.1
   done
   if [ -z "$PORT" ] || ! curl -sf -m 5 "http://127.0.0.1:$PORT/nix-cache-info" >/dev/null; then
-    bad "t16.1 a throwaway HTTP binary cache is serving the escrow" "see $HTTPLOG"
+    bad "t16.1 a throwaway HTTP binary cache is serving the escrow" \
+      "port='${PORT:-none}'; see $HTTPLOG"
   else
     ok "t16.1 a throwaway HTTP binary cache is serving the escrow"
     REMOTE=$WORK/remote

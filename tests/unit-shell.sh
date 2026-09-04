@@ -207,21 +207,23 @@ mk_narinfo 11111111111111111111111111111111 'CA: fixed:r:sha256:0abc' ''
 mk_narinfo 22222222222222222222222222222222 '' 'Sig: cache.nixos.org-1:deadbeef'
 mk_narinfo 33333333333333333333333333333333 '' ''
 mk_narinfo 44444444444444444444444444444444 'CA: not-a-hash-at-all' ''
-meta=$(printf '/nix/store/%s-x\n' 11111111111111111111111111111111 \
+printf '/nix/store/%s-x\n' 11111111111111111111111111111111 \
        22222222222222222222222222222222 33333333333333333333333333333333 \
-       44444444444444444444444444444444 | nse_store_meta "file://$META")
-assert_eq "u09.1 one line per path, in order" "4" "$(printf '%s\n' "$meta" | wc -l)"
-assert_eq "u09.2 content-addressed object reports its CA verbatim" \
-  "fixed:r:sha256:0abc" "$(printf '%s\n' "$meta" | awk -F'\t' 'NR==1{print $2}')"
-assert_eq "u09.3 signed object reports no CA and one signature" \
-  " 1" "$(printf '%s\n' "$meta" | awk -F'\t' 'NR==2{print $2" "$3}')"
-assert_eq "u09.4 unsigned input-addressed object reports neither" \
-  " 0" "$(printf '%s\n' "$meta" | awk -F'\t' 'NR==3{print $2" "$3}')"
-assert_eq "u09.5 a garbage CA is returned as text, not dropped" \
-  "not-a-hash-at-all" "$(printf '%s\n' "$meta" | awk -F'\t' 'NR==4{print $2}')"
-assert_eq "u09.6 a missing narinfo yields an empty CA rather than an error" \
+       44444444444444444444444444444444 | nse_store_meta "file://$META" > "$TMP/u09.jsonl"
+assert_eq "u09.1 one JSON object per path, in order" "4" "$(wc -l < "$TMP/u09.jsonl")"
+assert_eq "u09.2 every line is valid JSON with the agreed keys" \
+  "4" "$(jq -c -s '[.[]|select(has("path") and has("ca") and has("sigs"))]|length' "$TMP/u09.jsonl")"
+assert_eq "u09.3 content-addressed object reports its CA verbatim" \
+  "fixed:r:sha256:0abc" "$(jq -r 'select(.path|test("1111"))|.ca' "$TMP/u09.jsonl")"
+assert_eq "u09.4 signed object reports an empty CA and one signature" \
+  ' 1' "$(jq -r 'select(.path|test("2222"))|"\(.ca) \(.sigs)"' "$TMP/u09.jsonl")"
+assert_eq "u09.5 unsigned input-addressed object reports neither" \
+  ' 0' "$(jq -r 'select(.path|test("3333"))|"\(.ca) \(.sigs)"' "$TMP/u09.jsonl")"
+assert_eq "u09.6 a garbage CA is returned as text, not dropped" \
+  "not-a-hash-at-all" "$(jq -r 'select(.path|test("4444"))|.ca' "$TMP/u09.jsonl")"
+assert_eq "u09.7 a missing narinfo yields an empty CA rather than an error" \
   "1" "$(printf '/nix/store/99999999999999999999999999999999-gone\n' \
-         | nse_store_meta "file://$META" | awk -F'\t' '$2=="" && $3==0 {n++} END{print n+0}')"
+         | nse_store_meta "file://$META" | jq -s '[.[]|select(.ca=="" and .sigs==0)]|length')"
 
 # ---------------------------------------------------------------------------
 head_ "u10  an experiment with a broken baseline concludes nothing"
@@ -307,6 +309,91 @@ assert_eq "u11.5 the manifest is hashed when it exists" \
   "true" "$(nse_provenance | jq -r '(.manifestSha256 // "") | test("^[0-9a-f]{64}$")')"
 assert_eq "u11.6 and reported as null when it does not" \
   "null" "$(nse_provenance | jq -r '.closureSha256')"
+
+# ---------------------------------------------------------------------------
+head_ "u12  an unreadable derivation document is not an empty one"
+# Measured on two Nix versions in CI: 2.34.7 emits {version, derivations} and
+# 2.24.9 emits a flat map. discover.sh read `.derivations // {}`, so on the flat
+# shape it saw ZERO derivations and the whole run went green about nothing.
+printf '{"version":4,"derivations":{"/nix/store/a.drv":{"outputs":{"out":{"path":"/p"}}}}}' > "$TMP/env.json"
+printf '{"/nix/store/a.drv":{"outputs":{"out":{"path":"/p"}}}}' > "$TMP/flat.json"
+printf '{"totally":"different"}' > "$TMP/unk.json"
+: > "$TMP/empty.json"
+assert_eq "u12.1 the nix 2.34.7 shape is recognised" \
+  "envelope" "$(nse_drv_schema "$TMP/env.json")"
+assert_eq "u12.2 the nix 2.24.9 shape is recognised" \
+  "flat-map" "$(nse_drv_schema "$TMP/flat.json")"
+assert_eq "u12.3 an unrecognised shape says unknown, it does not guess" \
+  "unknown" "$(nse_drv_schema "$TMP/unk.json")"
+assert_eq "u12.4 an empty document says unknown too" \
+  "unknown" "$(nse_drv_schema "$TMP/empty.json")"
+assert_eq "u12.5 both known shapes normalise to the same map" \
+  "1 1" "$(nse_drv_map "$TMP/env.json" | jq -r length) $(nse_drv_map "$TMP/flat.json" | jq -r length)"
+rc=0; nse_drv_map "$TMP/unk.json" >/dev/null 2>&1 || rc=$?
+assert_ne "u12.6 an unknown shape REFUSES rather than returning an empty map" "0" "$rc"
+rc=0; nse_drv_map "$TMP/empty.json" >/dev/null 2>&1 || rc=$?
+assert_ne "u12.7 and so does an empty one" "0" "$rc"
+
+# ---------------------------------------------------------------------------
+head_ "u13  a signed object is not mistaken for a content-addressed one"
+# The defect: nse_store_meta emitted TSV, a signed object has an EMPTY ca
+# field, and `read -r p ca sigs` under IFS=$'\t' collapses `\t\t` because tab
+# is IFS whitespace. The signature count landed in `ca`, every signed and
+# unsigned object was classified content-addressed, and the trust probe
+# reported "skipped" for three of its five cases -- while the composition
+# counter in the same report, using awk -F'\t', printed the correct numbers.
+SIGC=$TMP/sig-cache; mkdir -p "$SIGC"
+mk_ni() { printf 'StorePath: /nix/store/%s-x\n' "$1" > "$SIGC/$1.narinfo"
+          [ -z "${2:-}" ] || printf '%s\n' "$2" >> "$SIGC/$1.narinfo"; }
+mk_ni aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 'CA: fixed:r:sha256:abc'
+mk_ni bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 'Sig: cache.nixos.org-1:deadbeef'
+mk_ni cccccccccccccccccccccccccccccccc ''
+mk_ni dddddddddddddddddddddddddddddddd 'CA: text:sha256:zzz'
+printf '/nix/store/%s-x\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  cccccccccccccccccccccccccccccccc dddddddddddddddddddddddddddddddd \
+  | nse_store_meta "file://$SIGC" > "$TMP/meta.jsonl"
+assert_eq "u13.1 metadata is JSONL, one object per path" \
+  "4" "$(wc -l < "$TMP/meta.jsonl")"
+assert_eq "u13.2 a signed object keeps an EMPTY ca and its signature count" \
+  '"" 1' "$(jq -r 'select(.path|test("bbbb"))|"\(.ca|tojson) \(.sigs)"' "$TMP/meta.jsonl")"
+assert_eq "u13.3 the shared classifier separates all four classes" \
+  "ca-fixed signed unsigned ca-text" \
+  "$(jq -r "$NSE_JQ_CLASSIFY"' nse_class' "$TMP/meta.jsonl" | paste -sd' ' -)"
+assert_eq "u13.4 the trust probe finds a sample of every class it needs" \
+  "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-x /nix/store/cccccccccccccccccccccccccccccccc-x" \
+  "$(printf '/nix/store/%s-x\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+       cccccccccccccccccccccccccccccccc dddddddddddddddddddddddddddddddd > "$TMP/cands.txt"
+     jq -r -n "$NSE_JQ_CLASSIFY"'
+       ( [ inputs ] | map({key: .path, value: .}) | from_entries ) as $m
+       | ( $order | split("\n") | map(select(length > 0)) ) as $cands
+       | def pick($want): [ $cands[] | select( ($m[.] // null) != null
+                                               and ($m[.] | nse_class) == $want ) ][0] // "";
+         [ pick("signed"), pick("unsigned") ] | .[]
+       ' --rawfile order "$TMP/cands.txt" "$TMP/meta.jsonl" | paste -sd' ' -)"
+
+# ---------------------------------------------------------------------------
+head_ "u14  no local variable inherits an export from the build environment"
+# `local out` does NOT clear the export attribute if the caller exported `out`
+# -- and `nix develop` exports $out. A multi-megabyte path-info document then
+# travels in the environment of every child, and the next exec dies E2BIG,
+# exit 126. That is what killed the entire SOURCE_ORIGIN_INDEPENDENCE run in
+# CI, reported as an unexplained red rather than as a harness crash.
+assert_eq "u14.1 bash really does keep the export attribute on a local" \
+  "declare -x leaky=\"v\"" \
+  "$(export leaky=outer; bash -c 'f() { local leaky; leaky=v; declare -p leaky; }; f')"
+offenders=$(grep -nE '^\s*local\s+(-[a-zA-Z]+\s+)?(out|src|name|system|builder|args|outputs|pname|version)(\s|=|$)' \
+              "$ROOT"/lib/*.sh "$ROOT/bin/nix-source-escrow" || :)
+assert_eq "u14.2 no lib function locals a name stdenv exports" "" "$offenders"
+# End to end: a large value must not reach a child through the environment.
+big=$(head -c 300000 /dev/zero | tr '\0' 'x')
+rc=0
+( export out="$big"
+  . "$ROOT/lib/common.sh"
+  # shellcheck disable=SC2317,SC2329  # called indirectly, through nse_store_present
+  nse_nix() { printf '{}\n'; }
+  printf '/nix/store/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-x\n' \
+    | nse_store_present "https://example.invalid" >/dev/null 2>&1 ) || rc=$?
+assert_eq "u14.3 a store query survives an exported multi-hundred-KB \$out" "0" "$rc"
 
 # ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"

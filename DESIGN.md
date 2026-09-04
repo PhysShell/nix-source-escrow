@@ -361,10 +361,10 @@ naive air-gapped test fails for a reason that has nothing to do with whether the
 escrow is complete — which is a great way to spend an afternoon debugging the
 wrong thing.
 
-**The workaround, and why it is probably unnecessary.** The original fix was a
-`dummy0` interface inside the namespace with a default route to an address that
-does not exist, which satisfies the heuristic while reaching nothing. But the
-heuristic in `src/nix/main.cc` is conditional:
+**The workaround, and why it is gone.** The original fix was a `dummy0`
+interface inside the namespace with a default route to an address that does not
+exist, which satisfies the heuristic while reaching nothing. But the heuristic
+in `src/nix/main.cc` is conditional:
 
 ```c++
 if (!args.useNet) {
@@ -374,23 +374,28 @@ if (!args.useNet) {
 }
 ```
 
-It only disables substitution when `substitute` is *not* an explicit override —
-and the `FIXME` says config files count as overrides too. The v0.1 test never
-set it. `prove.sh` now sets `substitute = true` in its `NIX_CONFIG`, which by
-this reading makes the dummy interface dead weight.
+It only disables substitution when `substitute` is *not* an explicit override.
+`prove.sh` sets `substitute = true`, so the dummy interface should be dead
+weight — and reading the source is not this repository's standard of evidence,
+so it was left in place behind an experiment.
 
-*By this reading.* Reading the source is not this repository's standard of
-evidence, so the dummy interface is still created by default and its removal is
-an experiment with a defined answer:
+**The experiment ran. `E1 = CONFIRMED`, on Nix 2.34.7:**
 
-```bash
-nix develop -c ./tests/experiments.sh
+```
+E0 BASELINE_OK   the legacy workarounds still pass, so the variants are attributable
+E1 CONFIRMED     no dummy interface        -> the acceptance test still passes
+E2 CONFIRMED     no manual input restore   -> Nix substitutes locked inputs itself
+E3 CONFIRMED     both dropped              -> what the tool now ships
 ```
 
-`E1` runs the acceptance test with `--no-dummy-interface` in a namespace with
-genuinely no route; `E2` drops the manual flake-input restore; `E3` does both.
-The results land in `escrow/evidence/experiments.json` as CONFIRMED / REFUTED.
-When `E1` comes back CONFIRMED on your Nix, the interface and this section go.
+So the dummy interface is **off by default**, and `--dummy-interface` turns it
+back on. That flag is not vestigial politeness: the result is established for
+**Nix 2.34.7 and for no other version until tested**. The same CI run measured
+2.24.9 behaving differently enough elsewhere (§15) that assuming version
+independence here would be exactly the habit this file exists to break.
+`tests/experiments.sh` names both workarounds explicitly rather than relying on
+the defaults, so it stays re-runnable on any Nix and answers the question
+again rather than agreeing with itself.
 
 **Setup is fail-closed now.** The `ip` commands ran unchecked under `set -uo
 pipefail`. On a kernel with no `dummy` module the interface silently never
@@ -447,10 +452,11 @@ consumer with flake.lock           our bash script
 ```
 
 Those are different claims, and only the first one is about a real consumer.
-`--native-input-restore` runs the primary path the real way; `E2` in
-`tests/experiments.sh` is the experiment that decides whether it becomes the
-default. The manual copy stays available as a *diagnostic* of the escrow's
-contents, which is the only thing it was ever good at.
+
+**`E2 = CONFIRMED` on Nix 2.34.7.** The manual copy is gone from the default
+path; `--manual-input-restore` keeps it as the diagnostic of escrow contents it
+was always good at. Same scope caveat as §8: measured on one Nix version, and
+`tests/experiments.sh` is how you find out about yours.
 
 ---
 
@@ -836,3 +842,76 @@ The report prints `TOOL_COMMIT=<short> [<source>] (clean|WORKING TREE DIRTY)`,
 so a pasted report block is traceable to a tree, and an acceptance verdict is
 bound to the `manifest.json` it judged rather than to whichever manifest
 happens to be on disk when someone reads it later.
+
+---
+
+## 15. What the first real execution found
+
+Everything above was written before this repository had ever run. The first
+execution — a GitHub Actions matrix over Nix 2.34.7 and 2.24.9 — produced one
+result and four defects, and the shape of the defects is the point.
+
+**The result.** On Nix 2.34.7: `ESCROW_REPLAY` passes end to end, 874 of 874
+replayed objects reachable, `notProvidedReachableByTest = 0`, provenance naming
+the exact tested HEAD on a clean tree, host detection correctly identifying an
+Azure runner, and `E0/E1/E2/E3 = BASELINE_OK / CONFIRMED / CONFIRMED /
+CONFIRMED`. Discovery found 165 sources, 163 covered, 2 external-recovery —
+identical to the numbers this repository had been quoting.
+
+**The defects.** Four, and three of them are the same mistake:
+
+| | what happened | the shape of it |
+|---|---|---|
+| discovery | `nix derivation show` emits `{version, derivations}` on 2.34.7 and a flat map on 2.24.9. The code read `.derivations // {}`, so on 2.24.9 it found **zero** derivations, zero sources, and reported a complete discovery | unreadable → **empty** |
+| trust probe | metadata crossed a TSV, a signed object has an empty `ca` field, and `read` with a tab IFS collapses `\t\t`. Every signed and unsigned object was classified content-addressed, three trust cases reported `skipped` — while the composition counter, parsing the same file with `awk -F'\t'`, printed the correct numbers | empty field → **next column** |
+| provenance | `jq '.workingTreeDirty // null'` returned `null` for a clean build, because `//` treats `false` as absent | false → **absent** |
+| source mode | `local out` does not clear the export attribute, and `nix develop` exports `$out`. A multi-megabyte path-info document went into the environment of every child; the next exec died `E2BIG`, exit 126, and the whole `SOURCE_ORIGIN_INDEPENDENCE` run was recorded as red | a crash → **a verdict** |
+
+Only the last is a plain bug. The other three are the *same* bug wearing
+different clothes, and all three produced green, plausible, entirely vacuous
+results. That is why §16 exists.
+
+**What caught them.** Not review — five rounds of it had read this code
+closely. The discovery failure was caught by `t03.3 "the plan actually required
+some sources"`, an assertion that exists for no reason except that zero would
+otherwise pass. The trust failure was caught only because two independent
+readers of one file disagreed in the same report. Both are cheap. Both are the
+kind of check that feels redundant right up until it is the only thing standing
+between you and a confident wrong answer.
+
+---
+
+## 16. Empty is data only after a successful parse
+
+The rule, stated once, because three separate defects were the same violation
+of it:
+
+```
+MISSING  /  UNPARSEABLE  /  UNKNOWN_SCHEMA     is not     EMPTY
+```
+
+And its corollary, for anything a build plan guarantees is non-empty:
+
+```
+expected non-empty  AND  observed zero   ->   FAIL or UNVERIFIED, never PASS
+```
+
+`0 of 0 = 100%` is a perfectly effective strategy for producing green reports,
+and a proof tool that cannot tell it apart from a real result is not a proof
+tool. Enforced in four places:
+
+* `nse_drv_schema` returns `envelope`, `flat-map` or `unknown`, and
+  `nse_drv_map` **refuses** on `unknown` rather than yielding `{}`. There is no
+  `// {}` anywhere on that path.
+* discovery aborts if it parses **zero derivations** from a document Nix
+  produced. A build plan always instantiates at least its top-level derivation,
+  so zero is never a fact about the graph — only about our reading of it.
+* `ESCROW_DISCOVERY_COMPLETE` is `UNVERIFIED`, never `PASS`, when zero
+  fixed-output sources were discovered, and the report names the schema and
+  derivation count so the reader can see why.
+* store metadata travels as JSONL through one shared classifier
+  (`NSE_JQ_CLASSIFY`), because JSON has exactly one answer to "what is an empty
+  field" and two hand-rolled parsers had two different ones.
+
+Tests `u12`, `u13` and `u14` fail if any of these regress, and they need no Nix
+to run.

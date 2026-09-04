@@ -26,9 +26,45 @@ nse_discover() {
     || nse_die "nix flake metadata failed for '$flakeref'"
 
   # ---- 2. derivation graph -------------------------------------------------
+  # `nix derivation show` has TWO measured output shapes, and the difference is
+  # not cosmetic -- it decides whether this tool sees a dependency graph or an
+  # empty one:
+  #
+  #   nix 2.34.7   {"version": 4, "derivations": {"<drv>": {...}}}
+  #   nix 2.24.9   {"<drv>": {...}}                (flat map, no envelope)
+  #
+  # This used to read `.derivations // {}`. On the flat shape that fallback
+  # turned "I cannot read this document" into "this document is empty", and the
+  # whole run went green on a graph with zero sources: 'no source left
+  # UNKNOWN', 'all plan-required sources preserved', 'verify passes', NAR
+  # integrity over the whole closure. Every one of those was true, and every
+  # one was about nothing. Both shapes are normalised here, and an
+  # unrecognised one is a hard error -- never an empty graph.
   nse_log "instantiating derivation graph (nix derivation show -r)"
-  nse_nix derivation show -r "$NSE_INSTALLABLE" > "$work/drvs.json" \
+  nse_nix derivation show -r "$NSE_INSTALLABLE" > "$work/drvs-raw.json" \
     || nse_die "nix derivation show -r failed for '$NSE_INSTALLABLE'"
+
+  local drv_schema drv_version
+  drv_schema=$(nse_drv_schema "$work/drvs-raw.json")
+  case $drv_schema in
+    envelope) drv_version=$(jq -r '.version // "absent"' "$work/drvs-raw.json") ;;
+    flat-map) drv_version="absent" ;;
+    *) nse_die "unrecognised 'nix derivation show' output schema from $(nse_nix_version).
+       Neither a {version, derivations} envelope nor a flat map of *.drv objects.
+       Refusing to continue: an unreadable graph is not an empty graph.
+       The document is at $work/drvs-raw.json ." ;;
+  esac
+  nse_drv_map "$work/drvs-raw.json" > "$work/drvs.json" \
+    || nse_die "cannot normalise the derivation document at $work/drvs-raw.json"
+
+  local n_drvs; n_drvs=$(jq -r 'length' "$work/drvs.json")
+  nse_log "derivation graph: $n_drvs derivations (schema: $drv_schema, version: $drv_version)"
+  # A build plan always instantiates at least the top-level derivation. Zero is
+  # never a fact about the graph; it is a fact about our ability to read it.
+  [ "$n_drvs" -gt 0 ] \
+    || nse_die "parsed 0 derivations from a $drv_schema document that Nix produced for '$NSE_INSTALLABLE'.
+       That cannot be true of a graph that builds anything, so it is treated as
+       a read failure rather than an empty graph."
 
   local top_drv
   top_drv=$(nse_nix path-info --derivation "$NSE_INSTALLABLE") \
@@ -59,6 +95,9 @@ allow-import-from-derivation = false" \
     --arg flakeref "$flakeref" \
     --arg storedir "$storedir" \
     --arg topdrv "$top_drv" \
+    --arg drvSchema "$drv_schema" \
+    --arg drvVersion "$drv_version" \
+    --argjson drvCount "$n_drvs" \
     --arg ifd_status "$ifd_status" \
     --arg ifd_detail "$ifd_detail" \
     --argjson originHosts "$origin_hosts_json" \
@@ -157,7 +196,7 @@ allow-import-from-derivation = false" \
       | sort_by(.name) ) as $inputs |
 
     # ---------------- fixed-output / source derivations ----------------
-    ( [ $drvs[0].derivations // {} | to_entries[]
+    ( [ $drvs[0] | to_entries[]
         | ("\($storedir)/" + .key) as $drvPath
         | .value as $d
         | ($d.outputs // {}) | to_entries[]
@@ -208,8 +247,12 @@ allow-import-from-derivation = false" \
       | sort_by(.storePath // .drvPath) ) as $sources |
 
     {
-      schemaVersion: 2,
+      schemaVersion: 3,
       installable: $installable,
+      # Which shape of `nix derivation show` this graph was read from. Recorded
+      # because the same tool reading the same flake on two Nix versions saw
+      # 165 sources and 0.
+      derivationDocument: { schema: $drvSchema, version: $drvVersion, derivations: $drvCount },
       flakeRef: $flakeref,
       storeDir: $storedir,
       topLevelDerivation: $topdrv,

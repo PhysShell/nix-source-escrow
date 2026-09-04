@@ -176,12 +176,18 @@ run_experiment() {
   printf '%s' "$out"
 }
 
-E0_OUTCOME=$(run_experiment E0 "control: current defaults (dummy interface + manual input restore)")
+E0_OUTCOME=$(# E0 names the legacy workarounds explicitly rather than relying on defaults.
+# The defaults have since moved (E1/E2/E3 came back CONFIRMED on 2.34.7), and an
+# experiment whose baseline drifts with the thing it measures answers nothing.
+# Written this way it stays re-runnable on any Nix, which is the point: the
+# result is established for 2.34.7 and for no other version until tested.
+run_experiment E0 "control: the legacy workarounds (dummy interface + manual input restore)" \
+  --dummy-interface --manual-input-restore)
 E1_OUTCOME=$(run_experiment E1 "no dummy interface; substitute=true is expected to carry it" \
-  --no-dummy-interface)
+  --no-dummy-interface --manual-input-restore)
 E2_OUTCOME=$(run_experiment E2 "no manual input restore; Nix must substitute locked inputs itself" \
-  --native-input-restore)
-run_experiment E3 "both: the proposed post-v0.1 default" \
+  --dummy-interface --native-input-restore)
+run_experiment E3 "both dropped: what the tool now ships as its default" \
   --no-dummy-interface --native-input-restore >/dev/null
 
 # A conclusion is only drawn from a CONFIRMED or REFUTED experiment. Anything

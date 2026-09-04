@@ -52,13 +52,15 @@ nse_verify() {
   # hand you any bytes; a fixed-output store path is only the right object if
   # its content address equals the derivation's outputHash.
   #
-  # One metadata pass over the whole escrow, then an awk join. No process per
-  # source, and no batch that a single corrupt object can take down with it.
+  # One jq pass pairs each source with the escrow's own metadata, so this loop
+  # spawns no process per source. Every field jq emits is guaranteed non-empty
+  # -- __ABSENT__ and __NO_CA__ are explicit sentinels -- because `read` with a
+  # tab IFS collapses adjacent separators and would silently shift the columns.
+  # That exact mistake cost the trust probe three tests; it does not get a
+  # second outing here.
   nse_store_meta "$NSE_SUBSTITUTER_URL" < "$work/verify-escrow-present.txt" \
-    > "$work/verify-meta.tsv"
-
-  jq -r '.sources[] | select(.escrow.present and .storePath != null and .expectedHash != null)
-         | [.storePath, .expectedHash] | @tsv' "$manifest" > "$work/verify-sources.tsv"
+    > "$work/verify-meta.jsonl"
+  jq -s '.' "$work/verify-meta.jsonl" > "$work/verify-meta.json"
 
   local id_ok=0 id_bad=0 id_skip=0 sp expected ca got_sri exp_sri
   : > "$work/verify-hash-mismatch.txt"
@@ -66,7 +68,7 @@ nse_verify() {
     [ -n "$sp" ] || continue
     case $ca in
       __ABSENT__) id_skip=$((id_skip + 1)); continue ;;
-      "")
+      __NO_CA__)
         id_bad=$((id_bad + 1))
         printf '%s\tno-CA-field\t%s\n' "$sp" "$expected" >> "$work/verify-hash-mismatch.txt"
         continue ;;
@@ -81,9 +83,19 @@ nse_verify() {
       id_bad=$((id_bad + 1))
       printf '%s\t%s\t%s\n' "$sp" "$got_sri" "$exp_sri" >> "$work/verify-hash-mismatch.txt"
     fi
-  done < <(awk -F'\t' 'NR==FNR { ca[$1]=$2; next }
-                       { printf "%s\t%s\t%s\n", $1, ($1 in ca ? ca[$1] : "__ABSENT__"), $2 }' \
-             "$work/verify-meta.tsv" "$work/verify-sources.tsv")
+  done < <(jq -r --slurpfile meta "$work/verify-meta.json" '
+             ($meta[0] | map({key: .path, value: .}) | from_entries) as $m
+             | .sources[]
+             | select(.escrow.present and .storePath != null and .expectedHash != null)
+             | .storePath as $p
+             | .expectedHash as $exp
+             | ($m[$p] // null) as $rec
+             | [ $p,
+                 (if   $rec == null          then "__ABSENT__"
+                  elif ($rec.ca // "") == "" then "__NO_CA__"
+                  else $rec.ca end),
+                 $exp ]
+             | @tsv' "$manifest")
   nse_log "content identity: ok=$id_ok mismatched=$id_bad not-in-escrow=$id_skip"
 
   # ---- 3. NAR integrity ----------------------------------------------------
@@ -128,12 +140,18 @@ nse_verify() {
   nse_log "NAR integrity: $integrity_status ($integrity_checked of $total preserved paths checked)"
 
   # ---- 4. trust composition (observed, not assumed) ------------------------
-  # Same metadata pass as step 2, so this says what the escrow holds rather
-  # than what a directory listing happens to contain.
+  # Same metadata, through the SHARED classifier, so VERIFY and TRUST cannot
+  # disagree about what "signed" means. They did: this counter printed the
+  # correct 53 and 1 while the trust probe, reading the same file with a
+  # different parser, found neither.
   local n_ca=0 n_sig=0 n_neither=0
   read -r n_ca n_sig n_neither < <(
-    awk -F'\t' '{ if ($2 != "") ca++; else if ($3 + 0 > 0) sig++; else none++ }
-                END { printf "%d %d %d\n", ca+0, sig+0, none+0 }' "$work/verify-meta.tsv")
+    jq -s -r "$NSE_JQ_CLASSIFY"'
+      [.[] | nse_class] as $c
+      | [ ([$c[] | select(. == "ca-fixed" or . == "ca-text")] | length),
+          ([$c[] | select(. == "signed")]   | length),
+          ([$c[] | select(. == "unsigned")] | length) ]
+      | @tsv' "$work/verify-meta.jsonl" | tr '\t' ' ')
   nse_log "trust composition: content-addressed=$n_ca signature-only=$n_sig neither=$n_neither"
 
   local status=PASS

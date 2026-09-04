@@ -196,11 +196,18 @@ nse_store_present() {
   fi
   # Backend-neutral: ask Nix, in batches. A batch containing one absent path
   # fails as a whole, so only that batch falls back to per-path queries.
+  #
+  # NOTE the variable name. `local out` does NOT clear the export attribute if
+  # the caller already exported `out` -- and `nix develop` exports `$out`. A
+  # multi-megabyte path-info document then travels in the environment of every
+  # child process, and the next exec dies with E2BIG (exit 126). That is
+  # measured, not theorised: it is what killed the whole source-mode run.
+  # nse_no_stdenv_names in tests/unit-shell.sh keeps these names out.
   local -a chunk
-  local out p
+  local pathinfo_json p
   while mapfile -t -n "$NSE_BATCH_SIZE" chunk && [ "${#chunk[@]}" -gt 0 ]; do
-    if out=$(nse_nix path-info --store "$url" --json "${chunk[@]}" 2>/dev/null); then
-      printf '%s\n' "$out" | jq -r 'if type=="array" then .[].path else keys[] end'
+    if pathinfo_json=$(nse_nix path-info --store "$url" --json "${chunk[@]}" 2>/dev/null); then
+      printf '%s\n' "$pathinfo_json" | jq -r 'if type=="array" then .[].path else keys[] end'
     else
       for p in "${chunk[@]}"; do
         if nse_nix path-info --store "$url" "$p" >/dev/null 2>&1; then printf '%s\n' "$p"; fi
@@ -210,18 +217,25 @@ nse_store_present() {
   return 0
 }
 
-# Path metadata for a whole set: one TSV line per path,
-#     <store path>\t<content address or empty>\t<number of signatures>
+# Path metadata for a whole set, as JSONL -- one object per line:
+#     {"path": "...", "ca": "..." | "", "sigs": N}
 #
-# For a file:// cache this reads the narinfos directly, in ONE awk process for
-# the whole set. That is deliberate and not just a speed choice: `nix path-info`
-# refuses a batch outright if a single object in it is malformed, and one of the
-# things this tool must survive is a deliberately corrupted escrow (test t06).
-# Reading the field as text classifies the corrupt object instead of losing the
-# batch that contains it.
+# It used to be TSV, and that cost a real defect. A signed object has an EMPTY
+# ca field, so its line is `path<TAB><TAB>1`; `read -r p ca sigs` with
+# IFS=$'\t' COLLAPSES the two tabs, because tab is IFS whitespace. Every signed
+# and unsigned object was then misclassified as content-addressed, the trust
+# probe found no sample of either class and reported "skipped" -- while the
+# composition counter in the same report, which used `awk -F'\t'`, printed the
+# correct 53 and 1. Two readers of one file, one of them silently wrong.
 #
-# Any other backend goes through `nix path-info --json`, batched, with a
-# per-path retry for a batch Nix refuses.
+# JSON has exactly one answer to "what is an empty field", so it is used here.
+# The awk output is still tab-separated internally, but jq -R + split("\t")
+# parses it -- jq's split does not collapse separators.
+#
+# For a file:// cache the narinfos are read directly, in ONE awk process. That
+# is deliberate and not just a speed choice: `nix path-info` refuses a batch
+# outright if a single object in it is malformed, and surviving a deliberately
+# corrupted escrow (test t06) is a requirement.
 nse_store_meta() {
   local url=$1
   if nse_url_is_file "$url"; then
@@ -237,18 +251,27 @@ nse_store_meta() {
         }
         close(f)
         printf "%s\t%s\t%d\n", $0, ca, sigs
-      }'
+      }' \
+      | jq -R -c 'split("\t") | {path: .[0], ca: (.[1] // ""), sigs: ((.[2] // "0") | tonumber)}'
     return 0
   fi
   local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/nse-meta.XXXXXX") || return 1
   cat > "$tmp"
   nse_store_pathinfo "$url" "$tmp" \
-    | jq -r 'to_entries[]
-             | [ .key, (.value.ca // ""), ((.value.signatures // []) | length) ]
-             | @tsv'
+    | jq -c 'to_entries[] | {path: .key, ca: (.value.ca // ""),
+                             sigs: ((.value.signatures // []) | length)}'
   rm -f "$tmp"
   return 0
 }
+
+# Classify one metadata record. The single definition both VERIFY and TRUST
+# use, so they cannot disagree about what "signed" means again.
+# shellcheck disable=SC2034  # consumed by lib/verify.sh and lib/trust.sh
+NSE_JQ_CLASSIFY='def nse_class:
+  if   ((.ca // "") | startswith("text:")) then "ca-text"
+  elif ((.ca // "") != "")                 then "ca-fixed"
+  elif ((.sigs // 0) > 0)                  then "signed"
+  else                                          "unsigned" end;'
 
 # Path metadata for a whole set, as one JSON object keyed by store path.
 # Batched, and backend-neutral: the same call answers "is it content-addressed"
@@ -258,20 +281,20 @@ nse_store_meta() {
 nse_store_pathinfo() {
   local url=$1 file=$2
   local -a chunk
-  local fd out
+  local fd pathinfo_json           # not `out`: see nse_store_present
   exec {fd}<"$file" || return 1
   {
     while mapfile -t -u "$fd" -n "$NSE_BATCH_SIZE" chunk && [ "${#chunk[@]}" -gt 0 ]; do
-      if out=$(nse_nix path-info --store "$url" --json "${chunk[@]}" 2>/dev/null); then
-        printf '%s\n' "$out" \
+      if pathinfo_json=$(nse_nix path-info --store "$url" --json "${chunk[@]}" 2>/dev/null); then
+        printf '%s\n' "$pathinfo_json" \
           | jq 'if type=="array" then (map({key:.path, value:.})|from_entries) else . end'
       else
         # One malformed or absent object fails the whole batch, so fall back
         # to asking per path -- for that batch only.
         local p
         for p in "${chunk[@]}"; do
-          if out=$(nse_nix path-info --store "$url" --json "$p" 2>/dev/null); then
-            printf '%s\n' "$out" \
+          if pathinfo_json=$(nse_nix path-info --store "$url" --json "$p" 2>/dev/null); then
+            printf '%s\n' "$pathinfo_json" \
               | jq 'if type=="array" then (map({key:.path, value:.})|from_entries) else . end'
           fi
         done
@@ -361,4 +384,46 @@ nse_store_list() {
   find "$dir" -maxdepth 1 -name '*.narinfo' -print0 2>/dev/null \
     | xargs -0 -r sed -n 's/^StorePath: //p' 2>/dev/null || :
   return 0
+}
+
+# ---------------------------------------------------------------------------
+# Fail-closed reading
+#
+# The rule this project learned the hard way, stated once:
+#
+#     MISSING / UNPARSEABLE / UNKNOWN_SCHEMA  is not  EMPTY
+#
+# Three separate defects in this tool were the same mistake: `.derivations //
+# {}` turned an unreadable document into an empty graph, `.workingTreeDirty //
+# null` turned a clean tree into an unknown one, and a collapsed tab turned an
+# empty field into the next column. Each produced a green result about nothing.
+# Where a value is expected non-empty by construction, observing zero is a read
+# failure until proven otherwise.
+# ---------------------------------------------------------------------------
+
+# Which shape of `nix derivation show` is this document?
+# Echoes: envelope | flat-map | unknown   (never guesses, never defaults)
+nse_drv_schema() {
+  local f=$1
+  [ -s "$f" ] || { printf 'unknown\n'; return 0; }
+  if jq -e 'type == "object" and has("derivations")' "$f" >/dev/null 2>&1; then
+    printf 'envelope\n'
+  elif jq -e 'type == "object" and length > 0
+              and (to_entries | all(.key | endswith(".drv")))
+              and (to_entries[0].value | type == "object" and has("outputs"))' \
+         "$f" >/dev/null 2>&1; then
+    printf 'flat-map\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+# The derivation map itself, whichever shape it arrived in.
+nse_drv_map() {
+  local f=$1
+  case $(nse_drv_schema "$f") in
+    envelope) jq '.derivations' "$f" ;;
+    flat-map) jq '.' "$f" ;;
+    *)        return 1 ;;
+  esac
 }

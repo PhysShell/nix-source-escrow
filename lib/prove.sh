@@ -231,8 +231,8 @@ nse_prove() {
     printf 'NSE_PWD=%q\n'          "$PWD"
     printf "NSE_TRUSTED_KEYS=%q\n" "${NSE_TRUSTED_KEYS:-cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=}"
     printf "NSE_EXTRA_NIX_CONFIG=%q\n" "${NSE_EXTRA_NIX_CONFIG:-}"
-    printf "NSE_DUMMY_IFACE=%q\n"  "${NSE_DUMMY_IFACE:-1}"
-    printf "NSE_INPUT_RESTORE=%q\n" "${NSE_INPUT_RESTORE:-manual}"
+    printf "NSE_DUMMY_IFACE=%q\n"  "${NSE_DUMMY_IFACE:-0}"
+    printf "NSE_INPUT_RESTORE=%q\n" "${NSE_INPUT_RESTORE:-native}"
     printf "NSE_GUARANTEE_NAME=%q\n" "$(nse_guarantee_name)"
     printf "NSE_ISOLATION_MODE=%q\n" "$([ "${NSE_NO_ISOLATION:-0}" = 1 ] && echo none || echo namespaces)"
   } > "$envf"
@@ -407,7 +407,7 @@ else
   # unnecessary; NSE_DUMMY_IFACE=0 runs the experiment that settles it.
   # See DESIGN.md §8 and tests/experiments.sh.
   require_setup lo-up ip link set lo up
-  if [ "${NSE_DUMMY_IFACE:-1}" = 1 ]; then
+  if [ "${NSE_DUMMY_IFACE:-0}" = 1 ]; then
     if require_setup dummy-add   ip link add dummy0 type dummy \
     && require_setup dummy-addr  ip addr add 10.99.0.1/24 dev dummy0 \
     && require_setup dummy-up    ip link set dummy0 up \

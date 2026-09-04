@@ -48,28 +48,29 @@ nse_trust_probe() {
   nse_store_present "$NSE_SUBSTITUTER_URL" < "$work/trust-candidates-sorted.txt" \
     | LC_ALL=C sort -u > "$work/trust-present.txt"
   nse_store_meta "$NSE_SUBSTITUTER_URL" < "$work/trust-present.txt" \
-    > "$work/trust-meta.tsv"
+    > "$work/trust-meta.jsonl"
 
-  declare -A class
-  local p ca sigs
-  while IFS=$'\t' read -r p ca sigs; do
-    [ -n "$p" ] || continue
-    case $ca in
-      text:*) class[$p]="ca-text" ;;
-      "")     if [ "${sigs:-0}" -gt 0 ]; then class[$p]=signed; else class[$p]=unsigned; fi ;;
-      *)      class[$p]="ca-fixed" ;;
-    esac
-  done < "$work/trust-meta.tsv"
-
+  # Sample selection happens entirely in jq, walking the candidate list in
+  # priority order. The previous version built a bash associative array from a
+  # TSV with `read -r p ca sigs` under IFS=$'\t' -- and a signed object has an
+  # EMPTY ca field, so `path<TAB><TAB>1` collapsed to two fields, the signature
+  # count landed in `ca`, and every signed and unsigned object was classified
+  # content-addressed. The probe then reported "skipped" for three of its five
+  # cases while the composition counter in the same report, parsing the same
+  # file correctly, printed 53 and 1. Nothing here parses fields by hand.
   local sample_ca="" sample_signed="" sample_unsigned=""
-  while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    case ${class[$p]:-} in
-      ca-fixed) [ -n "$sample_ca" ]       || sample_ca=$p ;;
-      signed)   [ -n "$sample_signed" ]   || sample_signed=$p ;;
-      unsigned) [ -n "$sample_unsigned" ] || sample_unsigned=$p ;;
-    esac
-  done < "$work/trust-candidates.txt"
+  local -a nse_samples
+  mapfile -t nse_samples < <(
+    jq -r -n "$NSE_JQ_CLASSIFY"'
+      ( [ inputs ] | map({key: .path, value: .}) | from_entries ) as $m
+      | ( $order | split("\n") | map(select(length > 0)) ) as $cands
+      | def pick($want): [ $cands[] | select( ($m[.] // null) != null
+                                              and ($m[.] | nse_class) == $want ) ][0] // "";
+        [ pick("ca-fixed"), pick("signed"), pick("unsigned") ] | .[]
+    ' --rawfile order "$work/trust-candidates.txt" "$work/trust-meta.jsonl")
+  sample_ca=${nse_samples[0]:-}
+  sample_signed=${nse_samples[1]:-}
+  sample_unsigned=${nse_samples[2]:-}
 
   [ -n "$sample_ca" ] || nse_die "trust probe: no content-addressed source object found in the escrow"
 

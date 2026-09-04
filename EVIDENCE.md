@@ -7,7 +7,31 @@ nix develop
 nix-source-escrow escrow "path:$PWD/fixture#default"
 ```
 
-> **Status of this file.** The report block below is the **v0.1.0** run,
+> **First real execution: 2026-09-03, GitHub Actions, commit `a471627`.**
+> A matrix over Nix 2.34.7 and 2.24.9. It is a **pre-fix diagnostic bundle**,
+> not canonical evidence: the main suite was red (106/22 on 2.34.7),
+> `SOURCE_ORIGIN_INDEPENDENCE` never completed, and `t16` never reached its
+> acceptance step. What it *did* establish, and what remains true:
+>
+> | | |
+> |---|---|
+> | `ESCROW_REPLAY` on Nix 2.34.7 | **PASS**, end to end |
+> | replay audit | 874 requested, 874 reachable, `notProvidedReachableByTest = 0` |
+> | discovery on 2.34.7 | 165 sources / 163 covered / 2 external-recovery |
+> | host autodetection | worked: `virtualised (microsoft)` via `systemd-detect-virt` |
+> | provenance | exact tested HEAD, `workingTreeDirty = false`, `revisionSource = flake` on the packaged build |
+> | **E0 / E1 / E2 / E3** | **BASELINE_OK / CONFIRMED / CONFIRMED / CONFIRMED** |
+> | Nix 2.24.9 | `nix derivation show` emits a flat map; discovery read zero and reported complete |
+> | trust metadata | TSV tab-collapse defect, reproduced |
+> | source mode | harness crash (`E2BIG` via an exported `$out`), not a guarantee failure |
+> | remote escrow (`t16`) | **not verified** — the test server's port handshake was broken, so the acceptance steps never ran |
+>
+> Four defects came out of it, three of them the same mistake in different
+> clothes (`DESIGN.md` §15). All four are now fixed with a regression test
+> each. **A fresh frozen run is required before anything here becomes canonical
+> evidence.**
+>
+> **Status of the block below.** The report block below is the **v0.1.0** run,
 > verbatim. It predates the second review and the changes made in response to
 > it, and it is kept because it is the record of what was actually measured
 > then — including, in plain sight on the third line, the `HOST=Windows 11`
