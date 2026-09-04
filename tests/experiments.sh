@@ -80,6 +80,47 @@ nse_experiment_outcome() {
   esac
 }
 
+# How the summary reads the file it just wrote. A separate, named program
+# because both halves of it were wrong for eleven runs and nothing said so.
+#
+#   "measured on: unknown"   -- it read .provenance.gitCommit and
+#                               .provenance.gitDirty. Those fields have never
+#                               existed; the block beside it says toolRevision
+#                               and workingTreeDirty. `// "unknown"` turned a
+#                               wrong field name into a plausible statement
+#                               about the world.
+#
+#   "dummy interface still needed: unknown"  -- while the JSON said `false` and
+#                               E1 said CONFIRMED. `//` treats FALSE as absent,
+#                               so the one field the whole experiment exists to
+#                               produce printed "unknown" precisely when the
+#                               answer was "no". DESIGN.md §6 warns about this
+#                               operator; this is its third victim here.
+#
+# Both are read with has() now, and a missing revision says so instead of
+# saying "unknown".
+# shellcheck disable=SC2034,SC2016  # a jq program, used below and by u17
+NSE_EXPERIMENTS_SUMMARY_JQ='
+def yesno($k):
+  if (.conclusion | has($k) | not) then "UNRECORDED"
+  elif .conclusion[$k] == null    then "unknown"
+  elif .conclusion[$k]            then "yes"
+  else                                 "no" end;
+def rev:
+  if (.provenance | has("toolRevision") | not) then "UNRECORDED"
+  elif .provenance.toolRevision == null
+    then "NO REVISION (" + (.provenance.revisionSource // "unknown source") + ")"
+  else (.provenance.toolRevision[0:12]
+        + (if (.provenance | has("workingTreeDirty")) and .provenance.workingTreeDirty
+           then " (DIRTY)" else "" end)
+        + " [" + (.provenance.revisionSource // "unknown source") + "]")
+  end;
+  "  dummy interface still needed:      \(yesno("dummyInterfaceStillNeeded"))",
+  "  manual input restore still needed: \(yesno("manualInputRestoreStillNeeded"))",
+  "  combined default safe:             \(yesno("combinedDefaultSafe"))",
+  "  measured on:                       \(rev)",
+  "  nix:                               \(.provenance.nixVersion // "UNRECORDED")"'
+
 # Sourced by the unit tests: definitions only, no runs.
 [ "${NSE_EXPERIMENTS_LIB_ONLY:-0}" = 1 ] && return 0
 
@@ -209,8 +250,4 @@ jq -s --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 printf '\n\033[1mSUMMARY\033[0m  %s\n' "$ESCROW/evidence/experiments.json"
 jq -r '.experiments[] | "  \(.id) \(.outcome)  (result=\(.result // "not run"))"' \
   "$ESCROW/evidence/experiments.json"
-jq -r '"  dummy interface still needed:      \(.conclusion.dummyInterfaceStillNeeded // "unknown")",
-       "  manual input restore still needed: \(.conclusion.manualInputRestoreStillNeeded // "unknown")",
-       "  combined default safe:             \(.conclusion.combinedDefaultSafe)",
-       "  measured on:                       \(.provenance.gitCommit[0:12] // "unknown")\(if .provenance.gitDirty then " (DIRTY)" else "" end)"' \
-  "$ESCROW/evidence/experiments.json"
+jq -r "$NSE_EXPERIMENTS_SUMMARY_JQ" "$ESCROW/evidence/experiments.json"

@@ -1038,3 +1038,95 @@ There is deliberately no fourth branch. Relabelling an ambiguous failure as
 the test is *permitted* to rebuild, and the verdict would then be measuring the
 harness's confusion rather than the tier. Test `t20` drives this with an HTTP
 tier that serves a `.narinfo` for a `.nar` it does not have.
+
+---
+
+## 17. Pre-registration: what the removal of the two workarounds must and must not change
+
+Written **before** the removal is made and before the run that judges it, which
+is the only time this document is worth anything. §16a says a test is evidence
+only if you can say what a red one looks like; a *change* is evidence only if
+you say, in advance, which observables it is allowed to move.
+
+### What is already established
+
+`E1` (no dummy interface), `E2` (no manual flake-input restore) and `E3` (both
+dropped — the current default) are `CONFIRMED` on **both** Nix versions, in
+**every** run from 6 to 11, with `E0` green each time so the variants are
+attributable. Run 11 adds that the two versions agree on every discovery
+cardinality as well. This is repeatability, not one lucky Tuesday, and it holds
+across the fixes to four separate instrumentation defects — including two that
+were live in runs 6 and 7. The conclusion is therefore not "these look
+removable": it is **the dummy interface and the manual input restore are not
+necessary parts of the confirmed mechanism**.
+
+What has not been demonstrated is that the *code* implementing them can be
+deleted without changing anything else, which is a different claim and needs
+its own destructive experiment.
+
+### The sequence, kept surgical
+
+1. `experiments.json` provenance repaired, no behavioural change. Done: the
+   summary read `.provenance.gitCommit` / `.gitDirty` (fields that never
+   existed) and `//`-defaulted a `false` conclusion to `"unknown"`, so eleven
+   runs printed `measured on: unknown` and `dummy interface still needed:
+   unknown` beside a JSON block carrying the exact commit and `false`. `u17`.
+2. **This section.**
+3. One commit that deletes the dummy interface, demotes the manual restore to a
+   diagnostic, and removes §8 — and nothing else.
+4. A cold matrix run on **that** commit, same full route: `unit-shell` →
+   `flake check` → `t00`–`t20` → `E0`–`E3` → discovery counts →
+   `closureSha256`.
+
+### The verdict, defined in advance
+
+`REMOVAL_VALIDATED` requires **equivalence with run 11**, not merely green:
+
+```
+nix 2.34.7 and nix 2.24.9, both:
+  unit-shell        = N/0        (N grows only by tests added in step 3)
+  flake check       = pass
+  t00-t20           = 144/0      minus any test that existed ONLY to
+                                 exercise the deleted path, each such
+                                 removal named in the commit
+  E0                = BASELINE_OK
+  E1 / E2 / E3      = CONFIRMED
+
+discovery, both versions:
+  FOD_SOURCES=165  COVERED=163  EXTERNAL_RECOVERY=2
+  WITH_POSTFETCH=3  ON_KNOWN_FORGE=38  638 derivations
+
+closureSha256       = 9243083eb0146c72362229c734fa78f6b3b1200eab9a8be06ccbbe8fe7daf8ec
+                      identical on both versions AND equal to run 11
+```
+
+### The red outcomes, also defined in advance
+
+Each of these is a **result**, not an obstacle to be worked around, and each is
+written down now so that no explanation can be invented after the fact:
+
+| observation | what it means | what happens |
+|---|---|---|
+| any `E` outcome moves off `CONFIRMED`/`BASELINE_OK` | the workaround was load-bearing after all, and eleven runs of `CONFIRMED` were measuring something else | **revert the deletion**, record why, and treat §8 as re-established |
+| `t00`–`t20` red anywhere except a test deleted with its subject | the removal touched something it had no business touching | revert, isolate, retry as a smaller change |
+| a discovery cardinality moves | the deletion changed what is *discovered*, which it has no path to do | stop; this is a defect in the removal, not a new fact about the graph |
+| **`closureSha256` changes** | see below | classify **before** re-running, never after |
+
+`closureSha256` deserves its own line because it is the one that will tempt an
+explanation. The removal touches the acceptance harness — how the test store is
+isolated and how flake inputs get there — and **not** the derivation graph of
+the fixture. There is therefore no legitimate route from this deletion to a
+different closure. If the hash moves, the correct reading is *the deletion
+changed the build*, and the work is to find out how, not to write a paragraph
+about why the new hash is fine. The one exception agreed in advance: if the
+deletion also removes a *derivation input* of the fixture — it does not, and if
+step 3 finds that it would, that is a different change needing its own
+pre-registration.
+
+### Why this is worth more than a twelfth green run
+
+Re-running unchanged code produces the same green and answers nothing new. An
+amputation that leaves every observable in place is a much stronger statement
+about the mechanism: it says the confirmed behaviour did not depend on the
+parts we removed, which is exactly what `E1`–`E3` claim and cannot themselves
+prove — they measure a *disabled* workaround, not an *absent* one.

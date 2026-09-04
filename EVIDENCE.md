@@ -66,7 +66,19 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > counting them had not settled in three.
 >
 > **Run 11 (`783bc5a`) is green on both Nix versions, every step**, and its
-> report is the canonical Result section below. The **v0.1.0** block that
+> report is the canonical Result section below. Three commit identities are
+> kept apart on purpose, here and in the machine-readable `evidence-runs.json`:
+>
+> ```
+> run_11.measured_commit      = 783bc5a   the tree the suite actually executed
+> run_11.evidence_recorded_by = d72dbbf   documentation only (EVIDENCE.md, 1 file),
+>                                         necessarily later, and NOT itself measured
+> review_reference_commit     = 6a6687c   the frozen review subject; has never moved
+> ```
+>
+> Collapsing those three into "current HEAD" is how a measurement gets attached
+> to a state that was never run, and this file has already paid for one
+> provenance shortcut. The **v0.1.0** block that
 > follows it is kept as history, not as evidence: it predates the second review
 > and carries, in plain sight on its third line, the `HOST=Windows 11` literal
 > this file used to present as a measured fact.

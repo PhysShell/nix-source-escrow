@@ -502,6 +502,47 @@ rc=0; jqattr 'nse_urls_of(.)' < "$TMP/sa-bad.json" >/dev/null 2>&1 || rc=$?
 assert_ne "u16.7 an env.__json that is not JSON FAILS, it is not no attributes" "0" "$rc"
 
 # ---------------------------------------------------------------------------
+head_ "u17  the experiments summary reads the file it just wrote"
+# For eleven runs it printed, side by side:
+#     dummy interface still needed:      unknown
+#     measured on:                       unknown
+# while the JSON it was reading said `false` and carried the exact commit. Two
+# separate defects with one operator between them: `//` treats FALSE as absent,
+# so the conclusion the whole experiment exists to produce read "unknown"
+# exactly when the answer was "no"; and the provenance lines read
+# .provenance.gitCommit / .gitDirty, field names that have never existed.
+printf '%s' '{"provenance":{"toolRevision":"783bc5a9c8acb71613ac302abf1abb541f4c5823",
+  "revisionSource":"git-checkout","workingTreeDirty":false,"nixVersion":"nix (Nix) 2.34.7"},
+  "conclusion":{"dummyInterfaceStillNeeded":false,"manualInputRestoreStillNeeded":false,
+                "combinedDefaultSafe":true}}' > "$TMP/exp-clean.json"
+printf '%s' '{"provenance":{"toolRevision":"783bc5a9c8acb71613ac302abf1abb541f4c5823",
+  "revisionSource":"git-checkout","workingTreeDirty":true,"nixVersion":"nix (Nix) 2.24.9"},
+  "conclusion":{"dummyInterfaceStillNeeded":null,"manualInputRestoreStillNeeded":true,
+                "combinedDefaultSafe":false}}' > "$TMP/exp-dirty.json"
+printf '%s' '{"provenance":{"toolRevision":null,"revisionSource":"flake-no-revision"},
+  "conclusion":{}}' > "$TMP/exp-norev.json"
+expsum() { jq -r "$NSE_EXPERIMENTS_SUMMARY_JQ" "$1" | sed 's/  */ /g;s/^ //'; }
+
+assert_eq "u17.1 a CONFIRMED workaround reads 'no', never 'unknown'" \
+  "dummy interface still needed: no" "$(expsum "$TMP/exp-clean.json" | sed -n 1p)"
+assert_eq "u17.2 and so does the second one" \
+  "manual input restore still needed: no" "$(expsum "$TMP/exp-clean.json" | sed -n 2p)"
+assert_eq "u17.3 a true conclusion still reads 'yes'" \
+  "manual input restore still needed: yes" "$(expsum "$TMP/exp-dirty.json" | sed -n 2p)"
+assert_eq "u17.4 a genuinely unknown conclusion is the ONLY thing that reads 'unknown'" \
+  "dummy interface still needed: unknown" "$(expsum "$TMP/exp-dirty.json" | sed -n 1p)"
+assert_eq "u17.5 the revision is the one in the file, with its source" \
+  "measured on: 783bc5a9c8ac [git-checkout]" "$(expsum "$TMP/exp-clean.json" | sed -n 4p)"
+assert_eq "u17.6 a dirty tree is marked, so a result cannot be quietly reattributed" \
+  "measured on: 783bc5a9c8ac (DIRTY) [git-checkout]" "$(expsum "$TMP/exp-dirty.json" | sed -n 4p)"
+assert_eq "u17.7 the Nix it ran on is printed, not assumed" \
+  "nix: nix (Nix) 2.24.9" "$(expsum "$TMP/exp-dirty.json" | sed -n 5p)"
+assert_eq "u17.8 no revision says so; it does not borrow the word 'unknown'" \
+  "measured on: NO REVISION (flake-no-revision)" "$(expsum "$TMP/exp-norev.json" | sed -n 4p)"
+assert_eq "u17.9 a missing conclusion field is UNRECORDED, not a verdict" \
+  "combined default safe: UNRECORDED" "$(expsum "$TMP/exp-norev.json" | sed -n 3p)"
+
+# ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"
 # A comment may name the old bug; an emitted line may not. Anchoring at the
 # start of a non-comment line is what separates the two.
