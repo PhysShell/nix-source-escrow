@@ -230,11 +230,8 @@ head_ "u10  an experiment with a broken baseline concludes nothing"
 # The trap: a broken escrow makes E0, E1, E2 and E3 all FAIL, and a naive
 # `FAIL -> REFUTED` mapping then writes a confident, entirely false
 # "the workaround IS needed" into experiments.json.
-# shellcheck disable=SC2034  # read by tests/experiments.sh at source time
-NSE_EXPERIMENTS_LIB_ONLY=1
-# shellcheck source=./experiments.sh
-. "$ROOT/tests/experiments.sh"
-unset NSE_EXPERIMENTS_LIB_ONLY
+# shellcheck source=../lib/experiment.sh
+. "$ROOT/lib/experiment.sh"
 outcome() { nse_experiment_outcome "$@" | cut -f1; }
 
 assert_eq "u10.1 a green control is the baseline" \

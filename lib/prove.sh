@@ -231,8 +231,6 @@ nse_prove() {
     printf 'NSE_PWD=%q\n'          "$PWD"
     printf "NSE_TRUSTED_KEYS=%q\n" "${NSE_TRUSTED_KEYS:-cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=}"
     printf "NSE_EXTRA_NIX_CONFIG=%q\n" "${NSE_EXTRA_NIX_CONFIG:-}"
-    printf "NSE_DUMMY_IFACE=%q\n"  "${NSE_DUMMY_IFACE:-0}"
-    printf "NSE_INPUT_RESTORE=%q\n" "${NSE_INPUT_RESTORE:-native}"
     printf "NSE_GUARANTEE_NAME=%q\n" "$(nse_guarantee_name)"
     printf "NSE_ISOLATION_MODE=%q\n" "$([ "${NSE_NO_ISOLATION:-0}" = 1 ] && echo none || echo namespaces)"
   } > "$envf"
@@ -311,13 +309,11 @@ nse_prove_report() {
     "NETWORK_ISOLATION=" + .isolation,
     "ISOLATION_MODE=" + .isolationMode,
     "ISOLATION_SETUP=" + (.isolationSetup // "not recorded"),
-    "DUMMY_INTERFACE=" + (.dummyInterface // "not recorded"),
     "NSS_ISOLATION=" + .nssIsolation,
     "ORIGIN_HOSTS_PROVEN_UNREACHABLE=" + ((.originHostsProvenUnreachable|join(",")) | if .=="" then "none" else . end),
     "ORIGIN_HOSTS_REACHABLE=" + ((.originHostsReachable|join(",")) | if .=="" then "none" else . end),
     "CACHE_NIXOS_ORG_ALLOWED=" + ([.connectivity[]|select(.host=="cache.nixos.org")|(.reachableByName or .reachableByAddress)]|first|tostring),
     "SUBSTITUTERS_AS_CONFIGURED=" + (.substitutersAsExpected|tostring),
-    "FLAKE_INPUT_RESTORE=" + (.flakeInputRestore // "not recorded"),
     "MODE_SUPPORTED=" + ((.modeSupported // true)|tostring),
     "REPLAY_SOURCE=" + .replaySource.escrowUsedByTest + " (" + .replaySource.escrowMode + " from " + .replaySource.durableEscrow + ")",
     "REPLAY_OBJECTS_REQUESTED=\(.replaySource.objectsRequested)  REACHABLE=\(.replaySource.objectsReachableByTest // "not measured")  AS_CLOSURE=\(.replaySource.objectsArrivedAsClosure // "not measured")",
@@ -384,7 +380,6 @@ require_setup() {
 # argue about that in the evidence. NSS isolation is graded (full/partial), not
 # fatal -- the by-address probes are what carry the argument.
 nss_isolation=full
-dummy_interface=absent
 if [ "$NSE_ISOLATION_MODE" = none ]; then
   nss_isolation=none
   isolation_setup=skipped
@@ -399,22 +394,14 @@ else
   mount --bind /tmp/nse-empty-resolv.conf /etc/resolv.conf 2>/dev/null || nss_isolation=partial
 
   # ---- 2. network isolation ----------------------------------------------
-  # Loopback always. The dummy device is a workaround for one Nix behaviour:
-  # Nix 2.34 disables *all* substituters -- including purely local file:// ones
-  # -- when it decides the machine has no Internet access, unless `substitute`
-  # is an explicit override. We now set `substitute = true` in NIX_CONFIG
-  # below, which by the reading of src/nix/main.cc should make the dummy
-  # unnecessary; NSE_DUMMY_IFACE=0 runs the experiment that settles it.
-  # See DESIGN.md §8 and tests/experiments.sh.
+  # Loopback, and nothing else. There was a dummy route-to-nowhere device here,
+  # working around Nix disabling *all* substituters -- local file:// ones
+  # included -- when it decides the machine is offline. `substitute = true` in
+  # NIX_CONFIG below is the explicit override that makes that decision moot
+  # (src/nix/main.cc), and E1/E3 confirmed it on both Nix versions in every run
+  # from 6 to 11 with a green baseline each time. Removed in full rather than
+  # left switched off: see DESIGN.md §8 and §17a.
   require_setup lo-up ip link set lo up
-  if [ "${NSE_DUMMY_IFACE:-0}" = 1 ]; then
-    if require_setup dummy-add   ip link add dummy0 type dummy \
-    && require_setup dummy-addr  ip addr add 10.99.0.1/24 dev dummy0 \
-    && require_setup dummy-up    ip link set dummy0 up \
-    && require_setup dummy-route ip route add default via 10.99.0.254 dev dummy0; then
-      dummy_interface=present
-    fi
-  fi
 fi
 
 # ---- 3. record what is actually reachable --------------------------------
@@ -514,26 +501,17 @@ if [ "$NSE_MODE_SUPPORTED" != true ]; then
 fi
 
 # ---- 4. flake input material ---------------------------------------------
-# Two modes, because which one is used changes what the test proves.
+# Nothing happens here, on purpose, and that is the whole point.
 #
-#   manual  copy the locked input paths out of the escrow ourselves. Proves the
-#           escrow holds them; does NOT prove a stock consumer gets them.
-#   native  do nothing, and let Nix substitute the locked input itself.
-#           Input::getAccessorUnchecked computes the store path from the lock's
-#           narHash and calls ensurePath, so a configured substituter should be
-#           enough. That is the claim the primary path ought to be making.
-flake_input_restore=$NSE_INPUT_RESTORE
-restore_rc=0
-if [ "$NSE_MODE_SUPPORTED" = true ] && [ "$NSE_INPUT_RESTORE" = manual ]; then
-  step=restore-flake-inputs
-  mapfile -t inputs < <(jq -r '.flakeInputs[] | select(.escrow.present) | .storePath' "$NSE_MANIFEST")
-  if [ "${#inputs[@]}" -gt 0 ]; then
-    nix copy --from "$NSE_ESCROW_SUBSTITUTER" --to "$NSE_TESTSTORE" "${inputs[@]}" \
-      > "$NSE_WORK/prove-restore.log" 2>&1
-    restore_rc=$?
-  fi
-  [ "$restore_rc" -eq 0 ] || reason="flake input restore from the escrow failed (see prove-restore.log)"
-fi
+# There used to be a pre-copy of the locked input paths out of the escrow into
+# the test store. It proved that WE could put the inputs there, not that a
+# stock consumer gets them -- an easier question than the one being asked.
+# Input::getAccessorUnchecked computes the store path from the lock's narHash
+# and calls ensurePath, so a configured substituter is enough; E2 and E3
+# confirmed it on both Nix versions in every run from 6 to 11. Deleted rather
+# than demoted, because a diagnostic nobody runs is dead code. DESIGN.md §8a.
+# t11 asserts the property that actually matters: every flake input, transitive
+# ones included, served from the escrow with its origin unreachable.
 
 # ---- 5. offline evaluation probe -----------------------------------------
 # This is the ONLY thing that can cover eval-time fetches. builtins.fetchTarball
@@ -663,13 +641,11 @@ jq -n \
   --arg isolationMode "$NSE_ISOLATION_MODE" \
   --arg isolationSetup "$isolation_setup" \
   --arg setupFailures "$setup_failures" \
-  --arg dummyInterface "$dummy_interface" \
-  --arg flakeInputRestore "$flake_input_restore" \
   --arg modeSupported "$NSE_MODE_SUPPORTED" \
   --argjson sourcesInEscrow "$NSE_SOURCES_IN_ESCROW" \
   --arg durableEscrow "$NSE_DURABLE_ESCROW" \
   --arg guaranteeName "$NSE_GUARANTEE_NAME" \
-  --argjson buildRc "$build_rc" --argjson restoreRc "$restore_rc" --argjson evalRc "$eval_rc" \
+  --argjson buildRc "$build_rc" --argjson evalRc "$eval_rc" \
   --argjson required "$required" --argjson restored "$restored" \
   --argjson httpFetches "$net_lines" \
   --argjson outMatches "$out_matches" \
@@ -685,14 +661,12 @@ jq -n \
     isolationMode:$isolationMode,
     isolationSetup:$isolationSetup,
     isolationSetupFailures:(if $setupFailures=="" then [] else ($setupFailures|split(",")) end),
-    dummyInterface:$dummyInterface,
-    flakeInputRestore:$flakeInputRestore,
     guaranteeName:$guaranteeName,
     modeSupported:($modeSupported == "true"),
     durableEscrow:$durableEscrow,
     sourcesInEscrowBeforeIsolation:$sourcesInEscrow,
     builtOutput:$built, expectedOutput:$expected, outputMatches:$outMatches,
-    buildExit:$buildRc, restoreExit:$restoreRc, offlineEvalExit:$evalRc,
+    buildExit:$buildRc, offlineEvalExit:$evalRc,
     offlineEvalProbe:(if $evalRc == 0 then "clean" else "failed" end),
     sourcesRequired:$required, sourcesRestored:$restored,
     httpFetchesInBuildLog:$httpFetches,

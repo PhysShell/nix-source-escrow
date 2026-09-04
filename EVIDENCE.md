@@ -416,6 +416,11 @@ run 8 and passes on both.
 | `t19` | the **built package** reports a stamped revision, `revisionSource=flake`, the exact tested HEAD, and a clean source tree — the case a test against `$PWD/bin` cannot see |
 | `t20` | a binary tier that serves a `narinfo` for a `.nar` it does not have yields `BINARY_TIER_ERROR` and names the object, rather than reclassifying it as "the tier does not have it, let the build rebuild it" |
 
+Since the removal commit, `t07`, `t15` and `t16` also carry what `E3` used to
+measure: with the dummy interface and the manual input restore deleted, the
+default acceptance path *is* the configuration those experiments validated, and
+there is no flag left to disable it.
+
 Two checks earned their keep during development. `t06`'s content-identity check
 caught a bug in the *test harness* that wrote through a hardlink and corrupted a
 real narinfo in the escrow. And `t12` exists because the acceptance test really
@@ -652,14 +657,17 @@ In the order the value arrives.
    not reaching further than the accounting claims. The eleven runs it took are
    the run table at the top of this file, and the five defects they surfaced are
    `DESIGN.md` §15 and §15a.
-2. **Retire the two workarounds the experiments cleared.** `E1`, `E2` and `E3`
-   are CONFIRMED on **both** Nix versions across every run since 6, with `E0`
-   green each time, so the conclusion is attributable: the dummy interface and
-   the manual input restore are both unnecessary. They are already off by
-   default. What is left is deletion — the dummy-interface code path and
-   `DESIGN.md` §8 with it, and demoting the manual copy to a diagnostic — plus
-   `experiments.json` still printing `measured on: unknown` where it should
-   print the Nix version it ran against.
+2. ~~**Retire the two workarounds the experiments cleared.**~~ **Done.** The
+   dummy interface and the manual flake-input restore are deleted, not demoted:
+   `E1`/`E2`/`E3` were CONFIRMED on both Nix versions in every run from 6 to 11
+   with `E0` green each time, and a diagnostic nobody runs is indistinguishable
+   from dead code. `E0`–`E3` are retired with them and their final values are
+   frozen in `evidence-runs.json`; the rules for reading any future experiment
+   survive in `lib/experiment.sh`. `DESIGN.md` §8, §8a, §17 and §17a — the last
+   of which records that the pre-registration's own acceptance criterion was
+   unsatisfiable by the change it pre-registered, found and corrected before the
+   judging run rather than after it. The `measured on: unknown` defect is fixed
+   separately (`u17`).
 3. **Run the escrow against a real remote backend.** Attic or an S3 bucket,
    end to end, with credentials, so gap 14 stops being an HTTP-server test and
    becomes deployment evidence.

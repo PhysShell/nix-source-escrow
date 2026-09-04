@@ -77,16 +77,6 @@ acceptance test:
                           deliberately incomplete escrow)
   --no-isolation          run without namespaces (debug only; the result is
                           marked a control run, never an acceptance)
-  --dummy-interface       create the dummy route-to-nowhere interface. OFF by
-                          default since experiment E1 measured it unnecessary
-                          on Nix 2.34.7; turn it on for a Nix where that has
-                          not been established (DESIGN.md §8)
-  --no-dummy-interface    the default; kept so the experiment can name it
-  --manual-input-restore  pre-copy flake inputs out of the escrow instead of
-                          letting Nix substitute them. A DIAGNOSTIC of what the
-                          escrow holds, not the acceptance path -- experiment
-                          E2 measured Nix does this itself (DESIGN.md §8a)
-  --native-input-restore  the default; kept so the experiment can name it
 
 other:
   --staging-dir DIR       the controlled store PRESERVE builds into
@@ -110,8 +100,6 @@ NSE_INSTALLABLE=""
 NSE_GUARANTEE=${NSE_GUARANTEE:-escrow-replay}
 # Defaults set by measurement, not by caution: experiments E1/E2/E3 came back
 # CONFIRMED on Nix 2.34.7 (evidence/experiments.json). Both workarounds are off.
-NSE_DUMMY_IFACE=${NSE_DUMMY_IFACE:-0}
-NSE_INPUT_RESTORE=${NSE_INPUT_RESTORE:-native}
 nse_store_url_opt=${NSE_STORE_URL:-}
 nse_substituter_opt=${NSE_SUBSTITUTER_URL:-}
 nse_replica_opt=${NSE_REPLICA_URL:-}
@@ -150,10 +138,6 @@ while [ $# -gt 0 ]; do
     --fresh-staging) NSE_FRESH_STAGING=1; shift ;;
     --expect-fail)   NSE_EXPECT=fail; shift ;;
     --no-isolation)  NSE_NO_ISOLATION=1; shift ;;
-    --dummy-interface) NSE_DUMMY_IFACE=1; shift ;;
-    --no-dummy-interface) NSE_DUMMY_IFACE=0; shift ;;
-    --manual-input-restore) NSE_INPUT_RESTORE=manual; shift ;;
-    --native-input-restore) NSE_INPUT_RESTORE=native; shift ;;
     -h|--help) usage; exit 0 ;;
     --*) printf 'nix-source-escrow: unknown option %s\n' "$1" >&2; usage; exit 2 ;;
     *) if [ -z "$NSE_INSTALLABLE" ]; then NSE_INSTALLABLE=$1; shift
@@ -175,7 +159,7 @@ NSE_PROOF_REPLICA=${nse_proof_opt:-$NSE_DIR/work/proof-replica}
 
 export NSE_DIR NSE_CACHE NSE_COMPRESSION NSE_FRESH_STAGING NSE_NO_ISOLATION \
        NSE_INSTALLABLE NSE_STORE_URL NSE_SUBSTITUTER_URL NSE_REPLICA_URL \
-       NSE_GUARANTEE NSE_DUMMY_IFACE NSE_INPUT_RESTORE NSE_STAGING \
+       NSE_GUARANTEE NSE_STAGING \
        NSE_BINARY_TIER NSE_PROOF_REPLICA
 
 nse_require_cmd nix jq

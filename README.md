@@ -218,29 +218,22 @@ nix build .#nix-source-escrow
 ./result/bin/nix-source-escrow --help
 ```
 
-Experiments — questions this repo has read the answer to in the Nix sources but
-has not yet *run*, so they are not called results:
+Two workarounds in the acceptance harness — a `dummy0` route-to-nowhere
+interface and a manual pre-copy of locked flake inputs — were carried as
+hypotheses, measured by an experiment (`E0`–`E3`), and then **deleted**.
+`E1`/`E2`/`E3` came back `CONFIRMED` on Nix 2.34.7 *and* 2.24.9, in every run
+from 6 to 11, each with a green `E0` baseline. The experiment was retired with
+its subject: with no flag left to disable, the default acceptance path *is* the
+configuration it validated, and `t07`, `t15` and `t16` exercise it on every
+run. `DESIGN.md` §8, §8a and §17a; the rules for reading any future experiment
+survive in `lib/experiment.sh`.
 
-```bash
-nix develop -c ./tests/experiments.sh
-```
-
-`E0` is the control, and it names the legacy workarounds explicitly rather than
-relying on the defaults — an experiment whose baseline drifts with the thing it
-measures answers nothing. `E1` drops the `dummy0` route-to-nowhere interface
-(`DESIGN.md` §8), `E2` drops the manual flake-input restore so Nix substitutes
-locked inputs itself (`DESIGN.md` §8a), `E3` drops both.
-
-**These have run.** On Nix 2.34.7: `E0 BASELINE_OK`, `E1/E2/E3 CONFIRMED`. Both
-workarounds are therefore **off by default**, and `--dummy-interface` /
-`--manual-input-restore` turn them back on. The result is established for
-2.34.7 and for no other version until tested — run this on yours.
-
-`E0` is load-bearing: a broken escrow makes every variant fail, and a naive
-`FAIL → REFUTED` would then write a confident "the workaround IS needed" that
-no run supports. So if `E0` is not green, `E1`–`E3` are not run at all and are
-recorded `INCONCLUSIVE`; and `E3` only answers the composition question when
-`E1` and `E2` are each CONFIRMED on their own.
+The rule that made those readings worth anything is the part kept in
+`lib/experiment.sh`: a broken escrow makes every variant fail, so a naive
+`FAIL → REFUTED` writes a confident "the workaround IS needed" that no run
+supports. A baseline that is not green means the variants are not run at all
+and are recorded `INCONCLUSIVE`, and a composed hypothesis stays inconclusive
+until its parts hold on their own. `u10` and `u17` keep both honest.
 
 The negative control on its own — the escrow with its sources deleted must
 **fail**:
@@ -276,7 +269,6 @@ escrow/
     verify.json
     trust.json
     origin-independence.json
-    experiments.json            only after tests/experiments.sh
     report.txt
   work/                         staging store, test store, logs (throwaway)
 ```

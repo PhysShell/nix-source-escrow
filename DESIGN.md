@@ -4,11 +4,12 @@ Only decisions that were expensive to get right, or that a reader would
 otherwise get wrong. Everything about *this tool's behaviour* was measured on
 the machine described in `EVIDENCE.md`, not assumed.
 
-Two kinds of statement here are not measurements, and both are labelled where
-they appear: figures quoted from upstream projects (§1), and hypotheses read
-out of the Nix sources that this repository has not yet run (§8, §8a). The
-second kind ships with an experiment — `tests/experiments.sh` — rather than
-with a conclusion.
+One kind of statement here is not a measurement, and it is labelled where it
+appears: figures quoted from upstream projects (§1). There used to be a second
+kind — hypotheses read out of the Nix sources and not yet run — which shipped
+with an experiment rather than a conclusion. Those two hypotheses have since
+been run to a conclusion and the mechanisms they were about have been deleted;
+§8, §8a and §17a are what is left of them.
 
 ---
 
@@ -342,128 +343,69 @@ waiting to happen.
 
 ---
 
-## 8. Gotcha: Nix disables *all* substituters when it thinks it is offline
+## 8. Retired: the dummy interface, and the offline-substituter gotcha
 
-This cost the most time, so it is written down.
+**The workaround this section documented is gone from the code.** The section
+number stays so that older commits, evidence files and cross-references keep
+pointing somewhere true.
 
-Nix 2.34.7 prints `warning: you don't have Internet access; disabling some
-network-dependent features` and then refuses to substitute **even from a
-`file://` store on the local disk**:
+The gotcha itself is real and still worth knowing. Nix prints
+`warning: you don't have Internet access; disabling some network-dependent
+features` and then refuses to substitute **even from a `file://` store on the
+local disk** — the same command with a working network substitutes from that
+same cache without complaint. The original workaround was a dummy
+route-to-nowhere device (`dummy0`, `10.99.0.1/24`, a default route to an
+address nothing answers) that made the machine *look* online inside the
+namespace.
 
-```
-error: path '/nix/store/...-stdenv-linux-no-cc' is required,
-       but there is no substituter that can build it
-```
-
-The identical command, identical config, identical escrow, with a working
-network, substitutes from that same `file://` cache without complaint. So a
-naive air-gapped test fails for a reason that has nothing to do with whether the
-escrow is complete — which is a great way to spend an afternoon debugging the
-wrong thing.
-
-**The workaround, and why it is gone.** The original fix was a `dummy0`
-interface inside the namespace with a default route to an address that does not
-exist, which satisfies the heuristic while reaching nothing. But the heuristic
-in `src/nix/main.cc` is conditional:
-
-```c++
-if (!args.useNet) {
-    // FIXME: should check for command line overrides only.
-    if (!settings.getWorkerSettings().useSubstitutes.overridden)
-        settings.getWorkerSettings().useSubstitutes = false;
-}
-```
-
-It only disables substitution when `substitute` is *not* an explicit override.
-`prove.sh` sets `substitute = true`, so the dummy interface should be dead
-weight — and reading the source is not this repository's standard of evidence,
-so it was left in place behind an experiment.
-
-**The experiment ran. `E1 = CONFIRMED`, on Nix 2.34.7:**
+The fix that replaced it is one line of configuration:
 
 ```
-E0 BASELINE_OK   the legacy workarounds still pass, so the variants are attributable
-E1 CONFIRMED     no dummy interface        -> the acceptance test still passes
-E2 CONFIRMED     no manual input restore   -> Nix substitutes locked inputs itself
-E3 CONFIRMED     both dropped              -> what the tool now ships
+substitute = true      # in NIX_CONFIG, as an explicit override
 ```
 
-So the dummy interface is **off by default**, and `--dummy-interface` turns it
-back on. That flag is not vestigial politeness: the result is established for
-**Nix 2.34.7 and for no other version until tested**. The same CI run measured
-2.24.9 behaving differently enough elsewhere (§15) that assuming version
-independence here would be exactly the habit this file exists to break.
-`tests/experiments.sh` names both workarounds explicitly rather than relying on
-the defaults, so it stays re-runnable on any Nix and answers the question
-again rather than agreeing with itself.
+Reading `src/nix/main.cc`, the offline check only *lowers* `substitute` when it
+has not been set explicitly, so an explicit `true` survives it. Reading is not
+evidence in this repository, so it was measured: experiments `E1` and `E3`
+returned `CONFIRMED` on Nix **2.34.7 and 2.24.9**, in **every run from 6 to
+11**, each with a green `E0` baseline. The dummy interface was then removed in
+full rather than left switched off, and the experiments that established it were
+retired with it — §17a says why a measurement cannot be both the reason for a
+change and its acceptance test.
 
-**Setup is fail-closed now.** The `ip` commands ran unchecked under `set -uo
-pipefail`. On a kernel with no `dummy` module the interface silently never
-appeared, and the run came back `FAIL` with the reason *"build failed under
-origin blackout"* — an accusation against the escrow for a fault in the
-harness. Every isolation operation is now checked, and a failure produces a
-distinct `HARNESS_ERROR` verdict that `--expect-fail` refuses to accept as a
-negative control. Test `t14` forces it by putting a failing `ip` on `PATH`.
-
-The evidence records what the isolation actually achieved either way: every
-origin is probed both by name **and** by an address resolved *before* entering
-the namespace, and the by-address probes time out (`curl` exit 28, no route)
-rather than merely failing to resolve (`curl` exit 6).
-
-Related: glibc NSS reaches `nscd`/`nsncd` over a **unix socket**, which a
-network namespace does not isolate — so name resolution inside the namespace is
-still answered by the host until you also enter a mount namespace and put a
-tmpfs over `/run/nscd`. It cannot move bytes, but the evidence should not have
-to rely on that argument, so the test does both. NSS isolation is *graded*
-(`full`/`partial`), not fatal: the by-address probes are what carry the
-argument, so a partial result is reported rather than treated as a harness
-error.
+What replaces them as a standing check: with no flag left to disable, the
+default acceptance path **is** the configuration those experiments validated,
+and `t07`, `t15` and `t16` run it on every suite execution. If a future Nix
+reinstates the behaviour, they go red — which is what the dummy interface's
+`OFF by default` switch never could have done.
 
 ---
 
-## 8a. The flake-input restore proves the wrong thing
+## 8a. Retired: the flake-input restore proved the wrong thing
 
-Before evaluating offline, `prove.sh` copies the locked flake input paths out
-of the escrow into the test store. That was written on the assumption that a
-locked input is re-fetched from its origin unless the store already holds it.
+Also gone from the code, section number likewise kept.
 
-Nix 2.34.7 says otherwise. `Input::getAccessorUnchecked`:
+`prove.sh` used to copy the locked flake input paths out of the escrow into the
+test store before evaluating offline, on the assumption that a locked input is
+re-fetched from its origin unless the store already holds it.
+`Input::getAccessorUnchecked` says otherwise: for a final input with a
+`narHash` it computes the store path and calls `ensurePath`, so a configured
+substituter is enough — and the pre-copy was proving that *we* could put the
+inputs there, not that a stock consumer would get them. It answered an easier
+question than the one being asked.
 
-```c++
-/* The tree may already be in the Nix store, or it could be
-   substituted ... So check that. */
-if (isFinal() && getNarHash()) {
-    auto storePath = computeStorePath(store);
-    store.ensurePath(storePath);
-    ...
-}
-```
-
-The store path is computed from the lock's `narHash` and `ensurePath` will pull
-it from a configured substituter. So the manual copy is not needed — and worse,
-it changes what the test demonstrates:
-
-```
-what we want to prove              what the manual restore proves
----------------------------        ------------------------------
-consumer with flake.lock           our bash script
-  -> configured substituter          -> nix copy
-  -> gets the input                  -> Nix finds it already in the store
-```
-
-Those are different claims, and only the first one is about a real consumer.
-
-**`E2 = CONFIRMED` on Nix 2.34.7.** The manual copy is gone from the default
-path; `--manual-input-restore` keeps it as the diagnostic of escrow contents it
-was always good at. Same scope caveat as §8: measured on one Nix version, and
-`tests/experiments.sh` is how you find out about yours.
+`E2` and `E3` returned `CONFIRMED` on both Nix versions in every run from 6 to
+11. The manual copy is deleted rather than demoted: a diagnostic nobody runs is
+indistinguishable from dead code, and `t11` already asserts the real property —
+that every flake input, transitive ones included, was served from the escrow
+with its origin demonstrably unreachable.
 
 ---
 
 ## 9. Isolation mechanism, and what it does and does not prove
 
-`unshare -Ur --net --mount`, unprivileged. Inside: loopback, optionally the
-dummy device of §8, no route out, no NSS. Every one of those setup steps is
+`unshare -Ur --net --mount`, unprivileged. Inside: loopback, no route out, no
+NSS. (There was a dummy device here; §8 records why it is gone.) Every one of those setup steps is
 checked, and a failure is `HARNESS_ERROR`, not a verdict about the escrow. The
 build runs against a **local store**
 (`nix build --store <dir>`), which matters: a local store is served in-process,

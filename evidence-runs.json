@@ -11,16 +11,13 @@
     "Every run below is a GitHub Actions matrix over Nix 2.34.7 and 2.24.9,",
     "run cold: no NSE_TEST_REUSE, escrow/ created from nothing."
   ],
-
   "reviewReferenceCommit": {
     "commit": "6a6687c592858f398e8ebde6a7aaf72d4b98937c",
     "branch": "claude/nix-source-escrow-review-ubfo2h",
     "state": "frozen",
     "note": "The subject of the five review rounds. Has not moved and must not."
   },
-
   "ciBranch": "claude/ci-run-6a6687c",
-
   "runs": [
     {
       "run": 11,
@@ -30,18 +27,33 @@
       "evidenceRecordedByChanges": "documentation only: EVIDENCE.md, 1 file",
       "canonical": true,
       "results": {
-        "nix-2.34.7": { "unitShell": "102/0", "flakeCheck": "pass", "acceptance": "144/0",
-                        "experiments": "E0=BASELINE_OK E1=E2=E3=CONFIRMED" },
-        "nix-2.24.9": { "unitShell": "102/0", "flakeCheck": "pass", "acceptance": "144/0",
-                        "experiments": "E0=BASELINE_OK E1=E2=E3=CONFIRMED" }
+        "nix-2.34.7": {
+          "unitShell": "102/0",
+          "flakeCheck": "pass",
+          "acceptance": "144/0",
+          "experiments": "E0=BASELINE_OK E1=E2=E3=CONFIRMED"
+        },
+        "nix-2.24.9": {
+          "unitShell": "102/0",
+          "flakeCheck": "pass",
+          "acceptance": "144/0",
+          "experiments": "E0=BASELINE_OK E1=E2=E3=CONFIRMED"
+        }
       },
       "observables": {
-        "fodSources": 165, "covered": 163, "externalRecovery": 2,
-        "withPostfetch": 3, "onKnownForge": 38,
-        "derivations": 638, "objectsRealised": 874,
+        "fodSources": 165,
+        "covered": 163,
+        "externalRecovery": 2,
+        "withPostfetch": 3,
+        "onKnownForge": 38,
+        "derivations": 638,
+        "objectsRealised": 874,
         "closureSha256": "9243083eb0146c72362229c734fa78f6b3b1200eab9a8be06ccbbe8fe7daf8ec",
         "closureSha256IdenticalAcrossNixVersions": true,
-        "derivationDocument": { "nix-2.34.7": "envelope v4", "nix-2.24.9": "flat-map vabsent" }
+        "derivationDocument": {
+          "nix-2.34.7": "envelope v4",
+          "nix-2.24.9": "flat-map vabsent"
+        }
       },
       "note": "First run green on every step of both legs. The canonical Result section of EVIDENCE.md is this run's report."
     },
@@ -49,35 +61,70 @@
       "run": 10,
       "workflowRunId": 33877483051,
       "measuredCommit": "a5e293b0bef1ed1ac76ea867d8db52a0c2532731",
-      "results": { "nix-2.34.7": { "acceptance": "144/0" }, "nix-2.24.9": { "acceptance": "135/9" } },
+      "results": {
+        "nix-2.34.7": {
+          "acceptance": "144/0"
+        },
+        "nix-2.24.9": {
+          "acceptance": "135/9"
+        }
+      },
       "note": "The fixed probe named the outliers: 17 __structuredAttrs derivations carrying their attributes in env.__json."
     },
     {
       "run": 9,
       "workflowRunId": 33875967010,
       "measuredCommit": "3444c49aa20341d7e03f866564a77a6a26a10859",
-      "results": { "nix-2.34.7": { "acceptance": "144/0" }, "nix-2.24.9": { "acceptance": "135/9" } },
+      "results": {
+        "nix-2.34.7": {
+          "acceptance": "144/0"
+        },
+        "nix-2.24.9": {
+          "acceptance": "135/9"
+        }
+      },
       "note": "The probe added to diagnose the gap ran `nix derivation show` without -r and measured its own invocation."
     },
     {
       "run": 8,
       "workflowRunId": 33874789697,
       "measuredCommit": "db56ccd27067d8cd54cf1c897d54967b711fd7ec",
-      "results": { "nix-2.34.7": { "acceptance": "144/0" }, "nix-2.24.9": { "acceptance": "135/9" } },
+      "results": {
+        "nix-2.34.7": {
+          "acceptance": "144/0"
+        },
+        "nix-2.24.9": {
+          "acceptance": "135/9"
+        }
+      },
       "note": "First fully green leg. All nine remaining failures were the one derivation-attribute finding."
     },
     {
       "run": 7,
       "workflowRunId": 33873505790,
       "measuredCommit": "6e22737d09076858d7a3f9925415bdaf16f1fd55",
-      "results": { "nix-2.34.7": { "acceptance": "aborted in t20" }, "nix-2.24.9": { "acceptance": "aborted in t20" } },
+      "results": {
+        "nix-2.34.7": {
+          "acceptance": "aborted in t20"
+        },
+        "nix-2.24.9": {
+          "acceptance": "aborted in t20"
+        }
+      },
       "note": "Green t01-t19, then `find | head` + pipefail + set -e ended the suite before it could print a result."
     },
     {
       "run": 6,
       "workflowRunId": 33834279122,
       "measuredCommit": "b070162ea0ee4e9d0dda682cbda8df2b0f8efa61",
-      "results": { "nix-2.34.7": { "acceptance": "117/18" }, "nix-2.24.9": { "acceptance": "108/27" } },
+      "results": {
+        "nix-2.34.7": {
+          "acceptance": "117/18"
+        },
+        "nix-2.24.9": {
+          "acceptance": "108/27"
+        }
+      },
       "note": "Died in the binary tier. Root cause: `nix path-info --json` answers \"path\": null and exits 0, and the parser read keys[]."
     },
     {
@@ -92,5 +139,48 @@
       "canonical": false,
       "note": "The first real execution, 2026-09-03. A pre-fix DIAGNOSTIC BUNDLE, never canonical evidence: its binaryTier numbers were produced by the presence parser fixed in run 7's commit. Runs 1-4 are not indexed here; their identifiers were not recorded at the time."
     }
-  ]
+  ],
+  "retiredExperiments": {
+    "retiredAtCommit": "PENDING-THIS-COMMIT",
+    "note": [
+      "E0-E3 were retired together with the two mechanisms they toggled, because",
+      "the experiment's independent variable was those mechanisms. DESIGN.md 17a.",
+      "These are their final values, frozen as the justification for the deletion.",
+      "A measurement cannot be both the reason for a change and its acceptance test."
+    ],
+    "hypotheses": {
+      "E0": "control: both legacy workarounds ON. Baseline; if not green nothing below is attributable.",
+      "E1": "no dummy interface; substitute=true is expected to carry it",
+      "E2": "no manual flake-input restore; Nix must substitute locked inputs itself",
+      "E3": "both dropped: what the tool shipped as its default"
+    },
+    "finalOutcomes": {
+      "runs": [
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "nix-2.34.7": {
+        "E0": "BASELINE_OK",
+        "E1": "CONFIRMED",
+        "E2": "CONFIRMED",
+        "E3": "CONFIRMED"
+      },
+      "nix-2.24.9": {
+        "E0": "BASELINE_OK",
+        "E1": "CONFIRMED",
+        "E2": "CONFIRMED",
+        "E3": "CONFIRMED"
+      },
+      "consistentAcrossAllListedRuns": true,
+      "note": "Runs 7's acceptance suite aborted in t20, but the experiments step ran and reported these values on both legs."
+    },
+    "whatSurvives": {
+      "content": "E3's configuration is now the only one there is; t07, t15 and t16 run and assert it on every suite execution.",
+      "rules": "lib/experiment.sh keeps nse_experiment_outcome and NSE_EXPERIMENTS_SUMMARY_JQ, unit-tested by u10 and u17."
+    }
+  }
 }

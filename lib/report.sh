@@ -253,7 +253,6 @@ nse_report() {
              "ISOLATION_SETUP=" + (.isolationSetup // "not recorded") +
                (if ((.isolationSetupFailures // [])|length) > 0
                 then " (" + (.isolationSetupFailures|join(",")) + ")" else "" end),
-             "DUMMY_INTERFACE=" + (.dummyInterface // "not recorded"),
              "NSS_ISOLATION=" + .nssIsolation,
              "ORIGIN_HOSTS_PROVEN_UNREACHABLE=" + ((.originHostsProvenUnreachable|join(",")) | if .=="" then "none" else . end),
              "ORIGIN_HOSTS_REACHABLE=" + ((.originHostsReachable|join(",")) | if .=="" then "none" else . end),
@@ -272,7 +271,6 @@ nse_report() {
              "SUBSTITUTERS_ONLY_ESCROW=" + (.substitutersOnlyEscrow|tostring),
              "SUBSTITUTERS_AS_CONFIGURED=" + ((.substitutersAsExpected // .substitutersOnlyEscrow)|tostring),
              "EFFECTIVE_SUBSTITUTERS=" + .effectiveSubstituters,
-             "FLAKE_INPUT_RESTORE=" + (.flakeInputRestore // "not recorded"),
              "PROBE_METHOD=curl by name and by address pre-resolved outside the namespace",
              "OFFLINE_EVAL_PROBE=" + .offlineEvalProbe,
              "HTTP_FETCHES_IN_BUILD_LOG=\(.httpFetchesInBuildLog)",

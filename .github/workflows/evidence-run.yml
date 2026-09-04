@@ -47,16 +47,13 @@ jobs:
           # and the whole isolation harness is built on `unshare -Ur`.
           cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns || true
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          # The dummy interface workaround (DESIGN.md §8) needs the module.
-          # If it is absent, the run says HARNESS_ERROR out loud rather than
-          # blaming the escrow -- which is exactly what t14 exists to prove.
-          sudo modprobe dummy || echo "modprobe dummy FAILED"
           set +x
           echo "--- userns ---"
           unshare -Ur --net --mount true && echo "userns: ok" || echo "userns: DENIED"
-          echo "--- dummy inside a namespace ---"
-          unshare -Ur --net --mount -- ip link add dummy0 type dummy \
-            && echo "dummy: ok" || echo "dummy: unavailable"
+          # No `modprobe dummy` and no dummy0 probe any more: the dummy
+          # route-to-nowhere interface was removed in full (DESIGN.md §17a),
+          # so a kernel without the module is no longer a precondition of
+          # anything this suite does.
           echo "--- disk ---"
           df -h /
 
@@ -156,10 +153,6 @@ jobs:
         if: always()
         run: nix develop -c ./tests/run-tests.sh
 
-      - name: Experiments E0-E3
-        if: always()
-        run: nix develop -c ./tests/experiments.sh
-
       - name: The packaged executable
         if: always()
         run: |
@@ -174,7 +167,7 @@ jobs:
           E=escrow/evidence
           echo "expected HEAD: $(git rev-parse HEAD)"
           echo
-          for f in environment.json verify.json trust.json origin-independence.json experiments.json; do
+          for f in environment.json verify.json trust.json origin-independence.json; do
             [ -f "$E/$f" ] && echo "== $f ==" && jq -c '.provenance // "no provenance"' "$E/$f"
           done
           echo
@@ -186,11 +179,11 @@ jobs:
           jq -r '"toolRevision: \(.provenance.toolRevision)  dirty: \(.provenance.workingTreeDirty)  source: \(.provenance.revisionSource)"' \
             "$E/origin-independence.json" 2>/dev/null || true
           echo
-          echo "== experiments =="
-          jq -r '.experiments[] | "\(.id) \(.outcome)  result=\(.result // "not run")  \(.outcomeReason)"' \
-            "$E/experiments.json" 2>/dev/null || echo "(no experiments.json)"
-          jq -r '"conclusion: dummyStillNeeded=\(.conclusion.dummyInterfaceStillNeeded) manualRestoreStillNeeded=\(.conclusion.manualInputRestoreStillNeeded) combinedSafe=\(.conclusion.combinedDefaultSafe)"' \
-            "$E/experiments.json" 2>/dev/null || true
+          echo "== the discovery cardinalities DESIGN.md §17 pre-registered =="
+          grep -E '^(FOD_SOURCES|COVERED|EXTERNAL_RECOVERY)=|^  (WITH_POSTFETCH|ON_KNOWN_FORGE)=|^DERIVATION_DOCUMENT=' \
+            "$E/report.txt" 2>/dev/null || true
+          jq -r '"closureSha256: \(.provenance.closureSha256)"' \
+            "$E/origin-independence.json" 2>/dev/null || true
           echo
           echo "== report.txt =="
           cat "$E/report.txt" 2>/dev/null || echo "(no report.txt)"
