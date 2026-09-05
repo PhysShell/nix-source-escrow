@@ -1,0 +1,19 @@
+# B. judge replacement  (C2)
+
+The candidate leaves the policy and the graph alone, and replaces its own
+copy of the judge with `echo PASS; exit 0`.
+
+Required trace:
+
+    JUDGE_MISMATCH
+    TRUSTED_JUDGE_SHA = <expected>
+    rejectedBy == [JUDGE_MISMATCH]     -- and nothing else
+
+The replacement judge is never executed. It is hashed and reported.
+
+Note what happens WITHOUT the boundary: the head workflow calls the head
+judge, which prints PASS, and every other check in this corpus is green
+because none of them runs.
+
+CONTROL: base against base is ACCEPTED, so this red comes from the judge
+swap and from nothing else -- rejectedBy has exactly one entry.

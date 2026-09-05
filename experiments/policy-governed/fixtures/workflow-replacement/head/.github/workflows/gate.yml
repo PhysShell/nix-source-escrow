@@ -1,0 +1,7 @@
+name: escrow gate
+on: [push]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "gate skipped"

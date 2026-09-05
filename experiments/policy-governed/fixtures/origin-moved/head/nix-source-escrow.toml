@@ -1,0 +1,41 @@
+# TRUSTED BASE POLICY for the adversarial corpus.
+#
+# This is the policy the gate ENFORCES. A candidate may propose a different
+# one; that proposal is previewed and governs nothing.
+#
+# IT MUST ACCEPT ITS OWN BASE STATE. Every fixture below is gated base-against-
+# base as a CONTROL before the mutation is gated, because a corpus whose
+# baseline is already red proves nothing about the mutation: every specimen
+# would be rejected with the guard under test deleted.
+schemaVersion = 1
+
+[defaults]
+coverage = "auto"
+retention = "while-referenced"
+admission = "normal"
+
+[governance]
+judgeOnMismatch = "reject"
+workflowOnMismatch = "reject"
+policyDependencyCochange = "reject"
+
+[[rule]]
+id = "r-github-required"
+originHost = "github.com"
+coverage = "required"
+admission = "normal"
+
+[[rule]]
+id = "r-gnu-auto"
+originHost = "ftp.gnu.org"
+coverage = "auto"
+admission = "normal"
+
+[[rule]]
+id = "r-unnamed-origin-quarantine"
+# A plain fetch from a host this policy does not name is admitted only under
+# quarantine. `kind` is the weakest selector (weight 2), so any rule that names
+# a real origin (weight 6) outranks it -- which is why the two rules above make
+# the base state clean rather than the default doing it.
+kind = "fetchurl"
+admission = "quarantine"

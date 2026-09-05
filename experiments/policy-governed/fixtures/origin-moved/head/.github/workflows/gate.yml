@@ -1,0 +1,8 @@
+name: escrow gate
+on: [push]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./bin/nse-pg gate --trusted-root base --candidate-root .

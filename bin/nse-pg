@@ -33,6 +33,8 @@ export NSE_ROOT
 . "$NSE_ROOT/lib/pg-digest.sh"
 # shellcheck source=../lib/pg-policy.sh
 . "$NSE_ROOT/lib/pg-policy.sh"
+# shellcheck source=../lib/pg-gate.sh
+. "$NSE_ROOT/lib/pg-gate.sh"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -55,6 +57,9 @@ commands:
   policy-load     read a policy TOML into JSON. Anything this reader does not
                   fully understand is a POLICY_PARSE_ERROR, never an ignored
                   line. PREREG.md §13.
+  gate            render a verdict on an UNTRUSTED candidate. Policy and judge
+                  come from the trusted root; the graph, and only the graph,
+                  comes from the candidate root. PREREG.md §8, §10.
   decide          FACTS + POLICY -> DECISIONS, with matched-rule provenance and
                   the trusted policy revision on every decision.
 
@@ -63,6 +68,10 @@ options:
                   (default: path:<repo>/experiments/policy-governed/fixtures/qualification)
   --facts FILE    facts document (digest, decide)
   --policy FILE   policy TOML (policy-load) or loaded policy JSON (decide)
+  --trusted-root D    the root the policy and the judge are read from (gate)
+  --candidate-root D  the root the dependency graph is read from (gate)
+  --trusted-rev R     revision of the trusted root, if git cannot say
+  --candidate-rev R   revision of the candidate root, if git cannot say
   --policy-rev R  the revision the policy was read from; recorded on every
                   decision, so a verdict says WHICH policy produced it
   --base FILE     base digests (digest-compare)
@@ -89,6 +98,10 @@ pg_out=""
 pg_facts=""
 pg_policy=""
 pg_policy_rev="UNKNOWN"
+pg_trusted_root=""
+pg_candidate_root=""
+pg_trusted_rev=""
+pg_candidate_rev=""
 pg_base=""
 pg_head=""
 while [ $# -gt 0 ]; do
@@ -103,6 +116,14 @@ while [ $# -gt 0 ]; do
              pg_policy=$(nse_abspath "$2"); shift 2 ;;
     --policy-rev) [ $# -ge 2 ] || { printf 'nse-pg: --policy-rev needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_policy_rev=$2; shift 2 ;;
+    --trusted-root) [ $# -ge 2 ] || { printf 'nse-pg: --trusted-root needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_trusted_root=$(nse_abspath "$2"); shift 2 ;;
+    --candidate-root) [ $# -ge 2 ] || { printf 'nse-pg: --candidate-root needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_candidate_root=$(nse_abspath "$2"); shift 2 ;;
+    --trusted-rev) [ $# -ge 2 ] || { printf 'nse-pg: --trusted-rev needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_trusted_rev=$2; shift 2 ;;
+    --candidate-rev) [ $# -ge 2 ] || { printf 'nse-pg: --candidate-rev needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_candidate_rev=$2; shift 2 ;;
     --base)  [ $# -ge 2 ] || { printf 'nse-pg: --base needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_base=$(nse_abspath "$2"); shift 2 ;;
     --head)  [ $# -ge 2 ] || { printf 'nse-pg: --head needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
@@ -157,6 +178,17 @@ case $cmd in
     esac
     if [ -n "$pg_out" ]; then nse_pg_decide "$pg_facts" "$pg_loaded" | nse_pg_write_json "$pg_out"
     else nse_pg_decide "$pg_facts" "$pg_loaded"; fi
+    ;;
+  gate)
+    nse_require_cmd jq awk
+    { [ -n "$pg_trusted_root" ] && [ -n "$pg_candidate_root" ]; } \
+      || { printf 'nse-pg: gate needs --trusted-root DIR and --candidate-root DIR\n' >&2
+           printf 'nse-pg: they are two INPUTS on purpose. A gate that derives one from the\n' >&2
+           printf 'nse-pg: other has one root, and the candidate can edit it.\n' >&2
+           exit "$NSE_PG_USAGE"; }
+    : "${pg_out:=$pg_candidate_root/gate-report.json}"
+    nse_pg_gate "$pg_trusted_root" "$pg_candidate_root" "$pg_out" \
+                "$pg_trusted_rev" "$pg_candidate_rev"
     ;;
   *) printf 'nse-pg: unknown command %s\n' "$cmd" >&2; usage; exit "$NSE_PG_USAGE" ;;
 esac

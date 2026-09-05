@@ -29,6 +29,8 @@ trap 'chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 . "$ROOT/lib/pg-digest.sh"
 # shellcheck source=../lib/pg-policy.sh
 . "$ROOT/lib/pg-policy.sh"
+# shellcheck source=../lib/pg-gate.sh
+. "$ROOT/lib/pg-gate.sh"
 
 pass=0; fail=0; failed_names=()
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
@@ -631,6 +633,160 @@ POL_RQ=$(printf '%s\n' '[defaults]' 'coverage = "required"' | policy_of)
 DR=$(decide_with "$POL_RQ" "$SEED")
 assert_eq "p25.3 required preserves even what the plan never reached" "true" \
   "$(jq -r '.decisions[] | select(.sourceId | test("hello")) | .mustPreserve | tostring' "$DR")"
+
+# ---------------------------------------------------------------------------
+# THE ADVERSARIAL CORPUS. PREREG.md §11.
+#
+# Five proposals, each with a base state and a head state. Not unit tests of a
+# function -- proposals, gated the way a real one would be.
+#
+# EVERY fixture is gated base-against-base FIRST. That control is not
+# ceremony: without it, a corpus whose baseline happens to be red proves
+# nothing at all, because every specimen would be rejected with the guard under
+# test deleted. The first version of this corpus had exactly that defect --
+# all five were REJECTED, and three of them for a reason that had nothing to do
+# with what they were built to demonstrate.
+# ---------------------------------------------------------------------------
+CORPUS=$ROOT/experiments/policy-governed/fixtures
+gate_run() {  # $1 fixture, $2 candidate side (base|head) -> report path
+  local out; out=$TMP/gate-$1-$2.json
+  ( nse_pg_gate "$CORPUS/$1/base" "$CORPUS/$1/$2" "$out" "base-$1" "$2-$1" ) >/dev/null 2>&1 || true
+  printf '%s\n' "$out"
+}
+
+head_ "p26  the control: every fixture accepts its own base state"
+for fx in policy-self-exemption judge-replacement workflow-replacement \
+          origin-moved policy-dependency-cochange; do
+  r=$(gate_run "$fx" base)
+  assert_eq "p26 control $fx: base gated against base is ACCEPTED" \
+    "ACCEPTED" "$(jq -r .verdict "$r")"
+done
+
+head_ "p27  A. policy self-exemption -- C1"
+A=$(gate_run policy-self-exemption head)
+assert_eq "p27.1 the policy change is seen and named" "YES" "$(jq -r .POLICY_CHANGED "$A")"
+assert_eq "p27.2 the ENFORCED policy is the BASE one" "base-policy-self-exemption" \
+  "$(jq -r .ENFORCED_POLICY_COMMIT "$A")"
+assert_ne "p27.3 and the proposed one is recorded separately, not merged in" \
+  "$(jq -r .ENFORCED_POLICY_COMMIT "$A")" "$(jq -r .PROPOSED_POLICY_COMMIT "$A")"
+assert_eq "p27.4 REJECTED, and by the base policy quarantining the added source" "REJECTED" \
+  "$(jq -r .verdict "$A")"
+assert_ne "p27.5 rejectedBy names QUARANTINED_DEPENDENCY" "0" \
+  "$(jq -r '[.rejectedBy[] | select(. == "QUARANTINED_DEPENDENCY")] | length' "$A")"
+# THE C1 EVIDENCE. The exemption the candidate wrote is REAL -- it would have
+# let this dependency through -- and it did not, because it is not the policy
+# that decided.
+assert_eq "p27.6 under the ENFORCED policy the added source is quarantined" \
+  "quarantine" \
+  "$(jq -r '.decisions.decisions[] | select(.sourceId|test("vendorpkg")) | .effective.admission' "$A")"
+assert_eq "p27.7 under the PROPOSED policy it would have been admitted normally" \
+  "normal ignore" \
+  "$(jq -r '.proposedPolicyPreview.wouldChangeVerdictsFor[] | select(.sourceId|test("vendorpkg")) | [.proposed.admission, .proposed.coverage] | join(" ")' "$A")"
+assert_eq "p27.8 the preview says in the document that it decided nothing" "1" \
+  "$(jq -r '[.proposedPolicyPreview.note | select(test("PREVIEW ONLY"))] | length' "$A")"
+
+head_ "p28  B. judge replacement -- C2"
+B=$(gate_run judge-replacement head)
+assert_eq "p28.1 JUDGE_MISMATCH, and it is the ONLY reason for the rejection" \
+  '["JUDGE_MISMATCH"]' "$(jq -c .rejectedBy "$B")"
+assert_ne "p28.2 the trusted judge sha is recorded" "" "$(jq -r .judge.trustedSha256 "$B")"
+assert_ne "p28.3 and differs from the candidate one" \
+  "$(jq -r .judge.trustedSha256 "$B")" "$(jq -r .judge.candidateSha256 "$B")"
+assert_eq "p28.4 the report states, as a field, that the candidate judge was not executed" \
+  "false" "$(jq -r .judge.candidateJudgeExecuted "$B")"
+assert_eq "p28.5 and it names WHICH file differs, not merely that one does" \
+  "bin/nse-pg" \
+  "$(jq -r '.findings[] | select(.id=="JUDGE_MISMATCH") | .differingFiles[].path' "$B")"
+# The candidate judge says PASS. Nothing in the verdict came from it.
+assert_ne "p28.6 the malicious judge really would have said PASS" "0" \
+  "$(grep -c 'echo PASS' "$CORPUS/judge-replacement/head/bin/nse-pg" || true)"
+assert_eq "p28.7 and the verdict is REJECTED all the same" "REJECTED" "$(jq -r .verdict "$B")"
+# DELETING the judge must not be quieter than editing it.
+rm -rf "$TMP/nojudge"; cp -r "$CORPUS/judge-replacement/head" "$TMP/nojudge"
+rm -f "$TMP/nojudge/bin/nse-pg"
+Bd=$TMP/gate-nojudge.json
+( nse_pg_gate "$CORPUS/judge-replacement/base" "$TMP/nojudge" "$Bd" base head ) >/dev/null 2>&1 || true
+assert_eq "p28.8 DELETING the judge is a mismatch too, not an absence that passes" \
+  '["JUDGE_MISMATCH"]' "$(jq -c .rejectedBy "$Bd")"
+
+head_ "p29  C. workflow replacement"
+C=$(gate_run workflow-replacement head)
+assert_eq "p29.1 WORKFLOW_MISMATCH, and nothing else" \
+  '["WORKFLOW_MISMATCH"]' "$(jq -c .rejectedBy "$C")"
+assert_ne "p29.2 the trusted workflow identity is recorded" \
+  "$(jq -r .workflow.trustedIdentity "$C")" "$(jq -r .workflow.candidateIdentity "$C")"
+assert_ne "p29.3 the finding says out loud that this is a check of the MODEL" "0" \
+  "$(jq -r '[.findings[] | select(.id=="WORKFLOW_MISMATCH") | select(.detail | test("check of the MODEL"))] | length' "$C")"
+# ADDING a workflow must move the identity. Comparing each root only against
+# its own file list would let a candidate add one and keep a matching identity.
+rm -rf "$TMP/addwf"; cp -r "$CORPUS/workflow-replacement/base" "$TMP/addwf"
+printf 'name: extra\non: [push]\njobs: {}\n' > "$TMP/addwf/.github/workflows/extra.yml"
+Cw=$TMP/gate-addwf.json
+( nse_pg_gate "$CORPUS/workflow-replacement/base" "$TMP/addwf" "$Cw" base head ) >/dev/null 2>&1 || true
+assert_eq "p29.4 ADDING a workflow is a mismatch too" \
+  '["WORKFLOW_MISMATCH"]' "$(jq -c .rejectedBy "$Cw")"
+
+head_ "p30  D. same content, new origin -- C3"
+D=$(gate_run origin-moved head)
+assert_eq "p30.1 the three registered tokens, together" \
+  "UNCHANGED CHANGED ORIGIN_MOVED_OR_FACTS_CHANGED" \
+  "$(jq -r '[.digests.dependencyContent, .digests.policyFacts, .digests.shape] | join(" ")' "$D")"
+assert_ne "p30.2 ORIGIN_MOVED is reported as a finding" "0" \
+  "$(jq -r '[.findings[] | select(.id == "ORIGIN_MOVED")] | length' "$D")"
+assert_eq "p30.3 policy RE-EVALUATED: the same policy reached a different decision" \
+  "CHANGED" "$(jq -r .digests.effectiveDecision "$D")"
+assert_eq "p30.4 the dependency lost the rule that used to cover it" \
+  "r-unnamed-origin-quarantine" \
+  "$(jq -r '.decisions.decisions[] | select(.sourceId|test("nix-pills")) | .matchedRuleIds | join(",")' "$D")"
+assert_eq "p30.5 and is rejected, on the strength of a fact a content hash cannot carry" \
+  '["QUARANTINED_DEPENDENCY"]' "$(jq -c .rejectedBy "$D")"
+# The bytes really are identical. If they were not, this fixture would be
+# demonstrating something much less interesting.
+assert_eq "p30.6 the moved dependency keeps its expectedHash, byte for byte" \
+  "$(jq -r '.dependencies[0].contentIdentity.expectedHash' "$CORPUS/origin-moved/base/facts.json")" \
+  "$(jq -r '.dependencies[0].contentIdentity.expectedHash' "$CORPUS/origin-moved/head/facts.json")"
+assert_eq "p30.7 and its storePath" \
+  "$(jq -r '.dependencies[0].contentIdentity.storePath' "$CORPUS/origin-moved/base/facts.json")" \
+  "$(jq -r '.dependencies[0].contentIdentity.storePath' "$CORPUS/origin-moved/head/facts.json")"
+
+head_ "p31  E. policy and dependency in one proposal"
+E=$(gate_run policy-dependency-cochange head)
+assert_eq "p31.1 POLICY_DEPENDENCY_COCHANGE, and it is the ONLY rejection" \
+  '["POLICY_DEPENDENCY_COCHANGE"]' "$(jq -c .rejectedBy "$E")"
+assert_eq "p31.2 the added dependency is named" "1" \
+  "$(jq -r '[.findings[] | select(.id=="POLICY_DEPENDENCY_COCHANGE") | .affected[]] | length' "$E")"
+assert_eq "p31.3 and so is the verdict the weakening would have moved it to" \
+  "required ignore" \
+  "$(jq -r '.findings[] | select(.id=="POLICY_DEPENDENCY_COCHANGE") | .affected[] | [.enforced.coverage, .proposed.coverage] | join(" ")' "$E")"
+# THE SPECIMEN TEST. If this fixture were red for some other reason, deleting
+# the cochange guard would leave it red and the guard would be untested.
+assert_eq "p31.4 the added dependency is, on its own, perfectly acceptable to the base policy" \
+  "accepted" \
+  "$(jq -r '.decisions.decisions[] | select(.sourceId|test("newlib")) | .acceptance' "$E")"
+# A policy change with NO affected added dependency is NOT a cochange.
+rm -rf "$TMP/polonly"; cp -r "$CORPUS/policy-dependency-cochange/head" "$TMP/polonly"
+cp "$CORPUS/policy-dependency-cochange/base/facts.json" "$TMP/polonly/facts.json"
+Ep=$TMP/gate-polonly.json
+( nse_pg_gate "$CORPUS/policy-dependency-cochange/base" "$TMP/polonly" "$Ep" base head ) >/dev/null 2>&1 || true
+assert_eq "p31.5 a policy change ALONE is not a cochange -- the guard is narrow, not eager" \
+  "[]" "$(jq -c .rejectedBy "$Ep")"
+assert_eq "p31.6 and the policy change is still reported" "YES" "$(jq -r .POLICY_CHANGED "$Ep")"
+
+head_ "p32  the gate refuses rather than improvising"
+# A trusted root with no policy must not fall back to the candidate copy --
+# which is the exact substitution this whole design exists to prevent.
+rm -rf "$TMP/nopolicy"; cp -r "$CORPUS/judge-replacement/base" "$TMP/nopolicy"
+rm -f "$TMP/nopolicy/nix-source-escrow.toml"
+rc=0; ( nse_pg_gate "$TMP/nopolicy" "$CORPUS/judge-replacement/head" "$TMP/x.json" a b ) >/dev/null 2>"$TMP/nopolicy.err" || rc=$?
+assert_eq "p32.1 a trusted root with no policy is a CHECKER_ERROR (3), not a lenient pass" "3" "$rc"
+assert_ne "p32.2 and the refusal names the substitution it is refusing" "0" \
+  "$(grep -c 'candidate' "$TMP/nopolicy.err" || true)"
+# No base facts -> POLICY_DEPENDENCY_COCHANGE cannot be evaluated at all, and
+# an unevaluable guard must not read as a guard that passed.
+rm -rf "$TMP/nobase"; cp -r "$CORPUS/judge-replacement/base" "$TMP/nobase"
+rm -f "$TMP/nobase/facts.json"
+rc=0; ( nse_pg_gate "$TMP/nobase" "$CORPUS/judge-replacement/head" "$TMP/y.json" a b ) >/dev/null 2>/dev/null || rc=$?
+assert_eq "p32.3 no base graph is a CHECKER_ERROR, not an empty set of added dependencies" "3" "$rc"
 
 # ---------------------------------------------------------------------------
 head_ "p10  the new executable is actually linted, and the lint mirror cannot drift"

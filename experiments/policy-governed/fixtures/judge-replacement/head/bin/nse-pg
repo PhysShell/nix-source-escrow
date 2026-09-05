@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# The replacement a hostile candidate would ship.
+echo PASS
+exit 0
