@@ -67,12 +67,17 @@ NSE_PG_CREDENTIAL_ENV="NSE_EXTRA_NIX_CONFIG AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_
 # of a scratch run has any business holding a credential.
 NSE_PG_SCRUBBED=""
 nse_pg_scrub_credentials() {
-  local name
+  # `var`, not `name`. u14 in the closed line suite forbids localising any name
+  # stdenv exports, because `local` does NOT clear an inherited export
+  # attribute -- and a large value later assigned to such a local travels in
+  # the environment of every child until an exec dies E2BIG. That killed a
+  # whole origin-independence run once. The guard caught this file twice.
+  local var
   NSE_PG_SCRUBBED=""
-  for name in $NSE_PG_CREDENTIAL_ENV; do
-    if [ -n "${!name:-}" ]; then
-      NSE_PG_SCRUBBED="$NSE_PG_SCRUBBED $name"
-      unset "$name"
+  for var in $NSE_PG_CREDENTIAL_ENV; do
+    if [ -n "${!var:-}" ]; then
+      NSE_PG_SCRUBBED="$NSE_PG_SCRUBBED $var"
+      unset "$var"
     fi
   done
   NSE_PG_SCRUBBED=${NSE_PG_SCRUBBED# }
@@ -80,12 +85,12 @@ nse_pg_scrub_credentials() {
 
 nse_pg_scratch_preflight() {
   local scratch=$1 store_url=$2 guarantee=$3
-  local set_creds="" name
+  local set_creds="" var
 
   # Which credential-shaped variables are actually SET and non-empty. Named,
   # not counted: a run refused for "1 credential present" tells nobody which.
-  for name in $NSE_PG_CREDENTIAL_ENV; do
-    if [ -n "${!name:-}" ]; then set_creds="$set_creds $name"; fi
+  for var in $NSE_PG_CREDENTIAL_ENV; do
+    if [ -n "${!var:-}" ]; then set_creds="$set_creds $var"; fi
   done
   set_creds=${set_creds# }
 
