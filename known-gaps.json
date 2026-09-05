@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "kind": "known-gaps",
+  "note": [
+    "The single current-state registry. EVIDENCE.md renders the OPEN entries and",
+    "nothing else; closed history lives here, not in the present tense.",
+    "Before this file, one document was simultaneously the current state, a run",
+    "journal, a postmortem, a design note and a graveyard of retired statements,",
+    "and it had begun to contradict itself: gap 12 still said the test carried a",
+    "dummy-interface workaround that DESIGN.md \u00a718 records as deleted.",
+    "u20 checks this file and EVIDENCE.md against each other."
+  ],
+  "retiredMechanisms": [
+    {
+      "name": "dummy interface",
+      "patterns": [
+        "dummy interface",
+        "dummy route",
+        "dummy0"
+      ],
+      "retiredBy": "913df97007250e8c55bcae700036d856a8c1679c"
+    },
+    {
+      "name": "manual flake-input restore",
+      "patterns": [
+        "manual input restore",
+        "manual flake-input restore",
+        "--manual-input-restore"
+      ],
+      "retiredBy": "913df97007250e8c55bcae700036d856a8c1679c"
+    },
+    {
+      "name": "E0-E3 experiments",
+      "patterns": [
+        "unrun experiment",
+        "tests/experiments.sh"
+      ],
+      "retiredBy": "913df97007250e8c55bcae700036d856a8c1679c"
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap-01",
+      "claim": "FULL_AIRGAP_REBUILD is not demonstrated and is not implied: the escrow holds prebuilt binaries from cache.nixos.org.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-02",
+      "claim": "161 of 166 discovered sources are not preserved; they are nixpkgs bootstrap sources whose consumers arrive prebuilt.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-03",
+      "claim": "The guarantee is per-installable and per-system; other outputs or systems need their own run.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-04",
+      "claim": "Eval-time builtins.fetchTarball/fetchGit/fetchurl cannot be enumerated statically; they are covered only behaviourally by the offline probe.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-05",
+      "claim": "Dynamic derivations and floating content-addressed outputs are reported, not modelled.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-06",
+      "claim": "IFD is probed on this evaluation path only, and this fixture has none.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-07",
+      "claim": "The flake-input walk is validated against the four cases in this fixture, not against every lock shape.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-08",
+      "claim": "No Software Heritage bridge: the recovery model is written down and not implemented.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-09",
+      "claim": "postFetch replay is unsolved: recovering upstream bytes does not reconstruct a transformed FOD.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-10",
+      "claim": "RECOVER means 'the origin, or the escrow'. There is no repair path when both are gone.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-11",
+      "claim": "The acceptance test needs unprivileged user namespaces and will not run where they are denied.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-12",
+      "claim": "The test carries a behavioural workaround for Nix: a dummy route-to-nowhere interface.",
+      "status": "CLOSED",
+      "openedAt": "v0.1.0",
+      "closedAt": "2026-09-04",
+      "closedBy": "913df97007250e8c55bcae700036d856a8c1679c",
+      "evidenceRef": "DESIGN.md \u00a78, \u00a717a-\u00a717d; run 18 @ a4f07ea",
+      "closeNote": "The mechanism was deleted, not disabled, and every pre-registered observable held."
+    },
+    {
+      "id": "gap-13",
+      "claim": "Trust results are measured on Nix 2.34.7 with this daemon configuration only.",
+      "status": "SUPERSEDED",
+      "openedAt": "v0.1.0",
+      "supersededBy": "gap-13a",
+      "closedAt": "2026-09-05",
+      "evidenceRef": "runs 11-25 measure the trust probe on 2.34.7 AND 2.24.9",
+      "closeNote": "The version half is no longer true. The daemon-configuration half survives as gap-13a."
+    },
+    {
+      "id": "gap-13a",
+      "claim": "Trust results are measured against one daemon configuration; a differently configured daemon may accept or deny differently.",
+      "status": "OPEN",
+      "openedAt": "2026-09-05"
+    },
+    {
+      "id": "gap-14",
+      "claim": "The escrow is addressed by URL, but the non-file path is exercised only against a local throwaway HTTP server, never a real authenticated Attic/S3.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-15",
+      "claim": "preserve requires network: it is the step that fetches from origins while they still exist.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-16",
+      "claim": "The acceptance test attributes sources to the escrow by elimination, not by observing which store served each byte.",
+      "status": "OPEN",
+      "openedAt": "v0.1.0"
+    },
+    {
+      "id": "gap-17",
+      "claim": "E1 and E2 are unrun experiments, not results.",
+      "status": "CLOSED",
+      "openedAt": "second review",
+      "closedAt": "2026-09-04",
+      "closedBy": "913df97007250e8c55bcae700036d856a8c1679c",
+      "evidenceRef": "DESIGN.md \u00a717a-\u00a717d; CONFIRMED on both Nix versions in runs 6-11, then the mechanisms removed",
+      "closeNote": "Run, confirmed on both versions, and retired with their subject."
+    },
+    {
+      "id": "gap-18",
+      "claim": "SOURCE_ORIGIN_INDEPENDENCE models 'your approved binary cache is still up'; it does not prove that cache will exist.",
+      "status": "OPEN",
+      "openedAt": "third review"
+    },
+    {
+      "id": "gap-19",
+      "claim": "The Nix-dependent suite has never been run on this code.",
+      "status": "CLOSED",
+      "openedAt": "fourth review",
+      "closedAt": "2026-09-04",
+      "closedBy": "a4f07ea366a921b81f03565a3e032b69be5f94f5",
+      "evidenceRef": "run 18: 146/0 on both Nix versions, cold",
+      "closeNote": "Run cold on both versions; the canonical Result block is that run's report."
+    },
+    {
+      "id": "gap-20",
+      "claim": "The acceptance test cannot reach a remote escrow by construction; a proof replica is materialised locally first.",
+      "status": "OPEN",
+      "openedAt": "third review"
+    },
+    {
+      "id": "gap-21",
+      "claim": "MODE_UNSUPPORTED has exactly one trigger; buildability of notProvidedPaths is left to the build.",
+      "status": "OPEN",
+      "openedAt": "fourth review"
+    },
+    {
+      "id": "gap-22",
+      "claim": "The binary replica's contents are faithful to the named tier; its reachability is still simulated and the replay audit only measures file:// stores.",
+      "status": "OPEN",
+      "openedAt": "fourth review"
+    },
+    {
+      "id": "gap-23",
+      "claim": "One added fixed-output source raised OBJECTS_REALISED by two, not the one predicted in DESIGN.md \u00a720. Why is not established.",
+      "status": "OPEN",
+      "openedAt": "2026-09-05"
+    }
+  ]
+}

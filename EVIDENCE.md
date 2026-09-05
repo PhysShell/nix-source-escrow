@@ -472,7 +472,7 @@ tool.
 
 Two of these were fixed by argument alone and are therefore **not yet
 demonstrated**: `E1` and `E2` are hypotheses with an experiment attached, not
-results. See KNOWN_GAPS 17.
+results. See `gap-17` in [`known-gaps.json`](known-gaps.json), now closed.
 
 ---
 
@@ -530,128 +530,45 @@ produced by the parser described in the first row.
 
 ## KNOWN_GAPS
 
-Honest list. None of these are hidden behind a green result.
+The **open** gaps, rendered from [`known-gaps.json`](known-gaps.json), which is
+the single registry. Closed and superseded entries live there with the commit
+that closed them and the evidence; they are deliberately not repeated here in
+the present tense.
 
-**Scope of the guarantee**
+This used to be a hand-maintained numbered list, and by twenty-two entries it
+had begun to disagree with the rest of the file: gap 12 still described a
+dummy-interface workaround several hundred lines below §18 recording that the
+mechanism had been deleted. Two competing claims on one evidence surface, both
+present-tense. `u20` now refuses that: it checks ids, statuses, closing
+evidence, successor links, that this table lists **exactly** the open ids, and
+that no open gap describes a mechanism the registry lists as retired. `u20.8a`
+proves that last check can still fail, by flipping gap-12 back to OPEN.
 
-1. `FULL_AIRGAP_REBUILD` is **not** demonstrated and is not implied. The escrow
-   contains prebuilt binaries that came from `cache.nixos.org` with its
-   signatures. Rebuilding from source with no trusted binary substituter is a
-   different claim needing the whole bootstrap source corpus and, per the trust
-   table, signing.
-2. **161 of 165 discovered sources are not preserved.** They are the nixpkgs
-   bootstrap sources, never fetched because their consumers arrive as prebuilt
-   binaries. Reported explicitly as `SOURCES_DISCOVERED_NOT_REQUIRED_BY_PLAN`.
-   Mirroring them is `nixpkgs-swh`'s job. This is unchanged by the guarantee
-   modes: `SOURCE_ORIGIN_INDEPENDENCE` narrows what is *escrowed*, not what is
-   *discovered*.
-3. The guarantee is per-installable and per-system. Other outputs of the same
-   flake, other systems, or a different `nixpkgs.config` produce a different
-   graph and need their own run.
+| id | claim | opened |
+|---|---|---|
+| `gap-01` | FULL_AIRGAP_REBUILD is not demonstrated and is not implied: the escrow holds prebuilt binaries from cache.nixos.org. | v0.1.0 |
+| `gap-02` | 161 of 166 discovered sources are not preserved; they are nixpkgs bootstrap sources whose consumers arrive prebuilt. | v0.1.0 |
+| `gap-03` | The guarantee is per-installable and per-system; other outputs or systems need their own run. | v0.1.0 |
+| `gap-04` | Eval-time builtins.fetchTarball/fetchGit/fetchurl cannot be enumerated statically; they are covered only behaviourally by the offline probe. | v0.1.0 |
+| `gap-05` | Dynamic derivations and floating content-addressed outputs are reported, not modelled. | v0.1.0 |
+| `gap-06` | IFD is probed on this evaluation path only, and this fixture has none. | v0.1.0 |
+| `gap-07` | The flake-input walk is validated against the four cases in this fixture, not against every lock shape. | v0.1.0 |
+| `gap-08` | No Software Heritage bridge: the recovery model is written down and not implemented. | v0.1.0 |
+| `gap-09` | postFetch replay is unsolved: recovering upstream bytes does not reconstruct a transformed FOD. | v0.1.0 |
+| `gap-10` | RECOVER means 'the origin, or the escrow'. There is no repair path when both are gone. | v0.1.0 |
+| `gap-11` | The acceptance test needs unprivileged user namespaces and will not run where they are denied. | v0.1.0 |
+| `gap-13a` | Trust results are measured against one daemon configuration; a differently configured daemon may accept or deny differently. | 2026-09-05 |
+| `gap-14` | The escrow is addressed by URL, but the non-file path is exercised only against a local throwaway HTTP server, never a real authenticated Attic/S3. | v0.1.0 |
+| `gap-15` | preserve requires network: it is the step that fetches from origins while they still exist. | v0.1.0 |
+| `gap-16` | The acceptance test attributes sources to the escrow by elimination, not by observing which store served each byte. | v0.1.0 |
+| `gap-18` | SOURCE_ORIGIN_INDEPENDENCE models 'your approved binary cache is still up'; it does not prove that cache will exist. | third review |
+| `gap-20` | The acceptance test cannot reach a remote escrow by construction; a proof replica is materialised locally first. | third review |
+| `gap-21` | MODE_UNSUPPORTED has exactly one trigger; buildability of notProvidedPaths is left to the build. | fourth review |
+| `gap-22` | The binary replica's contents are faithful to the named tier; its reachability is still simulated and the replay audit only measures file:// stores. | fourth review |
+| `gap-23` | One added fixed-output source raised OBJECTS_REALISED by two, not the one predicted in DESIGN.md §20. Why is not established. | 2026-09-05 |
 
-**Discovery**
-
-4. Eval-time `builtins.fetchTarball` / `fetchGit` / `fetchurl` with a pinned
-   hash **cannot** be enumerated statically — not "not yet implemented",
-   impossible at this layer. They are covered only *behaviourally*, by the
-   offline evaluation probe. What that probe establishes is precise, and worth
-   stating exactly: every eval-time fetch on this path was satisfiable with no
-   network and an empty cache — either because there are none, or because the
-   fetched object was already in the escrow. What it does **not** do is
-   enumerate them, so they never appear in the manifest as individual records
-   with an origin and a hash. A per-source model for them would need an
-   evaluation-tracing hook Nix does not currently expose. The fixture contains
-   none, so the failing branch of the probe is untested against a real case.
-5. Dynamic derivations and floating content-addressed outputs are reported
-   `UNSUPPORTED` (the output path is read from `env.<outputName>`, which they do
-   not have). The fixture contains none, so the `UNSUPPORTED` branch is asserted
-   to be zero but never observed non-zero in a real graph.
-6. IFD is probed on this evaluation path only, and this fixture has none. A
-   project with IFD would report `ESCROW_DISCOVERY_COMPLETE=PARTIAL`; that
-   branch is untested against a real IFD project.
-7. The flake-input walk is validated against the four cases in the fixture
-   (nested, renamed node, `follows`, shared store path). Deeper pathologies —
-   `follows` chains several levels down, inputs overridden at the CLI — are
-   handled by construction but not exercised by a test.
-
-**Recovery**
-
-8. **No Software Heritage bridge.** The recovery model — exact `nar-sha256` /
-   `checksum-*` ExtID lookup first, revision/origin recovery next,
-   reconstruction only on a miss — is researched and written down
-   (`DESIGN.md` §1) but **not implemented and not validated**. Not one SWH
-   request has ever been made from this code. No claim of SWH recoverability
-   is made here.
-9. **`postFetch` replay is unsolved** (`DESIGN.md` §3). Recovering the upstream
-   artefact from any archive does not reconstruct a `fetchzip`-class output; you
-   must replay unpack + `stripRoot` + the caller's shell in the same `stdenv`
-   and land on the same NAR hash. It is the *fallback* path for item 8, not a
-   precondition for it — an earlier version of this list said otherwise, and
-   `DESIGN.md` §3 now explains why that was too broad.
-10. `RECOVER` in v0.1 means "the origin, or the escrow". There is no repair path
-    for the two `EXTERNAL_RECOVERY` sources beyond the escrow itself and the
-    manual `nix-store --add-fixed` procedure nixpkgs documents.
-
-**Mechanism**
-
-11. The acceptance test needs unprivileged user namespaces. It will not run
-    where those are disabled.
-12. The test still carries a **behavioural workaround for Nix 2.34.7**: a dummy
-    interface with a route to nowhere, because Nix disables all substituters —
-    `file://` ones included — when it decides there is no Internet
-    (`DESIGN.md` §8). `substitute = true` is now set explicitly and should make
-    it unnecessary, but that is a reading of the Nix sources, not a run. The
-    workaround does not weaken the isolation — the by-address probes prove it,
-    and `t12` proves the verdict does not depend on trusting it.
-13. Trust results are measured on Nix 2.34.7 with this daemon configuration.
-    `t09` will fail loudly if that changes, which is the intent.
-14. The escrow is addressed by URL. `t16` exercises the non-file path against a
-    real HTTP binary cache, so the presence/metadata/materialisation code has
-    been run for something other than a directory — but **`s3://`, `ssh-ng://`
-    and a real Attic or Artifactory deployment have not**, and neither has any
-    credentialed access (`NSE_EXTRA_NIX_CONFIG` is the hook, untested). There
-    is still no replication, GC policy or access control.
-15. `preserve` requires network — it is the step that fetches from origins while
-    they still exist. Only `verify` and the acceptance test are offline.
-16. The acceptance test proves the *escrow* served the sources by elimination
-    (empty store, no route, escrow-only substituters). It does not parse
-    per-object provenance out of the Nix log.
-
-**The second guarantee**
-
-17. **`E1` and `E2` are unrun experiments, not results.** `substitute = true`
-    should retire the dummy interface, and Nix should substitute locked flake
-    inputs without our manual copy. Both are read out of the Nix sources; both
-    default to the old behaviour until `tests/experiments.sh` says otherwise on
-    a real Nix.
-18. `SOURCE_ORIGIN_INDEPENDENCE` models "your approved binary cache is still
-    up" with a **local replica filled from that cache**, because the harness
-    cuts all egress rather than filtering it selectively. The replica's
-    *contents* are now faithful; its *reachability* is still simulated. Same
-    missing piece as gap 20: a version that keeps origins blocked while the
-    real approved cache stays reachable needs selective egress.
-20. **The acceptance test cannot reach a remote escrow, by construction.** A
-    non-local escrow is materialised into a local proof replica before
-    isolation (`DESIGN.md` §13), which establishes that the durable store held
-    every object and that the set replays offline — and establishes nothing
-    about that store being reachable during a blackout. A selective harness
-    (`nftables`/`pasta` allowlist permitting only the escrow endpoint) would
-    prove the stronger thing and is not built.
-21. `MODE_UNSUPPORTED` has exactly one trigger: an escrow preserved for one
-    guarantee and proven against another. Whether the acceptance build can
-    actually produce everything `closure.notProvidedPaths` names is left to the
-    build, and a failure there surfaces as an ordinary `FAIL` — with
-    `notProvidedPaths` in the evidence as the first place to look. That is
-    deliberate: predicting buildability from a signature was the previous
-    version of this gap and it was wrong.
-22. The **contents** of the binary replica are now faithful to the named tier;
-    its **reachability** is still simulated, and the replay audit only measures
-    `file://` stores. Both are honest today only because a materialised proof
-    replica is always local — a future non-file replay target would need the
-    audit extended rather than assumed.
-19. Closed. The Nix-dependent suite has been run cold on both Nix versions and
-    is 144/0 on each (run 11, `783bc5a`), and the canonical Result section is
-    that run's report rather than the v0.1.0 one.
+**Closed and superseded:** `gap-12`, `gap-13`, `gap-17`, `gap-19`. See
+`known-gaps.json` for what closed each one and where the evidence is.
 
 ---
 

@@ -664,6 +664,77 @@ assert_eq "u18.6 a recursive-hash prefix is stripped, the algorithm survives" \
 unset -f sri
 
 # ---------------------------------------------------------------------------
+head_ "u20  the gap registry is consistent, and cannot describe a deleted mechanism"
+# EVIDENCE.md was simultaneously the current state, a run journal, a postmortem,
+# a design note and a graveyard of retired statements. Past a thousand lines a
+# document like that starts to contradict itself, and this one did: KNOWN_GAP 12
+# still said the test carried a dummy-interface workaround, several hundred
+# lines below §18 recording that the mechanism had been deleted. Two competing
+# claims on the same evidence surface, both in the present tense.
+#
+# known-gaps.json is now the single registry. These checks are what make it a
+# registry rather than a second place to be inconsistent.
+GAPS=$ROOT/known-gaps.json
+assert_eq "u20.1 the registry is valid JSON" \
+  "ok" "$(jq -e . "$GAPS" >/dev/null 2>&1 && echo ok || echo bad)"
+assert_eq "u20.2 gap ids are unique" \
+  "0" "$(jq -r '([.gaps[].id] | length) - ([.gaps[].id] | unique | length)' "$GAPS")"
+assert_eq "u20.3 every status is from the documented set" \
+  "0" "$(jq -r '[.gaps[] | select(.status | IN("OPEN","CLOSED","SUPERSEDED") | not)] | length' "$GAPS")"
+assert_eq "u20.4 every gap records when it was opened" \
+  "0" "$(jq -r '[.gaps[] | select((.openedAt // "") == "")] | length' "$GAPS")"
+# A closed gap without closing evidence is a rumour with a status field.
+assert_eq "u20.5 a CLOSED gap names the commit that closed it and its evidence" \
+  "0" "$(jq -r '[.gaps[] | select(.status == "CLOSED")
+                | select((.closedBy // "") == "" or (.evidenceRef // "") == "")] | length' "$GAPS")"
+assert_eq "u20.6 a SUPERSEDED gap names its successor, and that successor exists" \
+  "0" "$(jq -r '([.gaps[].id]) as $ids
+                | [.gaps[] | select(.status == "SUPERSEDED") as $g
+                   | select(($g.supersededBy // "") == ""
+                            or ($ids | index($g.supersededBy) | not))] | length' "$GAPS")"
+assert_eq "u20.7 an OPEN gap does not carry closing metadata" \
+  "0" "$(jq -r '[.gaps[] | select(.status == "OPEN")
+                | select(has("closedBy") or has("closedAt") or has("supersededBy"))] | length' "$GAPS")"
+# THE ONE THAT WOULD HAVE CAUGHT GAP 12. An open gap may not describe a
+# mechanism this repository has deleted.
+# NOTE: no `2>/dev/null` and no `|| true` here. The first version of this check
+# had both, and its jq referred to `.patterns` from inside a string context --
+# so it errored on every run, produced nothing, and PASSED. A check silenced by
+# its own error handling is the eighth instrument in this project able to pass
+# by accident, and it was written to catch exactly that class. u20.8a proves it
+# can still see an offender.
+gap_offenders() {
+  jq -r --slurpfile g "$1" '
+    $g[0] as $doc
+    | $doc.retiredMechanisms[] as $m
+    | $doc.gaps[] | select(.status == "OPEN") as $gap
+    | ($gap.claim | ascii_downcase) as $c
+    # $pat is BOUND. contains(ascii_downcase) evaluates its argument with `.`
+    # set to the INPUT of contains -- that is, $c -- so it asks whether the
+    # claim contains itself, which is true for every claim ever written. Third
+    # time the jq "what is dot inside an argument" trap bit this one test, and
+    # the first two were silent. (No apostrophes in here: this is a
+    # single-quoted shell string.)
+    | $m.patterns[] as $pat
+    | select($c | contains($pat | ascii_downcase))
+    | "\($gap.id) still describes: \($m.name)"' <<< 'null'
+}
+offenders=$(gap_offenders "$GAPS")
+assert_eq "u20.8 no OPEN gap describes a mechanism that has been deleted" "" "$offenders"
+# Prove the check can fail: flip the closed dummy-interface gap back to OPEN.
+jq '(.gaps[] | select(.id == "gap-12") | .status) = "OPEN"
+    | (.gaps[] | select(.id == "gap-12")) |= del(.closedBy, .closedAt)' \
+  "$GAPS" > "$TMP/gaps-regressed.json"
+assert_ne "u20.8a and it really does catch one -- this is not a check that only agrees" \
+  "" "$(gap_offenders "$TMP/gaps-regressed.json")"
+# And the rendered document must list exactly the open ids -- no more, no fewer.
+# shellcheck disable=SC2016  # a literal backtick in the markdown table, not a subshell
+rendered=$(grep -oE '^\| `gap-[0-9a-z]+`' "$ROOT/EVIDENCE.md" | tr -d '|` ' | LC_ALL=C sort)
+declared=$(jq -r '.gaps[] | select(.status == "OPEN") | .id' "$GAPS" | LC_ALL=C sort)
+assert_eq "u20.9 EVIDENCE.md renders exactly the OPEN gaps, nothing stale" \
+  "$declared" "$rendered"
+
+# ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"
 # A comment may name the old bug; an emitted line may not. Anchoring at the
 # start of a non-comment line is what separates the two.
