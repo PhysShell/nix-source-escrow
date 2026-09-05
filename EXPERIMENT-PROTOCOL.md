@@ -250,6 +250,27 @@ run does not happen at all.
 
 ---
 
+## 7b. A fixture built from the system's own materials inherits its defaults
+
+When a test builds its specimen out of artefacts the system under test produced,
+the specimen arrives carrying whatever that system attaches by default —
+signatures, permissions, cached metadata, provenance. Those defaults are not
+neutral, and a specimen that carries one of them may satisfy the test for a
+reason that has nothing to do with the property being measured.
+
+So state what the fixture must **not** contain, and assert that too:
+
+> A precondition that has never been observed to fail is not a precondition.
+
+Remove the property rather than assuming its absence — strip the field, clear
+the flag, start from empty — and assert the removal worked before the first
+behavioural claim runs. "There probably aren't any" is not a measurement.
+
+The tell: a negative leg passes, and the assertion that would explain why also
+fails in the same run.
+
+---
+
 ## 8. Scope the conclusion to what was run
 
 Name the envelope in the sentence that states the result: this fixture, these
@@ -276,6 +297,9 @@ Before trusting a check:
 - [ ] Its subject was actually present to be measured. If the check asserts an
       ABSENCE, something separate establishes that the thing existed to be
       absent from.
+- [ ] Its fixture does not carry a default of the surrounding system that would
+      satisfy the check on its own. What it must NOT contain is asserted, not
+      assumed.
 
 Before an intervention:
 

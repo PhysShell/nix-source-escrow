@@ -979,37 +979,55 @@ head_ "t24  an untrusted tier signature is a TRUST refusal, and a key makes it w
 # must produce SIGNATURE_UNTRUSTED naming what Nix said -- not an absence, not
 # an outage, and not a silently weakened trust policy.
 #
-# THE DESIGN IS PAIRED, and that is the whole point after t23. Legs B and C use
-# the SAME tier and the SAME object and differ in exactly one variable: whether
-# the tier's public key is trusted. B must refuse and C must succeed. A test
-# that only ever refuses proves nothing -- it is satisfied by a tool that
-# refuses everything, which would be a worse tool, not a better one.
+# THE DESIGN IS PAIRED. Legs B and C use the SAME tier and the SAME object and
+# differ in exactly one variable: whether the tier's public key is trusted. A
+# test that only ever refuses is satisfied by a tool that refuses everything,
+# which would be a worse tool, not a better one.
+#
+# RUN 30 IS WHY THE FIXTURE IS BUILT THE WAY IT IS. The first version copied the
+# victim out of the HOST store, and every object there that had been substituted
+# from cache.nixos.org still carried that cache's signature in the store
+# database. nix copy propagates it, so the "unsigned" tier arrived with six Sig:
+# lines by a key that is trusted BY DEFAULT. Legs A and B were accepted for a
+# reason that had nothing to do with the test, and leg C succeeded for a reason
+# that had nothing to do with the key. t24.4 is what said so.
 if ! command -v nix >/dev/null 2>&1; then
   echo "  skipped (no nix)"
 else
   T24=$WORK/t24; rm_store "$T24"; mkdir -p "$T24"
+  NIXCMD="experimental-features = nix-command flakes"
+  # A signature-free copy of the escrow cache, built by REMOVING the Sig: lines
+  # rather than by hoping there are none. This is the fixture; it is not what is
+  # under test, and it must be known rather than assumed.
+  STRIP=$T24/stripped
+  command cp -a "$ESCROW/cache" "$STRIP"
+  find "$STRIP" -maxdepth 1 -name '*.narinfo' -exec sed -i '/^Sig: /d' {} +
+  stray=$(grep -l '^Sig: ' "$STRIP"/*.narinfo 2>/dev/null | wc -l)
+  assert_eq "t24.1 the fixture cache really has no signatures left" "0" "$stray"
   # The vehicle must be INPUT-ADDRESSED. A content-addressed object is accepted
   # on its hash regardless of signature, so choosing one would make the whole
-  # test vacuous -- and vacuous-by-construction is the failure mode this suite
-  # has now hit nine times. A narinfo with no CA: line is input-addressed.
+  # test vacuous -- which is the failure mode this suite has now hit nine times.
+  # A narinfo with no CA: line is input-addressed.
   jq -r '(.sources[]? | select(.storePath != null) | .storePath),
          (.flakeInputs[]?.storePath)' "$ESCROW/manifest.json" \
     | sort -u > "$T24/sources.txt"
+  # Listed into a file first. A `find | sort` feeding a loop that breaks early
+  # leaves sort writing into a closed pipe, which is how a test in this suite
+  # once took the whole run down with it.
+  find "$STRIP" -maxdepth 1 -name '*.narinfo' | LC_ALL=C sort > "$T24/narinfos.txt"
   SIGVICTIM=""
   while IFS= read -r narinfo; do
     sp=$(awk '/^StorePath: /{print substr($0,12); exit}' "$narinfo")
     case $sp in *.drv) continue ;; esac
     grep -q '^CA: ' "$narinfo" && continue
     if grep -qxF "$sp" "$T24/sources.txt"; then continue; fi
-    [ -e "$sp" ] || continue
     SIGVICTIM=$sp; break
-  done < <(find "$ESCROW/cache" -maxdepth 1 -name '*.narinfo' | sort)
+  done < "$T24/narinfos.txt"
   if [ -z "$SIGVICTIM" ]; then
-    bad "t24.1 an input-addressed tier candidate exists to sign" \
+    bad "t24.2 an input-addressed tier candidate exists to sign" \
         "every non-source narinfo in the escrow is content-addressed"
   else
-    ok "t24.1 an input-addressed tier candidate exists to sign"
-    NIXCMD="experimental-features = nix-command flakes"
+    ok "t24.2 an input-addressed tier candidate exists to sign"
     SK=$T24/tier.sec; PK=""
     if NIX_CONFIG="$NIXCMD" nix key generate-secret --key-name nse-t24-tier-1 \
          >"$SK" 2>"$T24/keygen.log" && [ -s "$SK" ]; then
@@ -1017,26 +1035,33 @@ else
       PK=$(NIX_CONFIG="$NIXCMD" nix key convert-secret-to-public <"$SK" 2>/dev/null || true)
     fi
     if [ -z "$PK" ]; then
-      bad "t24.2 a signing key for the tier can be generated" \
-          "see $T24/keygen.log"
+      bad "t24.3 a signing key for the tier can be generated" "see $T24/keygen.log"
     else
-      ok "t24.2 a signing key for the tier can be generated"
-      # Two tiers, same object: one unsigned, one signed by a key nobody trusts
-      # yet. Both are built with --no-check-sigs because building the FIXTURE is
-      # not what is under test; what the TOOL does when reading a tier is.
+      ok "t24.3 a signing key for the tier can be generated"
+      # Two tiers, same object, built from the SAME signature-free source: one
+      # left unsigned, one signed by a key nobody trusts yet. --no-check-sigs is
+      # used to BUILD the fixtures, because building them is not what is under
+      # test; what the tool does when READING a tier is.
       TIER_U=$T24/tier-unsigned; TIER_S=$T24/tier-signed
-      NIX_CONFIG="$NIXCMD" nix copy --to "file://$TIER_U" --no-check-sigs \
-        "$SIGVICTIM" >"$T24/build-unsigned.log" 2>&1 || true
+      NIX_CONFIG="$NIXCMD" nix copy --from "file://$STRIP" --to "file://$TIER_U" \
+        --no-check-sigs "$SIGVICTIM" >"$T24/build-unsigned.log" 2>&1 || true
       NIX_CONFIG="$NIXCMD
-secret-key-files = $SK" nix copy --to "file://$TIER_S" --no-check-sigs \
-        "$SIGVICTIM" >"$T24/build-signed.log" 2>&1 || true
-      # PRECONDITION, not decoration. If the signed tier is not actually signed,
-      # leg C would pass for a reason with no connection to the key and leg B
-      # would refuse for the same reason as leg A. Establish it or stop.
-      sigs=$(grep -l '^Sig: ' "$TIER_S"/*.narinfo 2>/dev/null | wc -l)
-      unsigned_sigs=$(grep -l '^Sig: ' "$TIER_U"/*.narinfo 2>/dev/null | wc -l)
-      assert_ne "t24.3 the signed tier really carries signatures" "0" "$sigs"
-      assert_eq "t24.4 and the unsigned tier really carries none" "0" "$unsigned_sigs"
+secret-key-files = $SK" nix copy --from "file://$STRIP" --to "file://$TIER_S" \
+        --no-check-sigs "$SIGVICTIM" >"$T24/build-signed.log" 2>&1 || true
+      # PRECONDITIONS WITH TEETH. If the signed tier is not signed, leg C would
+      # pass for a reason unconnected to the key; if the unsigned tier IS signed,
+      # legs A and B are accepted for a reason unconnected to the policy. That
+      # is exactly what happened in run 30 and it is why these come first.
+      s_sigs=$(grep -l '^Sig: ' "$TIER_S"/*.narinfo 2>/dev/null | wc -l)
+      u_sigs=$(grep -l '^Sig: ' "$TIER_U"/*.narinfo 2>/dev/null | wc -l)
+      u_infos=$(ls -1 "$TIER_U"/*.narinfo 2>/dev/null | wc -l)
+      assert_ne "t24.4 the signed tier really carries signatures" "0" "$s_sigs"
+      assert_eq "t24.5 and the unsigned tier really carries none" "0" "$u_sigs"
+      assert_ne "t24.6 the unsigned tier is not simply empty" "0" "$u_infos"
+      # Every store path the unsigned tier actually holds, so a refusal can be
+      # checked against what was really on offer.
+      awk '/^StorePath: /{print substr($0,12)}' "$TIER_U"/*.narinfo 2>/dev/null \
+        | LC_ALL=C sort -u > "$T24/tier-u-paths.txt"
 
       run_tier() {  # $1 dir, $2 tier url, $3 log, $4 extra nix config
         rm_store "$1"; mkdir -p "$1"
@@ -1052,27 +1077,28 @@ secret-key-files = $SK" nix copy --to "file://$TIER_S" --no-check-sigs \
 
       # LEG A -- an unsigned input-addressed object from a tier.
       arc=$(run_tier "$T24/run-unsigned" "file://$TIER_U" "$T24/run-unsigned.log" "")
-      assert_ne "t24.5 an unsigned tier object is refused, not accepted" "0" "$arc"
-      assert_ne "t24.6 and the refusal is SIGNATURE_UNTRUSTED" "0" \
+      assert_ne "t24.7 an unsigned tier object is refused, not accepted" "0" "$arc"
+      assert_ne "t24.8 and the refusal is SIGNATURE_UNTRUSTED" "0" \
         "$(grep -c 'SIGNATURE_UNTRUSTED' "$T24/run-unsigned.log" || true)"
-      assert_ne "t24.7 it names the object the tier would not supply" "0" \
-        "$(grep -c -- "$SIGVICTIM" "$T24/run-unsigned.log" || true)"
-      assert_ne "t24.8 and quotes what Nix actually said about the signature" "0" \
+      # It must name something the tier was actually offering, not any old path.
+      assert_ne "t24.9 it names an object the tier really holds" "0" \
+        "$(grep -oE '/nix/store/[a-z0-9]{32}-[^ "]*' "$T24/run-unsigned.log" \
+           | LC_ALL=C sort -u | LC_ALL=C comm -12 - "$T24/tier-u-paths.txt" | wc -l)"
+      assert_ne "t24.10 and quotes what Nix actually said about the signature" "0" \
         "$(grep -ciE 'lacks a signature|untrusted|not trusted' "$T24/run-unsigned.log" || true)"
       # A trust refusal must never be laundered into an absence: the object was
       # not missing, and nothing may record it as something the tier lacks.
-      assert_eq "t24.9 the object is never recorded as revised-absent" "0" \
-        "$(grep -c -- "$SIGVICTIM" "$T24/run-unsigned/work/tier-revised-absent.txt" 2>/dev/null || true)"
-      assert_eq "t24.10 and no manifest is written from a refused materialisation" \
+      assert_eq "t24.11 nothing is recorded as revised-absent" "0" \
+        "$(wc -l < "$T24/run-unsigned/work/tier-revised-absent.txt" 2>/dev/null || echo 0)"
+      assert_eq "t24.12 and no manifest is written from a refused materialisation" \
         "absent" "$([ -f "$T24/run-unsigned/manifest.json" ] && echo present || echo absent)"
 
       # LEG B -- the SAME object, signed, key not trusted. One variable.
       brc=$(run_tier "$T24/run-untrusted" "file://$TIER_S" "$T24/run-untrusted.log" "")
-      assert_ne "t24.11 a signature by an unknown key is refused too" "0" "$brc"
-      assert_ne "t24.12 also as SIGNATURE_UNTRUSTED" "0" \
+      assert_ne "t24.13 a signature by an unknown key is refused too" "0" "$brc"
+      assert_ne "t24.14 also as SIGNATURE_UNTRUSTED" "0" \
         "$(grep -c 'SIGNATURE_UNTRUSTED' "$T24/run-untrusted.log" || true)"
-      # And it did not quietly help itself to --no-check-sigs to get past it.
-      assert_eq "t24.13 the tier copy never disables signature checking to proceed" "0" \
+      assert_eq "t24.15 the tier copy never disables signature checking to proceed" "0" \
         "$(grep -c 'copy --from .* --no-check-sigs' "$T24/run-untrusted.log" || true)"
 
       # LEG C -- POSITIVE CONTROL. Same tier, same object, key supplied. The
@@ -1081,13 +1107,13 @@ secret-key-files = $SK" nix copy --to "file://$TIER_S" --no-check-sigs \
       DEFKEY="cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
       crc=$(run_tier "$T24/run-trusted" "file://$TIER_S" "$T24/run-trusted.log" \
               "trusted-public-keys = $PK $DEFKEY")
-      assert_eq "t24.14 positive control: with the key supplied, preserve succeeds" "0" "$crc"
-      assert_ne "t24.15 and the object MATERIALISES into the replica" "0" \
+      assert_eq "t24.16 positive control: with the key supplied, preserve succeeds" "0" "$crc"
+      assert_ne "t24.17 and the object MATERIALISES into the replica" "0" \
         "$(grep -c -- "$SIGVICTIM" "$T24/run-trusted/work/replica-set.txt" 2>/dev/null || true)"
-      assert_eq "t24.16 the successful leg records no copy failures" "0" \
+      assert_eq "t24.18 the successful leg records no copy failures" "0" \
         "$(wc -l < "$T24/run-trusted/work/tier-copy-failures.tsv" 2>/dev/null || echo 0)"
       # The key was a credential like any other, and t23's rule applies to it.
-      assert_eq "t24.17 the supplied key is not serialised into the evidence" "" \
+      assert_eq "t24.19 the supplied key is not serialised into the evidence" "" \
         "$( { find "$T24/run-trusted/evidence" -type f 2>/dev/null
               ls -1 "$T24/run-trusted"/manifest.json 2>/dev/null
               find "$T24/run-trusted/work" -name '*.log' -type f 2>/dev/null

@@ -20,6 +20,51 @@
   "ciBranch": "claude/ci-run-6a6687c",
   "runs": [
     {
+      "run": 30,
+      "workflowRunId": 33967783163,
+      "measuredCommit": "d299c63c04375c5b3db3f5ce26762c92f7801bae",
+      "kind": "first execution of the binary-tier signature policy (t24)",
+      "verdict": "185/7 on both legs -- all seven reds in t24, and the FIXTURE was the fault",
+      "results": {
+        "nix-2.34.7": {
+          "unitShell": "155/0",
+          "flakeCheck": "pass",
+          "acceptance": "185/7"
+        },
+        "nix-2.24.9": {
+          "unitShell": "155/0",
+          "flakeCheck": "pass",
+          "acceptance": "185/7"
+        }
+      },
+      "preRegistrationClassification": {
+        "section": "DESIGN.md 21",
+        "ruleAsWritten": "leg A or B green -> the tier copy is not checking signatures at all; the POLICY is failing and the fix is in lib/preserve.sh, never in t24.",
+        "applied": false,
+        "whyNot": "t24.4 went red in the same run: the 'unsigned' tier carried 6 Sig: lines. The fixture copied the victim out of the HOST store, where objects substituted from cache.nixos.org keep that cache's signature in the store database, and nix copy propagates it. The tier was therefore signed by a key trusted BY DEFAULT, so leg A and leg B were accepted for a reason unconnected to the policy and leg C succeeded for a reason unconnected to the key.",
+        "correctClassification": "FIXTURE DEFECT -- the section 21 case 't24.3 or t24.4 RED -> that is a fixture problem too'. The classification as written assumed the fixture was what it claimed."
+      },
+      "whatIsEstablished": {
+        "aboutTheSignaturePolicy": "NOTHING. Run 30 neither showed that the tier path checks signatures nor that it does not. A green leg A is consistent with both.",
+        "green": [
+          "t23.1-t23.6 all green again",
+          "t03.9 green",
+          "t22.5a-d green",
+          "every section 20 observable unchanged and identical across versions",
+          "unit-shell 155/0 including the new u24 static guards"
+        ]
+      },
+      "vacuousPasses": [
+        "t24.7 named the object in a log from a SUCCESSFUL run",
+        "t24.9 found nothing in tier-revised-absent.txt because nothing was refused"
+      ],
+      "correction": [
+        "Both tiers are now built from a signature-free copy of the escrow cache, made by",
+        "REMOVING Sig: lines rather than assuming there are none. Four preconditions",
+        "(t24.1, t24.4, t24.5, t24.6) run before any behavioural claim. DESIGN.md 21a."
+      ]
+    },
+    {
       "run": 29,
       "workflowRunId": 33967105123,
       "measuredCommit": "66e3d5834005dfc92c3ac095b4f006a046fb34d1",

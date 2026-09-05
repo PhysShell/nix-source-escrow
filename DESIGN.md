@@ -2006,3 +2006,71 @@ before it is trusted.
 Nothing about a real authenticated tier. The keys are generated locally, the
 tier is a `file://` directory, and no credential crosses a network. `gap-22`
 stays open, and so does the S3/Attic item.
+
+### 21a. Run 30: the fixture was signed by a key everyone trusts
+
+Run 30 (`d299c63`), both Nix versions: **unit-shell 155/0, acceptance 185/7**,
+all seven reds in `t24`, and `t23.1`–`t23.6`, `t03.9` and every §20 observable
+green and unchanged.
+
+```
+PASS t24.3 the signed tier really carries signatures
+FAIL t24.4 and the unsigned tier really carries none    expected '0', got '6'
+FAIL t24.5 an unsigned tier object is refused, not accepted
+FAIL t24.6 and the refusal is SIGNATURE_UNTRUSTED
+FAIL t24.8 and quotes what Nix actually said about the signature
+FAIL t24.10 and no manifest is written from a refused materialisation
+FAIL t24.11 a signature by an unknown key is refused too
+FAIL t24.12 also as SIGNATURE_UNTRUSTED
+```
+
+§21 classified "leg A or B green" as **the policy failing, fix `preserve.sh`,
+never the test.** That classification is wrong here, and the thing that says so
+is `t24.4`: *the unsigned tier carried six `Sig:` lines.*
+
+The fixture copied the victim out of the **host store**, where every object that
+had been substituted from `cache.nixos.org` still carries that cache's signature
+in the store database. `nix copy` propagates it. So the "unsigned" tier arrived
+signed by a key that is **trusted by default**, and:
+
+- leg A was accepted because the object was legitimately trusted — correct
+  behaviour for what the fixture actually was;
+- leg B was accepted for the same reason, my generated key never mattered;
+- **leg C succeeded for a reason unconnected to the key**, so the one assertion
+  the paired design rests on was as hollow as the rest.
+
+`t24.10` and `t24.12` are downstream of that: a run that does not refuse writes a
+manifest and quotes no signature error. `t24.7` and `t24.9` *passed* — vacuously,
+on a successful run.
+
+**So the policy is still untested.** Run 30 did not show the tier path checks
+signatures and did not show it doesn't. A green leg A is consistent with both,
+which is precisely why the pre-registration's classification could not be
+applied as written: it assumed the fixture was what it claimed.
+
+#### The correction
+
+The tiers are now built from a **signature-free copy of the escrow cache**, made
+by *removing* the `Sig:` lines rather than by hoping there are none, with both
+tiers copied from that same source — one left alone, one signed by the generated
+key. `t24.1` asserts the stripped cache has no signatures left, `t24.5` that the
+unsigned tier has none, `t24.6` that it is not simply empty, and `t24.4` that the
+signed one does. Four preconditions before a single behavioural claim, because
+this is now the second consecutive test in this project whose fixture, not whose
+subject, was the thing that was wrong.
+
+`t24.9` no longer requires the refusal to name one specific path — Nix may refuse
+on any member of the victim's closure — but requires the named path to be one the
+tier **actually holds**, checked against its narinfos.
+
+Also fixed: a `find | sort` feeding a loop that breaks early left `sort` writing
+into a closed pipe (`sort: write failed: Broken pipe` in the run 30 log). Harmless
+inside process substitution, and the same shape that once took an entire run down
+from inside a pipeline. It writes to a file first now.
+
+#### The rule this adds
+
+> A precondition that has never been observed to fail is not a precondition. When
+> a test's fixture is built out of the system under test's own materials, state
+> what the fixture must NOT contain and assert that too — the defaults of the
+> surrounding system are not neutral.
