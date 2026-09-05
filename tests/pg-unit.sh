@@ -25,6 +25,8 @@ trap 'chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 . "$ROOT/lib/pg-common.sh"
 # shellcheck source=../lib/pg-facts.sh
 . "$ROOT/lib/pg-facts.sh"
+# shellcheck source=../lib/pg-digest.sh
+. "$ROOT/lib/pg-digest.sh"
 
 pass=0; fail=0; failed_names=()
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
@@ -261,6 +263,169 @@ h3=$(printf '{"a":2,"b":2}' | nse_pg_sha256_canonical)
 assert_ne "p09.2 red control: a changed VALUE does move it" "$h1" "$h3"
 assert_eq "p09.3 the digest is a sha256, not a truncation of one" \
   "64" "$(printf '%s' "$h1" | wc -c)"
+
+# ---------------------------------------------------------------------------
+# TYPED DIGESTS. PREREG.md §12.
+#
+# The table below is the pre-registration, executed. Every digest has BOTH a
+# mutation that must move it AND a mutation that must not, because a digest
+# with only the first is a digest that might be hashing the whole document,
+# and a digest with only the second might be a constant.
+# ---------------------------------------------------------------------------
+SEED=$ROOT/tests/pg-fixtures/facts-seed.json
+
+# mutate <jq-program>  ->  path to a mutated copy of the seed
+mut() { local f; f=$(mktemp "$TMP/facts.XXXXXX.json"); jq "$1" "$SEED" > "$f"; printf '%s\n' "$f"; }
+dig() { nse_pg_digest_of "$1" "$2"; }
+DEP=nse_pg_dep_content_projection
+FACTS=nse_pg_policy_facts_projection
+SRC=nse_pg_flake_source_projection
+DEC=nse_pg_decision_projection
+
+base_dep=$(dig "$SEED" "$DEP")
+base_facts=$(dig "$SEED" "$FACTS")
+base_src=$(dig "$SEED" "$SRC")
+
+head_ "p11  the seed is the shape a recorded document has, not a convenient one"
+# EXPERIMENT-PROTOCOL.md §1, the "fixture the world never produces" shape. A
+# synthetic seed is permitted (PREREG.md §11.1) and is a MECHANISM test only --
+# but it still has to validate against the schema of a real document, or the
+# mechanism is tested against a document that will never arrive.
+assert_eq "p11.1 the seed declares itself synthetic, in the file" \
+  "SYNTHETIC" "$(jq -r .seedProvenance "$SEED")"
+assert_eq "p11.2 every dependency carries a class the digest understands" "" \
+  "$(jq -r '[.dependencies[] | select((.class == "fod" or .class == "flake-input") | not)] | .[].id // empty' "$SEED")"
+assert_eq "p11.3 every fod carries the four content-identity fields" "" \
+  "$(jq -r '[.dependencies[] | select(.class=="fod")
+             | select((.contentIdentity | has("storePath") and has("expectedHash")
+                       and has("expectedHashAlgo") and has("hashMode")) | not)] | .[].id // empty' "$SEED")"
+assert_eq "p11.4 every flake input carries storePath and narHash" "" \
+  "$(jq -r '[.dependencies[] | select(.class=="flake-input")
+             | select((.contentIdentity | has("storePath") and has("narHash")) | not)] | .[].id // empty' "$SEED")"
+assert_eq "p11.5 the seed exercises BOTH classes and both requiredByPlan values" \
+  "fod,flake-input true,false" \
+  "$(jq -r '[([.dependencies[].class]|unique|sort_by(.=="fod")|reverse|join(",")),
+             ([.dependencies[].requiredByPlan]|unique|sort|reverse|map(tostring)|join(","))] | join(" ")' "$SEED")"
+# An unknown class must be a READ FAILURE, not a silently skipped dependency.
+weird=$(mut '.dependencies[0].class = "something-new"')
+rc=0; dig "$weird" "$DEP" >/dev/null 2>&1 || rc=$?
+assert_ne "p11.6 an unrecognised dependency class is an error, not a skipped entry" "0" "$rc"
+
+head_ "p12  dependencyContentDigest moves on bytes, and ONLY on bytes"
+assert_ne "p12.1 MOVES: a changed expectedHash" \
+  "$base_dep" "$(dig "$(mut '.dependencies[0].contentIdentity.expectedHash = "sha256-ZZZZ="')" "$DEP")"
+assert_ne "p12.2 MOVES: a changed storePath" \
+  "$base_dep" "$(dig "$(mut '.dependencies[0].contentIdentity.storePath = "/nix/store/zzzz-other"')" "$DEP")"
+assert_ne "p12.3 MOVES: a changed hash ALGORITHM at the same digest" \
+  "$base_dep" "$(dig "$(mut '.dependencies[0].contentIdentity.expectedHashAlgo = "sha512"')" "$DEP")"
+assert_ne "p12.4 MOVES: a required source added" \
+  "$base_dep" "$(dig "$(mut '.dependencies += [{id:"fod:/nix/store/new",class:"fod",kind:"fetchurl",requiredByPlan:true,drvPath:null,contentIdentity:{storePath:"/nix/store/new",expectedHash:"sha256-N=",expectedHashAlgo:"sha256",hashMode:"flat"},originHost:{value:"x",source:"URL_FALLBACK"},owner:{value:null,source:"UNKNOWN"},repo:{value:null,source:"UNKNOWN"},rev:{value:null,source:"UNKNOWN"},tag:{value:null,source:"UNKNOWN"},aliasPaths:[],discoveryStatus:"COVERED",annotation:null}]')" "$DEP")"
+assert_ne "p12.5 MOVES: a required source removed" \
+  "$base_dep" "$(dig "$(mut '.dependencies |= map(select(.class != "flake-input"))')" "$DEP")"
+# The four that must NOT move it. Each is a real thing that happens.
+assert_eq "p12.6 HOLDS: a changed drvPath -- C4 says an annotation moves this legitimately" \
+  "$base_dep" "$(dig "$(mut '.dependencies[0].drvPath = "/nix/store/9999-annotated.drv"')" "$DEP")"
+assert_eq "p12.7 HOLDS: a changed originHost -- same bytes, new origin" \
+  "$base_dep" "$(dig "$(mut '.dependencies[0].originHost.value = "codeberg.org"')" "$DEP")"
+assert_eq "p12.8 HOLDS: a changed lockNodeId -- systems vs systems_2 is a name, not an identity" \
+  "$base_dep" "$(dig "$(mut '.dependencies[2].lockNodeId = "gitignore-src_2"')" "$DEP")"
+assert_eq "p12.9 HOLDS: the dependency list reordered" \
+  "$base_dep" "$(dig "$(mut '.dependencies |= reverse')" "$DEP")"
+assert_eq "p12.10 HOLDS: a NON-required source changed -- it is not in the required set" \
+  "$base_dep" "$(dig "$(mut '.dependencies[1].contentIdentity.expectedHash = "sha256-CHANGED="')" "$DEP")"
+assert_eq "p12.11 HOLDS: the project flake source changed" \
+  "$base_dep" "$(dig "$(mut '.flakeSource.narHash = "sha256-README="')" "$DEP")"
+
+head_ "p13  policyFactsDigest moves on what a SELECTOR can read"
+assert_ne "p13.1 MOVES: a changed originHost" \
+  "$base_facts" "$(dig "$(mut '.dependencies[0].originHost.value = "codeberg.org"')" "$FACTS")"
+assert_ne "p13.2 MOVES: a changed owner" \
+  "$base_facts" "$(dig "$(mut '.dependencies[0].owner.value = "SomeoneElse"')" "$FACTS")"
+assert_ne "p13.3 MOVES: a changed discoveryStatus" \
+  "$base_facts" "$(dig "$(mut '.dependencies[0].discoveryStatus = "EXTERNAL_RECOVERY"')" "$FACTS")"
+assert_ne "p13.4 MOVES: a changed aliasPath" \
+  "$base_facts" "$(dig "$(mut '.dependencies[2].aliasPaths = ["renamed"]')" "$FACTS")"
+# PROVENANCE is part of the fact. A value that stops being stated and starts
+# being inferred is a different fact for policy purposes -- §7.3 makes rules
+# behave differently on an UNKNOWN, so a silent transition here would let a
+# selector change behaviour with no digest moving.
+assert_ne "p13.5 MOVES: the same owner VALUE, arriving with different provenance" \
+  "$base_facts" "$(dig "$(mut '.dependencies[0].owner.source = "URL_FALLBACK"')" "$FACTS")"
+assert_eq "p13.6 HOLDS: a changed drvPath" \
+  "$base_facts" "$(dig "$(mut '.dependencies[0].drvPath = "/nix/store/9999-annotated.drv"')" "$FACTS")"
+assert_eq "p13.7 HOLDS: the dependency list reordered" \
+  "$base_facts" "$(dig "$(mut '.dependencies |= reverse')" "$FACTS")"
+assert_eq "p13.8 HOLDS: the project flake source changed" \
+  "$base_facts" "$(dig "$(mut '.flakeSource.narHash = "sha256-README="')" "$FACTS")"
+
+head_ "p14  the C3 observable, as one assertion"
+# PREREG.md §12: origin moved, content identical. THIS is what makes a
+# policy-relevant change impossible to hide behind an unchanged content hash,
+# and it is one mutation producing two different answers.
+moved=$(mut '.dependencies[0].originHost.value = "evil.example.com"')
+assert_eq "p14.1 dependencyContentDigest is UNCHANGED" "$base_dep" "$(dig "$moved" "$DEP")"
+assert_ne "p14.2 policyFactsDigest is CHANGED" "$base_facts" "$(dig "$moved" "$FACTS")"
+
+head_ "p15  the README-only observable"
+# 166 external dependencies did not change because somebody edited a README.
+readme=$(mut '.flakeSource.narHash = "sha256-JustTheReadme="')
+assert_eq "p15.1 dependencyContentDigest UNCHANGED" "$base_dep" "$(dig "$readme" "$DEP")"
+assert_eq "p15.2 policyFactsDigest UNCHANGED" "$base_facts" "$(dig "$readme" "$FACTS")"
+assert_ne "p15.3 flakeSourceDigest CHANGED" "$base_src" "$(dig "$readme" "$SRC")"
+assert_eq "p15.4 HOLDS: flakeSourceDigest ignores every dependency-only change" \
+  "$base_src" "$(dig "$(mut '.dependencies[0].contentIdentity.expectedHash = "sha256-ZZZ="')" "$SRC")"
+
+head_ "p16  effectiveDecisionDigest"
+withdec=$(mut '. + {decisions: [
+  {sourceId:"a", matchedRuleIds:["r1","r2"], effective:{coverage:"required",retention:"permanent",admission:"normal"}, trustedPolicyRevision:"base-sha-1"},
+  {sourceId:"b", matchedRuleIds:["r1"], effective:{coverage:"auto",retention:"while-referenced",admission:"normal"}, trustedPolicyRevision:"base-sha-1"}]}')
+base_dec=$(dig "$withdec" "$DEC")
+assert_ne "p16.1 MOVES: a changed effective axis" "$base_dec" \
+  "$(dig "$(jq '.decisions[1].effective.coverage = "required"' "$withdec" > "$TMP/d1.json"; echo "$TMP/d1.json")" "$DEC")"
+assert_ne "p16.2 MOVES: a changed matched-rule set" "$base_dec" \
+  "$(dig "$(jq '.decisions[0].matchedRuleIds = ["r1","r3"]' "$withdec" > "$TMP/d2.json"; echo "$TMP/d2.json")" "$DEC")"
+assert_ne "p16.3 MOVES: a changed trusted policy revision, same verdicts" "$base_dec" \
+  "$(dig "$(jq '.decisions[].trustedPolicyRevision = "base-sha-2"' "$withdec" > "$TMP/d3.json"; echo "$TMP/d3.json")" "$DEC")"
+assert_eq "p16.4 HOLDS: the decision list reordered" "$base_dec" \
+  "$(dig "$(jq '.decisions |= reverse' "$withdec" > "$TMP/d4.json"; echo "$TMP/d4.json")" "$DEC")"
+assert_eq "p16.5 HOLDS: the matched-rule ids reordered within a decision" "$base_dec" \
+  "$(dig "$(jq '.decisions[0].matchedRuleIds = ["r2","r1"]' "$withdec" > "$TMP/d5.json"; echo "$TMP/d5.json")" "$DEC")"
+# ABSENT is null, not the sha256 of an empty array -- which is a real-looking
+# digest that any two decisionless documents would agree on.
+assert_eq "p16.6 a facts document with no decisions reports null, not a digest of nothing" \
+  "null" "$(nse_pg_digests "$SEED" | jq -r '.effectiveDecisionDigest | tostring')"
+assert_ne "p16.7 and one WITH decisions reports a digest" \
+  "null" "$(nse_pg_digests "$withdec" | jq -r '.effectiveDecisionDigest | tostring')"
+
+head_ "p17  the comparison names the SHAPE, never just 'changed'"
+b=$TMP/dig-base.json; h=$TMP/dig-head.json
+nse_pg_digests "$SEED" > "$b"
+nse_pg_digests "$moved" > "$h"
+assert_eq "p17.1 origin moved is named" "ORIGIN_MOVED_OR_FACTS_CHANGED" \
+  "$(nse_pg_digest_compare "$b" "$h" | jq -r .shape)"
+nse_pg_digests "$readme" > "$h"
+assert_eq "p17.2 a README-only change is named, and is not 166 dependencies" \
+  "PROJECT_SOURCE_ONLY" "$(nse_pg_digest_compare "$b" "$h" | jq -r .shape)"
+nse_pg_digests "$(mut '.dependencies[0].contentIdentity.expectedHash = "sha256-REAL="')" > "$h"
+assert_eq "p17.3 changed bytes are named" "DEPENDENCY_BYTES_CHANGED" \
+  "$(nse_pg_digest_compare "$b" "$h" | jq -r .shape)"
+nse_pg_digests "$(mut '.dependencies[0].drvPath = "/nix/store/annotated.drv"')" > "$h"
+assert_eq "p17.4 an annotation alone is NO_RELEVANT_CHANGE, not a supply-chain event" \
+  "NO_RELEVANT_CHANGE" "$(nse_pg_digest_compare "$b" "$h" | jq -r .shape)"
+
+head_ "p18  the digests are not each other, and not a hash of the whole document"
+# The failure this design exists to prevent: four names for one number.
+assert_ne "p18.1 dependencyContent != policyFacts" "$base_dep" "$base_facts"
+assert_ne "p18.2 dependencyContent != flakeSource" "$base_dep" "$base_src"
+assert_ne "p18.3 policyFacts != flakeSource" "$base_facts" "$base_src"
+whole=$(sha256sum "$SEED" | cut -d' ' -f1)
+assert_ne "p18.4 and none of them is just sha256(the document)" "$whole" "$base_dep"
+# The projection is printable. A digest whose input cannot be shown is a number
+# that can only be trusted, and "about what?" has to be answerable.
+assert_eq "p18.5 the projection can be printed, and covers only the required set" \
+  "2" "$(nse_pg_project "$SEED" "$DEP" | jq 'length')"
+assert_eq "p18.6 while the policy-facts projection covers every discovered dependency" \
+  "3" "$(nse_pg_project "$SEED" "$FACTS" | jq 'length')"
 
 # ---------------------------------------------------------------------------
 head_ "p10  the new executable is actually linted, and the lint mirror cannot drift"

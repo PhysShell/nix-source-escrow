@@ -31,7 +31,8 @@
     {
       "id": "C4",
       "claim": "A source policy annotation changes derivation identities but not realised output identities, and causes no rebuild work.",
-      "status": "PREREGISTERED_NOT_MEASURED"
+      "status": "MEASURED_HOLDS",
+      "evidence": "run 2, both Nix versions, verdict C4_AS_PREREGISTERED"
     }
   ],
   "noClaims": [
@@ -108,6 +109,63 @@
       "artifacts": {
         "policy-governed-qualification-nix2.34.7": 9976018676,
         "policy-governed-qualification-nix2.24.9": 9976018630
+      }
+    },
+    {
+      "run": 2,
+      "workflowRunId": 33989188327,
+      "measuredCommit": "43f9276869db7fa66021dcc68a2279c57c3ce4d1",
+      "date": "2026-09-05",
+      "kind": "EMPIRICAL",
+      "fixtureIdentity": {
+        "flake": "experiments/policy-governed/fixtures/qualification",
+        "nixpkgsPin": "d2f67949798825fe853f7c5d0492b8bf016d3f88",
+        "chain": "ann-{plain,marked}-{src,mid,top}: three derivations, so that 'direct consumer' and 'top-level' are not one derivation counted twice"
+      },
+      "nixVersions": [
+        "2.34.7",
+        "2.24.9"
+      ],
+      "preregSections": [
+        "§3.4",
+        "§3.5",
+        "§3.6"
+      ],
+      "primaryClaims": [
+        "C4"
+      ],
+      "expectedTrace": "source/consumer/top .drv DIFFERENT; source/consumer/top output SAME; NO REBUILD WORK; annotation visible to discovery YES; OBJECTS_REALISED count SAME, set DIFFERENT; realised-set sha256 DIFFERENT (registered expected churn, §3.5).",
+      "observedTrace": {
+        "bothNixVersions": {
+          "allThreeDrvsMoved": true,
+          "allThreeOutputsHeld": true,
+          "noRebuildWork": true,
+          "annotationVisible": true,
+          "annotationRedControlUnannotatedSource": false,
+          "objectsRealisedCount": "SAME",
+          "objectsRealisedSet": "DIFFERENT",
+          "onlyInPlain": 3,
+          "onlyInPlainDrv": 3,
+          "onlyInMarked": 3,
+          "onlyInMarkedDrv": 3,
+          "symmetricDifferenceIsAllDrv": true,
+          "realisedSetSha256": "DIFFERENT",
+          "verdict": "C4_AS_PREREGISTERED"
+        }
+      },
+      "verdict": "C4_HOLDS_AS_PREREGISTERED",
+      "findings": [
+        "C4 holds on BOTH Nix versions. Three .drv identities moved, three realised outputs did not, nothing was rebuilt, and the annotation is visible where a matcher would look.",
+        "The symmetric difference of the realised sets is exactly 3 objects leaving and 3 arriving, and EVERY one of the six is a .drv. That is the gap-23 arithmetic asserted rather than reconstructed afterwards: a non-.drv in that difference would be a moved output, which is C4 refuted.",
+        "The realised-set sha256 moved, as PREREG.md §3.5 registered in advance. It is expected churn. A later reading of that movement as a regression is a misreading of the pre-registration.",
+        "The visibility guard carries its red control in the report, not only in a test name: the unannotated source comes back false on the same reader in the same run. Without it, 'visible' is what the probe says about everything."
+      ],
+      "defectsFoundInThisRun": [
+        "The shell-units job went RED on u26.1: the runner's shellcheck reported SC2015 (`A && B || C` is not if-then-else) on lib/pg-annotate.sh, where the locally installed shellcheck 0.11.0 was silent. The Nix measurement jobs were unaffected and their results stand. Fixed by replacing the construct with an explicit if -- the construct goes, not the finding. Recorded because it establishes that a lint mirror is only as good as the shellcheck version running it, and that the local mirror and the runner do NOT always agree."
+      ],
+      "artifacts": {
+        "policy-governed-qualification-nix2.34.7": 9976090156,
+        "policy-governed-qualification-nix2.24.9": 9976090881
       }
     }
   ]

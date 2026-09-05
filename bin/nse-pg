@@ -29,6 +29,8 @@ export NSE_ROOT
 . "$NSE_ROOT/lib/pg-qualify.sh"
 # shellcheck source=../lib/pg-annotate.sh
 . "$NSE_ROOT/lib/pg-annotate.sh"
+# shellcheck source=../lib/pg-digest.sh
+. "$NSE_ROOT/lib/pg-digest.sh"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -44,10 +46,17 @@ commands:
                   what it does not: three .drv identities, three outputs, the
                   realised set, and whether anything had to be rebuilt.
                   PREREG.md §3.4-§3.6, claim C4.
+  digest          print the four typed digests of a facts document, and the
+                  projection each one is computed over. PREREG.md §12.
+  digest-compare  name the SHAPE of the difference between two digest
+                  documents, rather than reporting that something changed.
 
 options:
   --flake REF     the qualification fixture to measure
                   (default: path:<repo>/experiments/policy-governed/fixtures/qualification)
+  --facts FILE    facts document to digest (digest)
+  --base FILE     base digests (digest-compare)
+  --head FILE     head digests (digest-compare)
   --out FILE      where the report is written
                   (default: experiments/policy-governed/results/facts-qualification.json)
   -h, --help      this text
@@ -67,12 +76,21 @@ cmd=$1; shift
 
 pg_flake=""
 pg_out=""
+pg_facts=""
+pg_base=""
+pg_head=""
 while [ $# -gt 0 ]; do
   case $1 in
     --flake) [ $# -ge 2 ] || { printf 'nse-pg: --flake needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_flake=$2; shift 2 ;;
     --out)   [ $# -ge 2 ] || { printf 'nse-pg: --out needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_out=$(nse_abspath "$2"); shift 2 ;;
+    --facts) [ $# -ge 2 ] || { printf 'nse-pg: --facts needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_facts=$(nse_abspath "$2"); shift 2 ;;
+    --base)  [ $# -ge 2 ] || { printf 'nse-pg: --base needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_base=$(nse_abspath "$2"); shift 2 ;;
+    --head)  [ $# -ge 2 ] || { printf 'nse-pg: --head needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_head=$(nse_abspath "$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'nse-pg: unknown option %s\n' "$1" >&2; usage; exit "$NSE_PG_USAGE" ;;
   esac
@@ -92,6 +110,19 @@ case $cmd in
     : "${pg_out:=$NSE_ROOT/experiments/policy-governed/results/annotation-qualification.json}"
     nse_pg_qualify_annotation "$pg_flake" "$pg_out"
     printf 'wrote %s\n' "$pg_out" >&2
+    ;;
+  digest)
+    nse_require_cmd jq
+    [ -n "$pg_facts" ] || { printf 'nse-pg: digest needs --facts FILE\n' >&2; exit "$NSE_PG_USAGE"; }
+    [ -f "$pg_facts" ] || { printf 'nse-pg: no such facts document: %s\n' "$pg_facts" >&2; exit "$NSE_PG_FAIL"; }
+    if [ -n "$pg_out" ]; then nse_pg_digests "$pg_facts" | nse_pg_write_json "$pg_out"
+    else nse_pg_digests "$pg_facts"; fi
+    ;;
+  digest-compare)
+    nse_require_cmd jq
+    { [ -n "$pg_base" ] && [ -n "$pg_head" ]; } \
+      || { printf 'nse-pg: digest-compare needs --base FILE and --head FILE\n' >&2; exit "$NSE_PG_USAGE"; }
+    nse_pg_digest_compare "$pg_base" "$pg_head"
     ;;
   *) printf 'nse-pg: unknown command %s\n' "$cmd" >&2; usage; exit "$NSE_PG_USAGE" ;;
 esac

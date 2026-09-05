@@ -156,10 +156,16 @@ nse_pg_qualify_annotation() {
   n_marked=$(wc -l < "$work/realised-marked.txt")
   # Expected non-empty by construction: a realised chain has requisites. Zero
   # is a read failure, not a closure with nothing in it.
-  [ "$n_plain" -gt 0 ] && [ "$n_marked" -gt 0 ] \
-    || nse_pg_checker_error "nix-store --query --requisites returned an EMPTY set for a
+  # An explicit if, not `A && B || C`. That construct is not if-then-else -- C
+  # runs whenever A is true and B is false -- and which shellcheck versions say
+  # so out loud differs: 0.11 locally was silent, the runner's was not. A lint
+  # mirror is only as good as the version running it, so the construct goes
+  # rather than the finding.
+  if [ "$n_plain" -eq 0 ] || [ "$n_marked" -eq 0 ]; then
+    nse_pg_checker_error "nix-store --query --requisites returned an EMPTY set for a
        chain that was just realised. That cannot be true, so it is treated as a
        read failure rather than as an empty closure."
+  fi
 
   LC_ALL=C comm -23 "$work/realised-plain.txt" "$work/realised-marked.txt" > "$work/only-plain.txt"
   LC_ALL=C comm -13 "$work/realised-plain.txt" "$work/realised-marked.txt" > "$work/only-marked.txt"

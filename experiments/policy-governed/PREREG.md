@@ -229,6 +229,20 @@ Permitted values of `<fact>Source`:
 | `URL_FALLBACK` | parsed out of a URL, and **explicitly marked as such** |
 | `UNKNOWN` | the attribute is absent and no permitted fallback applies |
 
+**Amended 2026-09-05, before the run that measures it — see the Amendments log
+at the end of this document.** A fourth value exists for flake inputs:
+
+| value | meaning |
+|---|---|
+| `LOCK_ATTR` | read directly from a `flake.lock` `locked` record |
+
+The three values above are the vocabulary for facts read out of a **derivation
+document**, which is what §4 measures. A flake input's `owner`, `repo` and
+`rev` are not in any derivation document; they are in the lock file, stated
+there, and pinned by a `narHash`. Recording them as `UNKNOWN` would discard a
+fact the project actually has; recording them as `DERIVATION_ATTR` would name a
+document they did not come from. Both are worse than a fourth name.
+
 Rules, registered in advance:
 
 * An absent attribute yields `UNKNOWN`. It never yields a guess.
@@ -886,3 +900,29 @@ Not done until all of these hold:
 Those belong to the next envelopes. Prove the authority boundary first. Only
 after that does it make sense to give the decision credentials to durable
 storage.
+
+---
+
+## 22. Amendments
+
+Amendments are allowed. Silent amendments are not, and an amendment made after
+the run it concerns is an amendment to the *next* run. Each entry says what
+changed, when, and whether the run it affects had already happened.
+
+### A1 — `LOCK_ATTR` added to the fact-provenance vocabulary (§4.1)
+
+* **When:** 2026-09-05, during commit 4.
+* **Affected runs:** none yet. Run 1 measured only derivation-document facts and
+  used only the original three values; this amendment does not change anything
+  run 1 recorded.
+* **What:** a fourth provenance value, `LOCK_ATTR`, for facts read out of a
+  `flake.lock` `locked` record.
+* **Why:** §4 is about the derivation document, and its three values are that
+  document's vocabulary. Flake inputs are not in any derivation document. Their
+  `owner`, `repo` and `rev` are stated in the lock and pinned by a `narHash`.
+  Calling them `UNKNOWN` would throw away a fact the project holds; calling them
+  `DERIVATION_ATTR` would cite a document they did not come from.
+* **What it does NOT change:** `URL_FALLBACK` remains permitted for `originHost`
+  only. `rev` still has no fallback of any kind — `LOCK_ATTR` is a direct read,
+  not an inference. `UNKNOWN` still means absent, and §7.3 still applies to it
+  unchanged.
