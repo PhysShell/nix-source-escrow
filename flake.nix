@@ -67,6 +67,16 @@
                 pkgs.jq pkgs.coreutils pkgs.gnused pkgs.gnugrep pkgs.gawk
                 pkgs.curl pkgs.iproute2 pkgs.util-linux
               ]}"
+            # The policy-governed line's tooling. A SECOND executable, not a
+            # subcommand: the closed line's tool is an instrument this
+            # experiment reuses, not this experiment's judge, and merging them
+            # would make a frozen tool's behaviour a function of new code.
+            cp bin/nse-pg "$out/bin/.nse-pg-wrapped"
+            makeWrapper "$out/bin/.nse-pg-wrapped" "$out/bin/nse-pg" \
+              --prefix PATH : "${pkgs.lib.makeBinPath [
+                pkgs.jq pkgs.coreutils pkgs.gnused pkgs.gnugrep pkgs.gawk
+                pkgs.curl pkgs.iproute2 pkgs.util-linux
+              ]}"
             runHook postInstall
           '';
 
@@ -99,7 +109,7 @@
       checks = forAll (pkgs: {
         shellcheck = pkgs.runCommand "nix-source-escrow-shellcheck" { nativeBuildInputs = [ pkgs.shellcheck ]; } ''
           cd ${self}
-          shellcheck -x -e SC1091 --shell=bash bin/nix-source-escrow lib/*.sh tests/*.sh
+          shellcheck -x -e SC1091 --shell=bash bin/nix-source-escrow bin/nse-pg lib/*.sh tests/*.sh
           touch $out
         '';
       });

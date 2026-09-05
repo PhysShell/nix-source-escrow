@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# nse-pg -- the policy-governed line's tooling.
+#
+# A SECOND executable, beside bin/nix-source-escrow, and deliberately not a
+# subcommand of it. The closed line's tool is an INSTRUMENT this line reuses;
+# it is not this line's judge, and merging the two would make the frozen tool's
+# behaviour a function of this experiment's code.
+#
+# See experiments/policy-governed/PREREG.md. The pre-registration is the
+# contract; this is one implementation of it.
+
+set -euo pipefail
+
+NSE_PG_SELF=${BASH_SOURCE[0]}
+while [ -L "$NSE_PG_SELF" ]; do NSE_PG_SELF=$(readlink -f "$NSE_PG_SELF"); done
+NSE_PG_SELF=$(cd "$(dirname "$NSE_PG_SELF")" && pwd)/$(basename "$NSE_PG_SELF")
+export NSE_PG_SELF
+NSE_ROOT=$(cd "$(dirname "$NSE_PG_SELF")/.." && pwd)
+export NSE_ROOT
+
+# shellcheck source=../lib/common.sh
+. "$NSE_ROOT/lib/common.sh"
+# shellcheck source=../lib/pg-common.sh
+. "$NSE_ROOT/lib/pg-common.sh"
+# shellcheck source=../lib/pg-facts.sh
+. "$NSE_ROOT/lib/pg-facts.sh"
+# shellcheck source=../lib/pg-qualify.sh
+. "$NSE_ROOT/lib/pg-qualify.sh"
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: nse-pg <command> [options]
+
+commands:
+  qualify-facts   measure which GitHub facts are visible in the derivation
+                  document on THIS Nix, with provenance, and classify a bare
+                  `escrow = true` as REJECTED / DROPPED / SURVIVED.
+                  PREREG.md §3.3, §4, §5.
+
+options:
+  --flake REF     the qualification fixture to measure
+                  (default: path:<repo>/experiments/policy-governed/fixtures/qualification)
+  --out FILE      where the report is written
+                  (default: experiments/policy-governed/results/facts-qualification.json)
+  -h, --help      this text
+
+exit status:
+  0  the measurement completed
+  1  a check said no
+  2  usage error
+  3  CHECKER_ERROR -- the check could not run. A separate state on purpose:
+     "the check says no" and "the check could not run" are different results.
+USAGE
+}
+
+[ $# -ge 1 ] || { usage; exit "$NSE_PG_USAGE"; }
+case $1 in -h|--help|help) usage; exit 0 ;; esac
+cmd=$1; shift
+
+pg_flake=""
+pg_out=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --flake) [ $# -ge 2 ] || { printf 'nse-pg: --flake needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_flake=$2; shift 2 ;;
+    --out)   [ $# -ge 2 ] || { printf 'nse-pg: --out needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_out=$(nse_abspath "$2"); shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'nse-pg: unknown option %s\n' "$1" >&2; usage; exit "$NSE_PG_USAGE" ;;
+  esac
+done
+
+case $cmd in
+  qualify-facts)
+    nse_require_cmd nix jq
+    : "${pg_flake:=path:$NSE_ROOT/experiments/policy-governed/fixtures/qualification}"
+    : "${pg_out:=$NSE_ROOT/experiments/policy-governed/results/facts-qualification.json}"
+    nse_pg_qualify_facts "$pg_flake" "$pg_out"
+    printf 'wrote %s\n' "$pg_out" >&2
+    ;;
+  *) printf 'nse-pg: unknown command %s\n' "$cmd" >&2; usage; exit "$NSE_PG_USAGE" ;;
+esac

@@ -1,0 +1,127 @@
+name: policy-governed measurement
+
+# The measurement instrument for the POLICY-GOVERNED line.
+#
+# WHAT THIS IS NOT, stated first because the whole line turns on it:
+#
+#   This workflow is NOT a gate, and it is NOT evidence of judge independence.
+#   It lives in the head of the branch it measures, which means a candidate can
+#   edit it. PREREG.md §10 says so in advance, and the WORKFLOW_MISMATCH
+#   fixture exists precisely because a workflow in a personal repository cannot
+#   be its own authority. Real enforcement needs an organization-level required
+#   workflow or an external trusted judge, and both are a separate envelope.
+#
+# What it IS: the only place this line can run Nix at all. The machine the code
+# is authored on has no Nix and cannot reach github.com over HTTP, and the
+# pinned fixture is a github: flake. So every Nix-dependent observable in
+# PREREG.md §3-§5 is measured here, on both versions, and recorded.
+#
+# The closed line's evidence-run.yml is untouched and still triggers on its own
+# branches.
+
+on:
+  push:
+    branches: [ 'claude/policy-governed-*' ]
+  workflow_dispatch:
+
+jobs:
+  # No Nix needed. Runs first and on every push, because everything the
+  # authority boundary rests on was deliberately built not to need a store.
+  shell-units:
+    runs-on: ubuntu-latest
+    name: shell units (no Nix)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The CLOSED line's units must stay green
+        run: ./tests/unit-shell.sh
+      - name: The policy-governed line's units
+        run: ./tests/pg-unit.sh
+
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both versions, for the same reason the closed line measured both: the
+        # `nix derivation show` document has two shapes, and a fact reader
+        # validated against one of them is a fact reader with a 50% chance.
+        nix: [ '2.34.7', '2.24.9' ]
+    name: qualify facts (nix ${{ matrix.nix }})
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix ${{ matrix.nix }}
+        uses: cachix/install-nix-action@v30
+        with:
+          install_url: https://releases.nixos.org/nix/nix-${{ matrix.nix }}/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+
+      - name: Record what is being measured
+        run: |
+          nix --version
+          echo "HEAD:            $(git rev-parse HEAD)"
+          echo "frozen base:     84354e85872c385e649af0e1b90ef4a2e0997949"
+          echo "nixpkgs pin:     $(jq -r '.nodes.nixpkgs.locked.rev' \
+                                    experiments/policy-governed/fixtures/qualification/flake.lock)"
+          echo "fixture pin:     $(jq -r '.nodes.nixpkgs.locked.rev' fixture/flake.lock)"
+          # PREREG.md §3.2: ONE pin. Two pins in one line is a compatibility
+          # surface nobody registered, and this line has that listed as a STOP
+          # condition rather than as a thing to absorb.
+          a=$(jq -r '.nodes.nixpkgs.locked.rev' \
+                experiments/policy-governed/fixtures/qualification/flake.lock)
+          b=$(jq -r '.nodes.nixpkgs.locked.rev' fixture/flake.lock)
+          if [ "$a" != "$b" ]; then
+            echo "PIN_MISMATCH: qualification fixture $a != closed fixture $b" >&2
+            exit 1
+          fi
+          echo "PIN_AGREEMENT=YES"
+          git status --porcelain
+          echo "(empty above means a clean tree)"
+
+      - name: §4 / §5 -- qualify facts and classify a bare escrow=true
+        id: qualify
+        run: |
+          set -o pipefail
+          ./bin/nse-pg qualify-facts \
+            --out "experiments/policy-governed/results/facts-qualification-nix${{ matrix.nix }}.json" \
+            2>&1 | tee /tmp/qualify.log
+          echo "--- the report ---"
+          jq . "experiments/policy-governed/results/facts-qualification-nix${{ matrix.nix }}.json"
+
+      - name: READOUT
+        if: always()
+        run: |
+          R=experiments/policy-governed/results/facts-qualification-nix${{ matrix.nix }}.json
+          [ -f "$R" ] || { echo "no report produced"; exit 0; }
+          echo "== §4 selector support on this Nix =="
+          jq -r '.selectorSupport | to_entries[] | "  \(.key)=\(.value)"' "$R"
+          echo "== §4 what the document actually carries =="
+          jq -r '.probes[] | "  \(.target) [\(.drvSchema // "did-not-evaluate")]: \((.attrKeys // []) | join(","))"' "$R"
+          echo "== §5 bare escrow=true =="
+          jq -r '"  outcome:            \(.directAttr.outcome)",
+                 "  detector qualified: \(.directAttr.detectorQualified)",
+                 "  sentinel found at:  \(.directAttr.sentinel.attrSite // "NOWHERE")",
+                 "  escrow found at:    \(.directAttr.foundAtSite // "NOWHERE")"' "$R"
+          echo "== §3.3 Nix-VALUE visibility (a different surface from §4) =="
+          jq -r '(.nixValueVisibility.plain // {}) | to_entries[]
+                 | "  plain.\(.key): present=\(.value.present)"' "$R"
+          jq -r '(.nixValueVisibility.sentinel // {}) | to_entries[]
+                 | "  sentinel.\(.key): present=\(.value.present)"' "$R"
+
+      - name: Upload the measurement
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: policy-governed-qualification-nix${{ matrix.nix }}
+          path: |
+            experiments/policy-governed/results/
+          if-no-files-found: warn
+          retention-days: 14

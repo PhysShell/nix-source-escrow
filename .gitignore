@@ -4,3 +4,9 @@ result-*
 /escrow/
 /.escrow-work/
 /escrow-*/
+
+# Policy-governed line: CI writes measurement reports here and uploads them as
+# artifacts. The RECORD of a measurement is its transcription into
+# experiments/policy-governed/runs.json, which is reviewed; a generated JSON
+# committed by nobody is not a record.
+/experiments/policy-governed/results/
