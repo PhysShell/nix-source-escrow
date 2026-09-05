@@ -211,9 +211,12 @@
     },
     {
       "id": "gap-25",
-      "claim": "RESOLVED AS TO MECHANISM, PENDING THE FIX'S VERDICT: run 33's probe established that signature verification lives in the local store's add path -- the same unsigned object is refused into a local store (t24.9) and accepted into a binary cache (t24.10). Because the replica is a file:// binary cache, the tier copy never verified and the SIGNATURE_UNTRUSTED branch was unreachable. The fix (a local-store hop, DESIGN.md 21d) is written but has not yet been executed anywhere; this gap closes when t24.11-t24.18 go green.",
-      "status": "OPEN",
-      "openedAt": "2026-09-05"
+      "claim": "The binary tier's signature policy was unreachable: preserve copied the tier straight into the replica, a file:// binary cache, and run 33 measured that verification lives in the local store's add path (t24.9 refuses, t24.10 accepts). The tier is now read through a local store first.",
+      "status": "CLOSED",
+      "openedAt": "2026-09-05",
+      "closedBy": "10dd7fa5fb9b61af0f29c5bba19dc4900e7e4c31",
+      "evidenceRef": "run 34: t24.11-t24.14 and t24.17/t24.18 green after being red in runs 32 and 33 with the same test code, the only change being nse_tier_materialise. t24.20-t24.23 (leg C) now attributable because legs A and B fail without the key. t20 still BINARY_TIER_ERROR, t21 refuses in 37s, t15/t16 green.",
+      "closeNote": "DESIGN.md 21e. gap-24 and gap-26 remain open."
     },
     {
       "id": "gap-26",

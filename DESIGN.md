@@ -2286,3 +2286,64 @@ derivations, 876 objects, `closureSha256 = 7f141ef1…ecb2` — and:
   mis-attributing an outage as a trust decision, which is §19's laundering with
   the sign reversed.
 - `t15`/`t16` red → ordinary tiers broke; the fix costs more than it buys.
+
+### 21e. Verdict on §21: the policy is an executed behaviour
+
+Run 34 (`10dd7fa`), both Nix versions: `nix flake check` pass, `unit-shell`
+**161/0**, acceptance **198/0**. `t24` is green in full.
+
+```
+PASS t24.11 an unsigned tier object is refused, not accepted
+PASS t24.12 and the refusal is SIGNATURE_UNTRUSTED
+PASS t24.13 it names an object the tier really holds
+PASS t24.14 and quotes what Nix actually said about the signature
+PASS t24.17 a signature by an unknown key is refused too
+PASS t24.20 positive control: with the key supplied, preserve succeeds
+PASS t24.21 and the object MATERIALISES into the replica
+```
+
+**The attribution is the result, not the green.** These same assertions, from the
+same test file, were red in runs 32 and 33. The only thing that changed is
+`nse_tier_materialise` reading the tier through a local store. And leg C is now
+worth something: `t24.20`–`t24.23` passed in run 33 too, but *trivially*, because
+everything passed. They pass now while legs A and B fail without the key, which
+is what makes the success **attributable to the key** rather than to the tool
+accepting whatever it is handed.
+
+So the claim §21 opened with can now be stated as a behaviour:
+
+> A binary tier whose objects Nix will not accept produces `SIGNATURE_UNTRUSTED`,
+> naming an object the tier really holds and quoting what Nix said, and never an
+> absence, an outage, or a quietly weakened trust policy. Supplying the tier's
+> public key — and only that — turns the same run green.
+
+It took **five runs**: 30 (fixture carried a trusted signature), 31 (the suite
+died before an assertion), 32 (first full execution, two findings), 33 (the probe
+attributed the cause), 34 (the fix verified).
+
+#### Every pre-registered non-observable held
+
+| must not move | run 34 |
+| --- | --- |
+| `t20` a lying tier is `BINARY_TIER_ERROR`, not a signature refusal | green — no laundering in either direction |
+| `t21` a 503 tier refuses within seconds | 14:06:02 → 14:06:39, **37s** |
+| `t15`/`t16` ordinary `cache.nixos.org` tiers unaffected | green, all 19 + 8 |
+| §20 observables | 166 / 164 / 2 / 3 / 38, 160 flat + 6 nar, 639 derivations, 876 objects, `closureSha256 = 7f141ef1…ecb2` |
+
+`t15` green is the one that had to be checked rather than assumed: the extra hop
+sits in the path of every `source-origin-independence` run, and objects signed by
+a default-trusted key must pass through it invisibly. They do.
+
+**The measured cost** is about a minute: 4m44s against ~3m40s. That is the local
+copy §21d predicted, and it is recorded here because a cost named in advance and
+then never measured is just a disclaimer.
+
+#### What is still not established
+
+`gap-24` — no credential crossed a network. Local `file://` tier, locally
+generated key. What a real authenticated backend does with a wrong or expired
+credential is untested.
+
+`gap-26` — `nix store verify --sigs` would avoid the second copy, and its flags
+across both Nix versions remain unmeasured. It was not adopted on a plausible
+reading, and that is still the right call.

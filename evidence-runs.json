@@ -20,6 +20,41 @@
   "ciBranch": "claude/ci-run-6a6687c",
   "runs": [
     {
+      "run": 34,
+      "workflowRunId": 33970633589,
+      "measuredCommit": "10dd7fa5fb9b61af0f29c5bba19dc4900e7e4c31",
+      "kind": "verdict on section 21: the tier verification hop",
+      "verdict": "GREEN on both legs. unit-shell 161/0, flake check pass, acceptance 198/0. t24 green in full.",
+      "results": {
+        "nix-2.34.7": {
+          "unitShell": "161/0",
+          "flakeCheck": "pass",
+          "acceptance": "198/0",
+          "acceptanceDuration": "4m44s"
+        },
+        "nix-2.24.9": {
+          "unitShell": "161/0",
+          "flakeCheck": "pass",
+          "acceptance": "green",
+          "acceptanceDuration": "5m31s"
+        }
+      },
+      "attribution": "THE RESULT IS THE ATTRIBUTION, NOT THE GREEN. t24.11-t24.14 and t24.17/t24.18 were RED in runs 32 and 33 with the same test file; the only change is nse_tier_materialise reading the tier through a local store. And leg C (t24.20-t24.23) passed in run 33 too, but TRIVIALLY -- everything passed. It passes now while legs A and B fail without the key, which is what makes the success attributable to the key rather than to a tool that accepts whatever it is handed.",
+      "claimNowEstablished": "A binary tier whose objects Nix will not accept produces SIGNATURE_UNTRUSTED, naming an object the tier really holds and quoting what Nix said, and never an absence, an outage, or a quietly weakened trust policy. Supplying the tier's public key -- and only that -- turns the same run green. Within the tested envelope: a local file:// tier, a locally generated key, x86_64-linux, Nix 2.24.9 and 2.34.7, a GitHub Actions runner.",
+      "preRegisteredNonObservables": {
+        "t20": "green -- a lying tier is still BINARY_TIER_ERROR, not a signature refusal. No laundering in either direction.",
+        "t21": "green, and FAST: t21.1 at 14:06:02, t21.2 at 14:06:39 -- 37 seconds.",
+        "t15/t16": "green -- the extra hop is transparent to a cache.nixos.org tier, which had to be checked rather than assumed since the hop sits in every source-origin-independence run.",
+        "section20": "unchanged: 166/164/2/3/38, 160 flat + 6 nar, 639 derivations, 876 objects, closureSha256 7f141ef13672adf93a9a23dc3bddbbbd47bf6fd39038cf60a3c338f5d9ccecb2"
+      },
+      "measuredCost": "about one minute: 4m44s against ~3m40s. That is the local copy predicted in 21d, recorded because a cost named in advance and never measured is only a disclaimer.",
+      "cost of the whole line": "Five runs: 30 fixture carried a trusted signature, 31 the suite died before an assertion, 32 first full execution and two findings, 33 the probe attributed the cause, 34 the fix verified.",
+      "stillOpen": [
+        "gap-24: no credential crossed a network",
+        "gap-26: nix store verify --sigs would avoid the second copy; its flags across both Nix versions remain unmeasured"
+      ]
+    },
+    {
       "run": 33,
       "workflowRunId": 33969956916,
       "measuredCommit": "b11d627d23fafd4f6e2d759ffa71eb0d893d646f",
