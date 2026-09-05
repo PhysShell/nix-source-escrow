@@ -566,6 +566,7 @@ proves that last check can still fail, by flipping gap-12 back to OPEN.
 | `gap-21` | MODE_UNSUPPORTED has exactly one trigger; buildability of notProvidedPaths is left to the build. | fourth review |
 | `gap-22` | The binary replica's contents are faithful to the named tier; its reachability is still simulated and the replay audit only measures file:// stores. | fourth review |
 | `gap-24` | The binary-tier signature policy is exercised only against a local file:// tier signed by a locally generated key. No credential crosses a network and no real authenticated backend (S3, Attic, an HTTPS cache behind auth) has been tested, so what a real tier does with an expired or wrong credential is not established. | sixth review |
+| `gap-25` | With a tier verified to hold an object carrying no signature at all, preserve materialised it and wrote a manifest: the SIGNATURE_UNTRUSTED branch did not fire (run 32, t24.11). Whether this tool performs no signature check on the tier path, or Nix does not verify when the destination is a binary cache rather than a local store, is not established. | sixth review |
 
 **Closed and superseded:** `gap-12`, `gap-13`, `gap-17`, `gap-19`, `gap-23`. See
 `known-gaps.json` for what closed each one and where the evidence is.

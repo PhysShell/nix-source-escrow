@@ -20,6 +20,52 @@
   "ciBranch": "claude/ci-run-6a6687c",
   "runs": [
     {
+      "run": 32,
+      "workflowRunId": 33969223926,
+      "measuredCommit": "9fc07e3bbc8d75c7d65835e45347415be6e877d1",
+      "kind": "t24 third attempt -- first execution end to end",
+      "verdict": "186/8 on both legs. flake check GREEN. The fixture preconditions hold, so for the first time the reds are FINDINGS rather than harness faults.",
+      "results": {
+        "nix-2.34.7": {
+          "unitShell": "159/0",
+          "flakeCheck": "pass",
+          "acceptance": "186/8"
+        },
+        "nix-2.24.9": {
+          "unitShell": "159/0",
+          "flakeCheck": "pass",
+          "acceptance": "186/8"
+        }
+      },
+      "findings": [
+        {
+          "id": "signing-never-worked",
+          "assertion": "t24.4 the signed tier really carries signatures -- expected something other than 0",
+          "what": "secret-key-files does NOT sign on a cache-to-cache nix copy; the signed tier had zero Sig: lines.",
+          "why it matters": "The same precondition PASSED in run 30 -- on cache.nixos.org signatures propagated from the host store. The signing mechanism had never once worked, in either run, and only a fixture with nothing to inherit could reveal it.",
+          "correction": "Signing now goes through a local store (copy in, nix store sign --store, copy out), and t24.8 requires the signatures to be BY THE GENERATED KEY, not merely present."
+        },
+        {
+          "id": "unsigned-object-accepted",
+          "assertion": "t24.11 an unsigned tier object is refused, not accepted; t24.16 no manifest is written",
+          "what": "On a tier verified unsigned (t24.1, t24.5, t24.6 all green), preserve materialised the object and wrote a manifest. The SIGNATURE_UNTRUSTED branch did not fire.",
+          "mechanism": "NOT ESTABLISHED, and deliberately not guessed. 'This tool does not check' and 'Nix does not verify into a binary-cache destination' produce the same green leg.",
+          "measuredNext": "t24.9 requires Nix to REFUSE the same object into a local store (control that checking is live at all); t24.10 carries the pre-registered PREDICTION that a binary-cache destination accepts it. preserve.sh is unchanged until they answer. gap-25."
+        }
+      ],
+      "green": [
+        "nix flake check (u26 worked on its first CI outing)",
+        "unit-shell 159/0",
+        "t24.1/t24.5/t24.6 fixture preconditions",
+        "t24.15 nothing recorded as revised-absent",
+        "t24.19 no --no-check-sigs added to the tier path",
+        "t23.1-t23.6",
+        "t03.9",
+        "t22"
+      ],
+      "statusOfTheClaim": "The binary-tier signature policy is STILL not established, three runs in. What changed is the character of the reds: runs 30 and 31 measured nothing, run 32's reds are findings."
+    },
+    {
       "run": 31,
       "workflowRunId": 33968436297,
       "measuredCommit": "65a81dd76f247cd128d535ba825ab94308ff204f",

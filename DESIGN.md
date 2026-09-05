@@ -2139,3 +2139,71 @@ consequence of the limitation in §20c — the acceptance suite cannot be execut
 on the machine that writes it. `u23`, `u25` and `u26` are what can be closed
 statically. The rest is paid for one CI run at a time, and saying so is cheaper
 than pretending the next push is obviously correct.
+
+### 21c. Run 32: t24 finally executed, and it found two things
+
+Run 32 (`9fc07e3`), both Nix versions. `nix flake check` **green** — `u26` did
+its job. `unit-shell` 159/0. And `t24` ran end to end for the first time:
+**186/8**.
+
+The fixture preconditions are green, which is what makes the rest a measurement
+rather than a rumour: `t24.1` the stripped cache has no signatures left, `t24.5`
+the unsigned tier carries none, `t24.6` it is not simply empty.
+
+#### Finding one: the signing mechanism had never worked
+
+```
+FAIL t24.4 the signed tier really carries signatures   expected something other than '0'
+```
+
+`secret-key-files` does **not** sign on a cache-to-cache `nix copy`. The signed
+tier came back with zero `Sig:` lines.
+
+Now read that against run 30, where the same precondition **passed**. It passed
+on signatures that were `cache.nixos.org`'s, propagated out of the host store.
+So the signing mechanism this test depends on had **never once worked**, in
+either run, and the only reason anyone knows is that the precondition was
+finally asked on a fixture with nothing to inherit.
+
+Signing now goes through a local store — copy in, `nix store sign --store`, copy
+out — and `t24.8` requires the signatures to be **by the key this test
+generated**, not merely present. Counting `Sig:` lines is precisely what let run
+30 through.
+
+#### Finding two: with a verified-unsigned tier, preserve accepted the object
+
+```
+FAIL t24.11 an unsigned tier object is refused, not accepted
+FAIL t24.16 and no manifest is written from a refused materialisation
+```
+
+This is §21's "leg A green" case, and this time on a fixture that has been
+checked. An object carrying **no signature at all** was materialised out of the
+binary tier and a manifest was written.
+
+**The mechanism is not being asserted.** §17 forbids writing a plausible one, and
+"the tool has no signature checking" and "Nix does not verify on this destination"
+produce the same green leg. So run 33 measures it instead of guessing:
+
+| probe | destination | required |
+| --- | --- | --- |
+| `t24.9` | a **local store**, `require-sigs = true` | must **refuse** — the control that signature checking is live here at all |
+| `t24.10` | a **binary cache** directory, same config | **predicted to accept** |
+
+The prediction is that verification lives in the local store's add path, so a
+`file://` replica destination never verifies. If `t24.10` goes red the prediction
+is wrong and `t24.11`'s cause is somewhere else entirely — which is the only
+reason to write the prediction down before the run rather than after it.
+
+`preserve.sh` is **not** being changed yet. If the probe says the destination is
+the mechanism, the fix is a design decision — materialise through a store that
+verifies, rather than making the existing copy try harder — and that choice
+should be made with the answer in hand, not with a hypothesis. `gap-25` records
+the open question.
+
+#### The state of the claim
+
+The binary-tier signature policy is still **not established**, three runs in. But
+the reds have changed character: runs 30 and 31 were harness faults that measured
+nothing, and run 32's are findings. That is a different kind of red and it is
+worth saying so.

@@ -208,6 +208,12 @@
       "claim": "The binary-tier signature policy is exercised only against a local file:// tier signed by a locally generated key. No credential crosses a network and no real authenticated backend (S3, Attic, an HTTPS cache behind auth) has been tested, so what a real tier does with an expired or wrong credential is not established.",
       "status": "OPEN",
       "openedAt": "2026-09-05"
+    },
+    {
+      "id": "gap-25",
+      "claim": "With a tier verified to hold an object carrying no signature at all, preserve materialised it and wrote a manifest: the SIGNATURE_UNTRUSTED branch did not fire (run 32, t24.11). Whether the cause is that this tool performs no signature check on the tier path, or that Nix does not verify signatures when the destination is a binary cache rather than a local store, is NOT established. t24.9/t24.10 measure it; no fix is being applied to preserve.sh until they answer.",
+      "status": "OPEN",
+      "openedAt": "2026-09-05"
     }
   ]
 }
