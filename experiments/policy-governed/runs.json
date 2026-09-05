@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "kind": "experiment-run-index",
+  "line": "policy-governed-source-escrow",
+  "title": "Policy-governed source escrow under an untrusted change proposal",
+  "preregistration": "experiments/policy-governed/PREREG.md",
+  "branchedFrom": {
+    "commit": "84354e85872c385e649af0e1b90ef4a2e0997949",
+    "line": "nix-source-escrow v0.1 source-escrow experiment",
+    "status": "CLOSED_AND_FROZEN",
+    "note": "That line's index is evidence-runs.json at the repository root. It is NOT the index of this line and nothing is appended to it. Its history and its recorded results are not modified here."
+  },
+  "note": "This index holds runs of the policy-governed line only. A run is indexed ONLY if it measures a pre-registered claim (PREREG.md §19). Docs-only changes, cleanup and operational CI are NOT AN EMPIRICAL RUN and do not appear here. A GitHub Actions workflow number is not a number of knowledge and is not used as one.",
+  "countPolicy": "runs[] holds indexed empirical runs. The array being empty means no empirical run has been recorded, never that none was attempted.",
+  "primaryClaims": [
+    {
+      "id": "C1",
+      "claim": "A candidate cannot weaken its governing policy.",
+      "status": "PREREGISTERED_NOT_MEASURED"
+    },
+    {
+      "id": "C2",
+      "claim": "A candidate cannot replace its governing judge.",
+      "status": "PREREGISTERED_NOT_MEASURED"
+    },
+    {
+      "id": "C3",
+      "claim": "A policy-relevant graph change cannot hide behind content equality.",
+      "status": "PREREGISTERED_NOT_MEASURED"
+    },
+    {
+      "id": "C4",
+      "claim": "A source policy annotation changes derivation identities but not realised output identities, and causes no rebuild work.",
+      "status": "PREREGISTERED_NOT_MEASURED"
+    }
+  ],
+  "noClaims": [
+    "Real GitHub hosted-workflow authority is NOT solved by this line. A workflow inside a personal repository is a measurement instrument here, not a gate.",
+    "Authenticated durable promotion is NOT solved by this line. No bytes produced by the untrusted candidate phase are promoted into durable storage."
+  ],
+  "storageTopology": {
+    "location": "local",
+    "durability": "ephemeral",
+    "credentials": "none",
+    "candidateTrust": "UNTRUSTED"
+  },
+  "runs": []
+}
