@@ -165,16 +165,6 @@ assert_eq "t02.9 closure.json splits escrow from replica" \
 # ---------------------------------------------------------------------------
 head_ "t03  preservation"
 assert_eq "t03.1 every discovered flake input is in the escrow" \
-
-# gap-23: OBJECTS_REALISED rose by two for one added source and was briefly
-# filed as unexplained, while three numbers in the same report explained it.
-# The realised set is `--requisites --include-outputs`, so it contains the .drv
-# files themselves; one new fixed-output source adds its .drv AND its output.
-# Asserted here so a future divergence is a red test, not arithmetic done after
-# the fact. DESIGN.md §20b.
-assert_eq "t03.9 the realised set contains exactly one .drv per discovered derivation" \
-  "true" "$(jq -r --argjson n "$(grep -c '\.drv$' "$ESCROW/work/staging-requisites.txt" || echo 0)" \
-              '.derivationDocument.derivations == $n' "$DISCOVERY")"
   "true" "$(jq -r "([.flakeInputs[]|select(.escrow.present)]|length) == .counts.flakeInputs" "$MANIFEST")"
 assert_eq "t03.2 all plan-required sources preserved" \
   "0" "$(jq -r '.counts.sourcesMissing' "$MANIFEST")"
@@ -192,6 +182,17 @@ assert_eq "t03.6 NAR integrity covers the WHOLE closure, not just the sources" \
   "full-closure" "$(jq -r ".narIntegrity.scope" "$VJ")"
 assert_eq "t03.7 the number of NAR-verified paths equals the closure size" \
   "true" "$(jq -r ".narIntegrity.pathsChecked == .presence.closurePaths" "$VJ")"
+
+# gap-23: OBJECTS_REALISED rose by two for one added source and was briefly
+# filed as unexplained, while three numbers in the same report explained it.
+# The realised set is `--requisites --include-outputs`, so it contains the .drv
+# files themselves; one new fixed-output source adds its .drv AND its output.
+# Asserted here so a future divergence is a red test rather than arithmetic done
+# after the fact. DESIGN.md §20b.
+n_drv=$(grep -c '\.drv$' "$ESCROW/work/staging-requisites.txt" || true)
+assert_eq "t03.9 the realised set holds exactly one .drv per discovered derivation" \
+  "true" \
+  "$(jq -r --argjson n "${n_drv:-0}" '.derivationDocument.derivations == $n' "$DISCOVERY")"
 
 # ---------------------------------------------------------------------------
 head_ "t04  idempotency"

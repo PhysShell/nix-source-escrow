@@ -250,6 +250,8 @@ Before trusting a check:
 - [ ] Its fixture is a shape the real system emits.
 - [ ] Its sample can exhibit the difference under investigation.
 - [ ] I have measured how long its FAILING path takes, not only its passing one.
+- [ ] I have EXECUTED it, not merely parsed it. A syntax check is not an
+      execution check: a call that lost its arguments is still valid shell.
 
 Before an intervention:
 

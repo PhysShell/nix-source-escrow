@@ -770,6 +770,46 @@ assert_ne "u22.2 and the retention framing is actually present" "0" \
   "$(grep -ciE 'retention obligation' "$ROOT/DESIGN.md")"
 
 # ---------------------------------------------------------------------------
+head_ "u23  no assertion in the Nix-dependent suite has lost its arguments"
+# tests/run-tests.sh needs Nix, so it cannot run here -- and `bash -n` says
+# nothing about an assertion called with the wrong number of arguments. An edit
+# spliced a comment between `assert_eq "t03.1 ..." \` and its arguments, leaving
+# a one-argument call and orphaning the arguments below it. The file stayed
+# syntactically valid, `bash -n` reported ok, and only CI could find it:
+#
+#   tests/run-tests.sh: line 28: $2: unbound variable
+#
+# A syntax check is not an execution check. This is the cheapest thing that
+# would have caught it here, where there is no Nix.
+malformed=$(awk '
+  { line = $0
+    # join backslash continuations into one logical line
+    while (sub(/\\[ \t]*$/, "", line) && (getline nxt) > 0) { sub(/^[ \t]+/, " ", nxt); line = line nxt }
+    if (line ~ /^[ \t]*assert_(eq|ne)[ \t]/) {
+      # after the name and the first quoted label, at least one more argument
+      rest = line; sub(/^[ \t]*assert_(eq|ne)[ \t]+/, "", rest)
+      if (rest !~ /^"[^"]*"[ \t]+[^ \t]/) print FILENAME ":" NR ": " substr(line, 1, 70)
+    }
+    # an argument line orphaned from its call
+    if ($0 ~ /^[ \t]+"[^"]*"[ \t]+"\$\(/ && prev !~ /\\[ \t]*$/ && prev !~ /assert_/) 
+      print FILENAME ":" NR ": orphaned argument line"
+    prev = $0
+  }' "$ROOT/tests/run-tests.sh" "$ROOT/tests/unit-shell.sh" || true)
+assert_eq "u23.1 every assert call still carries its arguments" "" "$malformed"
+# And prove the check can fail, rather than trusting a green from a checker
+# nobody has seen red.
+# shellcheck disable=SC2016  # a literal fixture, not an expansion
+printf 'assert_eq "orphaned label only"\n  "true" "$(true)"\n' > "$TMP/broken-suite.sh"
+caught=$(awk '
+  { line = $0
+    while (sub(/\\[ \t]*$/, "", line) && (getline nxt) > 0) { sub(/^[ \t]+/, " ", nxt); line = line nxt }
+    if (line ~ /^[ \t]*assert_(eq|ne)[ \t]/) {
+      rest = line; sub(/^[ \t]*assert_(eq|ne)[ \t]+/, "", rest)
+      if (rest !~ /^"[^"]*"[ \t]+[^ \t]/) print "caught"
+    } }' "$TMP/broken-suite.sh")
+assert_eq "u23.2 and the check really does catch a stripped assertion" "caught" "$caught"
+
+# ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"
 # A comment may name the old bug; an emitted line may not. Anchoring at the
 # start of a non-comment line is what separates the two.

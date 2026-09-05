@@ -1831,3 +1831,33 @@ not guess":
 after the fact: the count of `.drv` paths in the realised set equals the
 derivation count discovery recorded, so a future divergence between the two is
 a red test rather than a mystery in a table.
+
+### 20c. A syntax check is not an execution check
+
+Run 27 (`0d4ae1e`) died 74 seconds in:
+
+```
+tests/run-tests.sh: line 28: $2: unbound variable
+```
+
+Line 28 is `assert_eq`. An edit inserted `t03.9` between
+`assert_eq "t03.1 …" \` and its arguments, so `t03.1` became a one-argument call
+and its arguments were orphaned on the line below. The file remained
+**syntactically valid**, `bash -n` reported ok, `shellcheck` reported ok, and
+this machine has no Nix, so the only thing that could execute the suite was CI.
+
+The honest statement of a standing limitation: for `tests/run-tests.sh`, "checked
+locally" has only ever meant *parsed* locally. That is a weaker claim than the
+one made for `tests/unit-shell.sh`, which is genuinely executed here, and the
+difference had not been written down.
+
+`u23` is the cheapest thing that closes it without Nix: it joins line
+continuations and requires every `assert_eq` / `assert_ne` to still carry an
+argument after its label, and flags an orphaned argument line. `u23.2` proves
+the check goes red on a stripped assertion, because a checker nobody has seen
+fail is not a checker — the lesson of `u20.8`, applied on the same day it was
+learned.
+
+Added to `EXPERIMENT-PROTOCOL.md`'s checklist as its own line:
+
+> I have EXECUTED it, not merely parsed it.
