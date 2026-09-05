@@ -167,6 +167,90 @@
         "policy-governed-qualification-nix2.34.7": 9976090156,
         "policy-governed-qualification-nix2.24.9": 9976090881
       }
+    },
+    {
+      "run": 3,
+      "workflowRunId": 33991454076,
+      "measuredCommit": "4771e86003fe2e7e12a8638b7dbcee23fbb44c1b",
+      "date": "2026-09-05",
+      "kind": "EMPIRICAL",
+      "fixtureIdentity": {
+        "flake": "fixture (the closed line's fixture, reused as an instrument)",
+        "nixpkgsPin": "d2f67949798825fe853f7c5d0492b8bf016d3f88"
+      },
+      "nixVersions": [
+        "2.34.7",
+        "2.24.9"
+      ],
+      "preregSections": [
+        "§6",
+        "§11.1",
+        "§13",
+        "§14",
+        "§15",
+        "§16"
+      ],
+      "primaryClaims": [],
+      "supports": "Mechanism: a RECORDED facts document over a real graph, the matcher applied to it, the untrusted phase run local/ephemeral/credential-free, and CACH1/CACH4 measured. Not itself evidence for C1-C4; those are runs 2 and the corpus.",
+      "expectedTrace": "A facts document with SEED_PROVENANCE=RECORDED; decisions carrying matched-rule provenance; SOURCE_ORIGIN_INDEPENDENCE PASS from a local ephemeral credential-free store with durablePromotion=false; a warm run agreeing with the cold one on every semantic field and differing only in elapsed time.",
+      "observedTrace": {
+        "facts": {
+          "dependencies": 150,
+          "seedProvenance": "RECORDED",
+          "note": "A real graph, not a hand-written document. PREREG.md §11.1's condition for the corpus to count as evidence rather than as a mechanism test is now satisfiable."
+        },
+        "decisions": {
+          "dependencies": 150,
+          "mustPreserve": 150,
+          "quarantined": 0,
+          "ruleConflicts": 0,
+          "policyConflicts": 0,
+          "undecided": 0,
+          "matched": {
+            "r-github-required": 34,
+            "r-gnu-mirror-auto": 1
+          },
+          "inertForUnknownFact": {
+            "r-github-required/originHost": 2,
+            "r-gnu-mirror-auto/originHost": 2
+          },
+          "note": "Four rule/source pairs were INERT because originHost was UNKNOWN, and the report names which rule and which selector. PREREG.md §7.3 in practice: the rule did not match, and the reason is legible rather than mysterious."
+        },
+        "scratch": {
+          "checkName": "SOURCE_ORIGIN_INDEPENDENCE PASS",
+          "exitCode": 0,
+          "elapsedMillisecondsCold": 34531,
+          "preflight": "CLEARED",
+          "credentialsScrubbed": [],
+          "durablePromotion": false
+        },
+        "cache": {
+          "coldMs": 34531,
+          "warmMs": 17189,
+          "speedup": 2.0,
+          "CACH1_semanticsUnchanged": true,
+          "CACH4_onlyCostMoved": true
+        }
+      },
+      "verdict": "MECHANISM_MEASURED",
+      "findings": [
+        "The facts document over the real fixture graph carries 150 dependencies and declares itself RECORDED. Every decision carries its matched rules and the trusted policy revision.",
+        "Four rule/source pairs were inert because originHost came back UNKNOWN, and the decision names the rule and the selector. That is PREREG.md §7.3 doing what it was written for: an UNKNOWN fact does not match, and the author of an inert rule can see why.",
+        "SOURCE_ORIGIN_INDEPENDENCE PASS from a store that was local, ephemeral and credential-free, with the guarantee named in the check.",
+        "CACH1 and CACH4 hold: cold 34.5s, warm 17.2s, a 2x speedup with every semantic field identical. The cache moved the clock and nothing else."
+      ],
+      "defectsFoundInThisRun": [
+        "The CACH2 step used `find ... | head -1` under `set -o pipefail`, so find died of SIGPIPE and the step failed before looking at anything. That is the 'destroys its own specimen' shape listed BY NAME in this repository's own EXPERIMENT-PROTOCOL.md §1, reproduced verbatim in a step written by someone who had read it. Replaced with `find -print -quit`. CACH2 is therefore NOT MEASURED in this run.",
+        "p39.4 asserted a failure branch of nse_pg_scratch_prepare using a permission-based specimen that the function's own chmod defeats. The code was right and the test was wrong, twice. The branch that IS constructible is now tested; the branch that is not is described rather than faked."
+      ],
+      "notMeasured": [
+        "CACH2 (a corrupted accelerator) -- the step died before it corrupted anything.",
+        "The ESCROW_REPLAY control (PREREG.md §16) -- the job failed at CACH2 before reaching it."
+      ],
+      "artifacts": {
+        "policy-governed-qualification-nix2.34.7": 9976768267,
+        "policy-governed-qualification-nix2.24.9": 9976768613
+      }
     }
   ]
 }

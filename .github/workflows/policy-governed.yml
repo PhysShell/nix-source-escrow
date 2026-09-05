@@ -288,11 +288,22 @@ jobs:
         run: |
           set -o pipefail
           S="$RUNNER_TEMP/pg-shared-staging"
-          victim=$(find "$S/nix/store" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)
+          # `-print -quit`, NEVER `find | head`.
+          #
+          # EXPERIMENT-PROTOCOL.md §1 lists this shape by name: "destroys its
+          # own specimen -- find | head under pipefail + set -e ended the suite
+          # mid-way". `head` closes the pipe, find dies of SIGPIPE with 141,
+          # pipefail propagates it, and the step is dead before it has looked
+          # at anything. This job reproduced that defect verbatim, in the file
+          # that documents it.
+          victim=$(find "$S/nix/store" -maxdepth 1 -mindepth 1 -type d -print -quit 2>/dev/null || true)
           if [ -z "$victim" ]; then echo "no staging object to corrupt; CACH2 NOT MEASURED"; exit 0; fi
           echo "corrupting: $victim"
           chmod -R u+w "$victim" 2>/dev/null || true
-          find "$victim" -type f | head -1 | while read -r f; do printf 'CORRUPTED\n' >> "$f"; done
+          target=$(find "$victim" -type f -print -quit 2>/dev/null || true)
+          if [ -z "$target" ]; then echo "the chosen object holds no file; CACH2 NOT MEASURED"; exit 0; fi
+          echo "corrupting file: $target"
+          printf 'CORRUPTED\n' >> "$target"
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           rc=0
           NSE_PG_STAGING="$S" ./bin/nse-pg scratch \

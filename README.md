@@ -466,6 +466,28 @@ wrong `systems`.
 * **No claim about Software Heritage recoverability is made**, because none has
   been demonstrated. `DESIGN.md` §1 and §3.
 
+## A second line, branched from here
+
+This repository's first experiment is **closed and frozen** at `84354e8`.
+Everything above describes it, and nothing in the second line modifies it — not
+its history, not `evidence-runs.json`, not `known-gaps.json`.
+
+A second line branches from that commit and asks a different question:
+
+> **Who is allowed to decide what must be preserved, when the proposed change
+> itself is untrusted?**
+
+It lives entirely under
+[`experiments/policy-governed/`](experiments/policy-governed/) with its own
+pre-registration, its own run index and its own tests, and it reuses the
+discovery / preserve / verify / prove stages above as **instruments** without
+inheriting their conclusions.
+
+It does **not** claim that a workflow in a personal GitHub repository provides
+real judge independence, and it does **not** claim anything about authenticated
+durable promotion. Both are separate envelopes. See
+[`experiments/policy-governed/README.md`](experiments/policy-governed/README.md).
+
 ## Further reading
 
 * `DESIGN.md` — the decisions worth arguing about, with measurements.

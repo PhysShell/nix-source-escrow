@@ -1050,15 +1050,41 @@ assert_eq "p39.2 and the store is empty afterwards" "0" \
   "$(find "$SC" -mindepth 1 | wc -l | tr -d ' ')"
 nse_pg_scratch_prepare "$SC"
 assert_eq "p39.3 preparing an already-empty store removes nothing" "0" "${NSE_PG_SCRATCH_WIPED:-x}"
-# The refusal path: a directory that cannot be emptied must FAIL, not report
-# success on a store it did not clear.
+# THE REFUSAL PATH, and an honest account of what can be constructed here.
+#
+# nse_pg_scratch_prepare has two failure branches:
+#
+#   (a) the directory cannot be CREATED          -- constructible, tested below
+#   (b) it was created but is not empty afterwards
+#
+# Branch (b) is real -- an immutable-flagged file, a busy mount point, a
+# filesystem error -- and it has no portable specimen a unit suite can build
+# without privileges: the function chmods the tree writable before removing it,
+# which is correct behaviour (a Nix store path is read-only by construction and
+# would otherwise be unremovable), and that same chmod defeats every
+# permission-based specimen. Two earlier attempts at one were wrong in exactly
+# that way, and both times the CODE was right and the test was not.
+#
+# EXPERIMENT-PROTOCOL.md §1 asks for the observable trace that would make a
+# check report failure. It is describable, and it is stated here rather than
+# faked with a specimen that does not reproduce it.
+rm -rf "$TMP/blocked"; : > "$TMP/blocked"      # a FILE where a directory must go
+rc=0; nse_pg_scratch_prepare "$TMP/blocked/scratch" || rc=$?
+assert_ne "p39.4 a scratch store that cannot be CREATED is a failure" "0" "$rc"
+rm -f "$TMP/blocked"
 if [ "$(id -u)" -eq 0 ]; then
-  echo "  skipped p39.4 (running as root: an unwritable directory is still writable)"
+  echo "  skipped p39.5 (running as root: permission bits do not apply)"
 else
-  rm -rf "$TMP/locked"; mkdir -p "$TMP/locked/sub"; : > "$TMP/locked/sub/file"; chmod 500 "$TMP/locked"
-  rc=0; nse_pg_scratch_prepare "$TMP/locked/sub" || rc=$?
-  chmod 700 "$TMP/locked" 2>/dev/null || :
-  assert_ne "p39.4 a store that cannot be emptied is a failure, not a success" "0" "$rc"
+  # What a read-only tree DOES do: get force-removed. That is the behaviour a
+  # Nix staging store needs -- its paths are read-only by construction -- so it
+  # is asserted rather than merely relied on.
+  rm -rf "$TMP/locked"; mkdir -p "$TMP/locked/keep"; : > "$TMP/locked/keep/file"
+  chmod 500 "$TMP/locked/keep"
+  rc=0; nse_pg_scratch_prepare "$TMP/locked" || rc=$?
+  chmod 700 "$TMP/locked/keep" 2>/dev/null || :
+  assert_eq "p39.5 a read-only subtree is force-removed, as a Nix store requires" "0" "$rc"
+  assert_eq "p39.5a and the store really is empty afterwards" "0" \
+    "$(find "$TMP/locked" -mindepth 1 2>/dev/null | wc -l | tr -d " ")"
 fi
 
 head_ "p40  CACH1 / CACH4: only the cost may move"
@@ -1103,6 +1129,50 @@ assert_eq "p41.2 a graph with zero dependencies still gets a verdict, and it is 
   "REJECTED" "$(jq -r .verdict "$EF")"
 assert_eq "p41.3 the judge mismatch is still what rejects it -- 0 of 0 did not go green" \
   '["JUDGE_MISMATCH"]' "$(jq -c .rejectedBy "$EF")"
+
+# ---------------------------------------------------------------------------
+head_ "p42  the documentation does not out-claim the evidence"
+# The closed line wrote this rule into its own units after finding a correct
+# disclosure sitting on screen four, below three sections a reader stops
+# before. Position is part of a disclosure; a caveat nobody reaches is not a
+# caveat. The same guard, for this line's own documents.
+PGDOC=$ROOT/experiments/policy-governed/README.md
+assert_ne "p42.1 the README exists" "0" "$(test -f "$PGDOC" && echo 1 || echo 0)"
+assert_ne "p42.2 it carries the non-claim about GitHub judge independence" "0" \
+  "$(grep -c 'NO CLAIM' "$PGDOC" || true)"
+assert_ne "p42.3 naming judge independence" "0" \
+  "$(grep -ci 'judge independence' "$PGDOC" || true)"
+assert_ne "p42.4 and durable promotion" "0" \
+  "$(grep -ci 'durable promotion is solved' "$PGDOC" || true)"
+# The pre-registration must carry them too, and its amendments log must exist.
+PGPRE=$ROOT/experiments/policy-governed/PREREG.md
+assert_ne "p42.5 the pre-registration carries both non-claims" "0" \
+  "$(grep -c 'NO CLAIM' "$PGPRE" || true)"
+assert_ne "p42.6 and has an amendments log, because a silent amendment is not allowed" "0" \
+  "$(grep -c '^## 22. Amendments' "$PGPRE" || true)"
+# A claim this line does NOT support must not appear as an assertion anywhere
+# in its documents. A sentence may deny it; none may make it.
+for banned in 'proves GitHub-level' 'solves durable promotion' 'production-ready'; do
+  assert_eq "p42.7 no document asserts '$banned'" "" \
+    "$(grep -rn "$banned" "$PGDOC" "$PGPRE" || true)"
+done
+assert_ne "p42.7a positive control: such a sentence WOULD be caught" "0" \
+  "$(printf '%s\n' 'this proves GitHub-level authority' | grep -c 'proves GitHub-level' || true)"
+# The run index must not claim a status it has no run for.
+PGRUNS=$ROOT/experiments/policy-governed/runs.json
+assert_eq "p42.8 the run index is valid JSON" "ok" \
+  "$(jq -e . "$PGRUNS" >/dev/null 2>&1 && echo ok || echo bad)"
+assert_eq "p42.9 every claim marked MEASURED names the run that measured it" "" \
+  "$(jq -r '[.primaryClaims[] | select(.status | startswith("MEASURED")) | select(has("evidence") | not) | .id] | join(",")' "$PGRUNS")"
+assert_eq "p42.10 every indexed run names the commit it measured" "" \
+  "$(jq -r '[.runs[] | select((.measuredCommit // "") | test("^[0-9a-f]{40}$") | not) | (.run|tostring)] | join(",")' "$PGRUNS")"
+assert_eq "p42.11 and its verdict and observed trace, not just an expectation" "" \
+  "$(jq -r '[.runs[] | select((has("observedTrace") and has("verdict")) | not) | (.run|tostring)] | join(",")' "$PGRUNS")"
+# The closed line's index is NOT this line's index, and nothing was appended.
+assert_eq "p42.12 the closed line's run index has not gained entries from this line" "" \
+  "$(jq -r '[.runs[] | select((.note // "") | test("policy-governed"))] | length | select(. > 0) | tostring' "$ROOT/evidence-runs.json")"
+assert_ne "p42.13 and this line's index names the frozen commit it branched from" "0" \
+  "$(jq -r '.branchedFrom.commit | test("^84354e85") | if . then 1 else 0 end' "$PGRUNS")"
 
 # ---------------------------------------------------------------------------
 head_ "p10  the new executable is actually linted, and the lint mirror cannot drift"
