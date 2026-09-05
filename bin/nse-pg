@@ -102,6 +102,8 @@ options:
                       omits the guarantee is refused rather than defaulted.
   --scratch-dir D     where the ephemeral store lives (scratch)
   --requisites F      a realised requisite list, if one exists (facts)
+  --base-facts F      the base graph, if it is not <trusted-root>/facts.json
+  --head-facts F      the candidate graph, if it is not <candidate-root>/facts.json
   --seed FILE         seed facts document (corpus)
   --corpus-dir D      where the generated proposals go (corpus)
   --gate-report F     the gate report to summarise (summary)
@@ -144,6 +146,8 @@ pg_gate_report=""
 pg_scratch_report=""
 pg_seed=""
 pg_corpus_dir=""
+pg_base_facts=""
+pg_head_facts=""
 pg_base=""
 pg_head=""
 while [ $# -gt 0 ]; do
@@ -178,6 +182,10 @@ while [ $# -gt 0 ]; do
              pg_gate_report=$(nse_abspath "$2"); shift 2 ;;
     --scratch-report) [ $# -ge 2 ] || { printf 'nse-pg: --scratch-report needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_scratch_report=$(nse_abspath "$2"); shift 2 ;;
+    --base-facts) [ $# -ge 2 ] || { printf 'nse-pg: --base-facts needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_base_facts=$(nse_abspath "$2"); shift 2 ;;
+    --head-facts) [ $# -ge 2 ] || { printf 'nse-pg: --head-facts needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_head_facts=$(nse_abspath "$2"); shift 2 ;;
     --seed) [ $# -ge 2 ] || { printf 'nse-pg: --seed needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_seed=$(nse_abspath "$2"); shift 2 ;;
     --corpus-dir) [ $# -ge 2 ] || { printf 'nse-pg: --corpus-dir needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
@@ -252,7 +260,8 @@ case $cmd in
            exit "$NSE_PG_USAGE"; }
     : "${pg_out:=$pg_candidate_root/gate-report.json}"
     nse_pg_gate "$pg_trusted_root" "$pg_candidate_root" "$pg_out" \
-                "$pg_trusted_rev" "$pg_candidate_rev"
+                "$pg_trusted_rev" "$pg_candidate_rev" \
+                "$pg_base_facts" "$pg_head_facts"
     ;;
   facts)
     nse_require_cmd nix jq nix-store

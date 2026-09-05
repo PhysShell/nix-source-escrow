@@ -35,20 +35,32 @@
 #   organization-level required workflow or an external trusted judge, and
 #   both are a separate envelope.
 
-# The files that CONSTITUTE the judge. Hashed as a set, so adding a new one to
-# the candidate is as visible as editing an existing one.
-# An ARRAY, not a word list. A word list has to be left unquoted to expand,
-# and an unquoted expansion is one stray glob character away from meaning
-# something else -- in the one place where "which files ARE the judge" must not
-# be open to interpretation.
-NSE_PG_JUDGE_FILES=(
-  bin/nse-pg
-  lib/pg-common.sh
-  lib/pg-facts.sh
-  lib/pg-digest.sh
-  lib/pg-policy.sh
-  lib/pg-gate.sh
-)
+# ---------------------------------------------------------------------------
+# WHICH FILES ARE THE JUDGE
+#
+# DISCOVERED, not listed. The list used to be six names typed by hand, and it
+# was already wrong: seven more lib/pg-*.sh files were added afterwards and
+# none of them reached it, so a candidate could have edited the policy matcher
+# -- or the cache guard, or the summary that renders the verdict -- without
+# moving the judge identity at all. The guard in tests/pg-unit.sh found that,
+# and the fix is to stop maintaining the list by hand rather than to correct it
+# once and wait for the next file.
+#
+# `bin/nse-pg` plus every `lib/pg-*.sh`. Deciding which of them "really counts"
+# is exactly the judgement that goes stale; all of them count.
+#
+# nse_pg_judge_files <root>  ->  relative paths, one per line, sorted
+# ---------------------------------------------------------------------------
+nse_pg_judge_files() {
+  local root=$1
+  {
+    if [ -f "$root/bin/nse-pg" ]; then printf 'bin/nse-pg\n'; fi
+    if [ -d "$root/lib" ]; then
+      ( cd "$root" && find lib -maxdepth 1 -name 'pg-*.sh' -type f 2>/dev/null )
+    fi
+    :
+  } | LC_ALL=C sort -u
+}
 
 # ---------------------------------------------------------------------------
 # nse_pg_identity_of <root> <relative-path...>
@@ -130,6 +142,12 @@ nse_pg_root_revision() {
 # ---------------------------------------------------------------------------
 nse_pg_gate() {
   local trusted=$1 candidate=$2 report=$3 trusted_rev_opt=${4:-} candidate_rev_opt=${5:-}
+  # The facts documents default to <root>/facts.json, which is where the corpus
+  # fixtures keep them, and can be pointed elsewhere -- because a real checkout
+  # does not have one committed. The graph is DISCOVERED from the candidate and
+  # handed here; requiring it at a fixed path inside the tree would have made
+  # this gate a fixture exerciser rather than something a repository can run.
+  local base_facts_opt=${6:-} head_facts_opt=${7:-}
   local work=${report%/*}/gate-work
   rm -rf "$work"; mkdir -p "$work" || nse_pg_checker_error "cannot create $work"
 
@@ -172,9 +190,21 @@ nse_pg_gate() {
   nse_pg_log "policy: enforced from $trev ($tsrc); proposed $proposed_rev; POLICY_CHANGED=$policy_changed"
 
   # ---- 3. judge and workflow identity ------------------------------------
+  # The UNION of both roots, exactly as for the workflows and for the same
+  # reason: comparing each root against only its OWN files would let a
+  # candidate ADD a judge file, or DELETE one, and keep a matching identity.
+  local -a judge_union=()
+  mapfile -t judge_union < <(
+    { nse_pg_judge_files "$trusted"; nse_pg_judge_files "$candidate"; } \
+      | LC_ALL=C sort -u | sed '/^$/d')
+  if [ "${#judge_union[@]}" -eq 0 ]; then
+    nse_pg_checker_error "neither root contains a judge implementation (bin/nse-pg or
+       lib/pg-*.sh). A gate that cannot find the judge on either side cannot
+       report that the two match."
+  fi
   local judge_trusted judge_candidate
-  judge_trusted=$(nse_pg_identity_of "$trusted" "${NSE_PG_JUDGE_FILES[@]}")
-  judge_candidate=$(nse_pg_identity_of "$candidate" "${NSE_PG_JUDGE_FILES[@]}")
+  judge_trusted=$(nse_pg_identity_of "$trusted" "${judge_union[@]}")
+  judge_candidate=$(nse_pg_identity_of "$candidate" "${judge_union[@]}")
 
   local -a wf_trusted_files=() wf_candidate_files=()
   mapfile -t wf_trusted_files   < <(nse_pg_workflow_files "$trusted")
@@ -194,7 +224,8 @@ nse_pg_gate() {
   fi
 
   # ---- 4. facts, from the CANDIDATE root ---------------------------------
-  local head_facts=$candidate/facts.json base_facts=$trusted/facts.json
+  local head_facts=${head_facts_opt:-$candidate/facts.json}
+  local base_facts=${base_facts_opt:-$trusted/facts.json}
   [ -f "$head_facts" ] \
     || nse_pg_checker_error "no facts document at $head_facts. The graph is the one thing
        this gate DOES read from the candidate, and it is not optional."
@@ -248,8 +279,8 @@ nse_pg_gate() {
 
   # ---- 7. findings -------------------------------------------------------
   local judge_listing_t judge_listing_c wf_listing_t wf_listing_c
-  judge_listing_t=$(nse_pg_identity_listing "$trusted" "${NSE_PG_JUDGE_FILES[@]}")
-  judge_listing_c=$(nse_pg_identity_listing "$candidate" "${NSE_PG_JUDGE_FILES[@]}")
+  judge_listing_t=$(nse_pg_identity_listing "$trusted" "${judge_union[@]}")
+  judge_listing_c=$(nse_pg_identity_listing "$candidate" "${judge_union[@]}")
   if [ "${#wf_union[@]}" -eq 0 ]; then
     wf_listing_t='[]'; wf_listing_c='[]'
   else
@@ -259,6 +290,7 @@ nse_pg_gate() {
 
   nse_pg_jq -n \
     --arg trustedRoot "$trusted" --arg candidateRoot "$candidate" \
+    --arg baseFactsPath "$base_facts" --arg headFactsPath "$head_facts" \
     --arg enforcedRev "$trev" --arg enforcedRevSource "$tsrc" \
     --arg candidateRev "$crev" --arg candidateRevSource "$csrc" \
     --arg proposedRev "$proposed_rev" --arg policyChanged "$policy_changed" \
@@ -373,7 +405,8 @@ nse_pg_gate() {
 
     | { schemaVersion: 1,
         kind: "policy-governed-gate",
-        roots: { trusted: $trustedRoot, candidate: $candidateRoot },
+        roots: { trusted: $trustedRoot, candidate: $candidateRoot,
+                 baseFacts: $baseFactsPath, headFacts: $headFactsPath },
         # PREREG.md §8 requires these three, by these names, in the evidence.
         ENFORCED_POLICY_COMMIT: $enforcedRev,
         ENFORCED_POLICY_COMMIT_SOURCE: $enforcedRevSource,

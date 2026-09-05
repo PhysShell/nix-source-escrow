@@ -1226,6 +1226,71 @@ assert_eq "p41.3 the judge mismatch is still what rejects it -- 0 of 0 did not g
   '["JUDGE_MISMATCH"]' "$(jq -c .rejectedBy "$EF")"
 
 # ---------------------------------------------------------------------------
+head_ "p43  the gate runs on a real checkout, not only on fixtures"
+# Two copies of THIS repository's own tool files, with the graph handed in from
+# outside -- which is the shape a real deployment has, because a checkout does
+# not carry a committed facts.json. Without this, every assertion above would
+# be about a directory layout invented for the tests.
+mkreal() {
+  local d=$1 r
+  rm -rf "$d"; mkdir -p "$d/bin" "$d/lib" "$d/.github/workflows"
+  cp "$ROOT/bin/nse-pg" "$d/bin/"
+  for r in "$ROOT"/lib/pg-*.sh; do cp "$r" "$d/lib/"; done
+  cp "$ROOT/nix-source-escrow.toml" "$d/"
+  cp "$ROOT/.github/workflows/policy-governed.yml" "$d/.github/workflows/"
+}
+mkreal "$TMP/real-base"; mkreal "$TMP/real-head"
+RG=$TMP/real-gate.json
+( nse_pg_gate "$TMP/real-base" "$TMP/real-head" "$RG" base head \
+    "$ROOT/tests/pg-fixtures/facts-seed.json" "$ROOT/tests/pg-fixtures/facts-seed.json" ) \
+  >/dev/null 2>&1 || true
+assert_eq "p43.1 an unmodified checkout against itself is ACCEPTED" "ACCEPTED" \
+  "$(jq -r .verdict "$RG")"
+assert_eq "p43.2 the judge identity matches, over the REAL tool files" "true" \
+  "$(jq -r '.judge.trustedSha256 == .judge.candidateSha256' "$RG")"
+# THE FILE-SET GUARD, and the defect it found. The judge file set used to be
+# six names typed by hand; seven more lib/pg-*.sh files were added afterwards
+# and none reached the list, so the matcher, the cache guard and the summary
+# that renders the verdict were all editable without moving the identity. It is
+# discovered now, not maintained.
+assert_eq "p43.3 every lib/pg-*.sh in this repo is part of the hashed judge" "" \
+  "$(known=$(nse_pg_judge_files "$ROOT")
+     for f in "$ROOT"/lib/pg-*.sh; do
+       rel=lib/$(basename "$f")
+       printf '%s\n' "$known" | grep -qx "$rel" || printf '%s ' "$rel"
+     done)"
+assert_eq "p43.4 and the executable itself is" "1" \
+  "$(nse_pg_judge_files "$ROOT" | grep -cx 'bin/nse-pg' || true)"
+assert_eq "p43.4a the set really is discovered, and covers every one of them" \
+  "$(find "$ROOT/lib" -maxdepth 1 -name 'pg-*.sh' -type f | wc -l | tr -d ' ')" \
+  "$(nse_pg_judge_files "$ROOT" | grep -c '^lib/pg-' || true)"
+# ADDING a judge file to the candidate must move the identity too, or a
+# candidate could bring its own and keep a matching hash.
+mkreal "$TMP/real-added"
+printf '# an extra judge file the candidate brought along\n' > "$TMP/real-added/lib/pg-extra.sh"
+RG3=$TMP/real-gate-added.json
+( nse_pg_gate "$TMP/real-base" "$TMP/real-added" "$RG3" base head \
+    "$ROOT/tests/pg-fixtures/facts-seed.json" "$ROOT/tests/pg-fixtures/facts-seed.json" ) \
+  >/dev/null 2>&1 || true
+assert_eq "p43.4b ADDING a lib/pg-*.sh is a JUDGE_MISMATCH, not an invisible extra" \
+  '["JUDGE_MISMATCH"]' "$(jq -c .rejectedBy "$RG3")"
+assert_eq "p43.4c and the added file is named, as ABSENT on the trusted side" \
+  "lib/pg-extra.sh" \
+  "$(jq -r '.findings[] | select(.id=="JUDGE_MISMATCH") | .differingFiles[].path' "$RG3")"
+# Change ONE byte of one real judge file and the identity must move.
+printf '\n# a candidate edit\n' >> "$TMP/real-head/lib/pg-policy.sh"
+RG2=$TMP/real-gate-edited.json
+( nse_pg_gate "$TMP/real-base" "$TMP/real-head" "$RG2" base head \
+    "$ROOT/tests/pg-fixtures/facts-seed.json" "$ROOT/tests/pg-fixtures/facts-seed.json" ) \
+  >/dev/null 2>&1 || true
+assert_eq "p43.5 one edited byte in a real judge file is JUDGE_MISMATCH" \
+  '["JUDGE_MISMATCH"]' "$(jq -c .rejectedBy "$RG2")"
+assert_eq "p43.6 and the report names the file that changed" "lib/pg-policy.sh" \
+  "$(jq -r '.findings[] | select(.id=="JUDGE_MISMATCH") | .differingFiles[].path' "$RG2")"
+# The facts paths are recorded, so a reader can tell which graph was judged.
+assert_ne "p43.7 the report records which facts documents were read" "" \
+  "$(jq -r '.roots.headFacts' "$RG")"
+
 head_ "p42  the documentation does not out-claim the evidence"
 # The closed line wrote this rule into its own units after finding a correct
 # disclosure sitting on screen four, below three sections a reader stops
