@@ -29,6 +29,8 @@ trap 'chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 . "$ROOT/lib/pg-digest.sh"
 # shellcheck source=../lib/pg-policy.sh
 . "$ROOT/lib/pg-policy.sh"
+# shellcheck source=../lib/pg-cache.sh
+. "$ROOT/lib/pg-cache.sh"
 # shellcheck source=../lib/pg-gate.sh
 . "$ROOT/lib/pg-gate.sh"
 # shellcheck source=../lib/pg-ingest.sh
@@ -956,6 +958,113 @@ nse_pg_summary "$TMP/gate-judge-replacement-base.json" > "$SUMG"
 assert_ne "p37.10 an ACCEPTED run carries the same disclosure" "0" \
   "$(grep -c 'What this does NOT establish' "$SUMG" || true)"
 assert_ne "p37.11 and still says the verdict" "0" "$(grep -c '^VERDICT: ACCEPTED' "$SUMG" || true)"
+
+# ---------------------------------------------------------------------------
+head_ "p38  CACH5: a cached verdict is seen, named, and not read"
+# The one that matters most. A shared cache may hold content-addressed BYTES,
+# which anyone can re-verify against a hash. It may not hold CONCLUSIONS about
+# them, which can only be believed.
+CJ=$CORPUS/judge-replacement
+rm -rf "$TMP/cached"; cp -r "$CJ/head" "$TMP/cached"
+# The candidate plants its own verdict, in its own tree, saying it passed.
+printf '%s\n' '{"verdict":"ACCEPTED","rejectedBy":[],"findings":[]}' > "$TMP/cached/gate-report.json"
+printf '%s\n' '{"decisions":[],"counts":{"quarantined":0,"undecided":0,"ruleConflicts":0,"policyConflicts":0,"dependencies":0,"mustPreserve":0}}' \
+  > "$TMP/cached/decisions.json"
+mkdir -p "$TMP/cached/escrow/evidence"
+printf '%s\n' '{"result":"PASS"}' > "$TMP/cached/escrow/evidence/origin-independence.json"
+CG=$TMP/gate-cached.json
+( nse_pg_gate "$CJ/base" "$TMP/cached" "$CG" base head ) >/dev/null 2>&1 || true
+assert_eq "p38.1 the planted verdicts are FOUND -- silence is not the same as absence" \
+  "decisions.json,escrow/evidence/origin-independence.json,gate-report.json" \
+  "$(jq -r '.cache.cachedVerdictArtifactsFound | sort | join(",")' "$CG")"
+assert_eq "p38.2 and none of them was read" "[]" \
+  "$(jq -c '.cache.cachedVerdictArtifactsRead' "$CG")"
+assert_eq "p38.3 the report states that the decisions were recomputed" "true" \
+  "$(jq -r .cache.decisionsRecomputed "$CG")"
+assert_eq "p38.4 the candidate said ACCEPTED; the trusted judge says otherwise" "REJECTED" \
+  "$(jq -r .verdict "$CG")"
+assert_eq "p38.5 for the reason the trusted judge computed, not the one supplied" \
+  '["JUDGE_MISMATCH"]' "$(jq -c .rejectedBy "$CG")"
+# THE PROOF, rather than the assertion: the same run WITHOUT the planted files
+# reaches an identical verdict and identical decisions.
+NOCACHE=$TMP/gate-nocache.json
+( nse_pg_gate "$CJ/base" "$CJ/head" "$NOCACHE" base head ) >/dev/null 2>&1 || true
+assert_eq "p38.6 the decisions are byte-identical with and without the planted verdicts" \
+  "$(jq -Sc '.decisions' "$NOCACHE")" "$(jq -Sc '.decisions' "$CG")"
+assert_eq "p38.7 and so is the rejection" \
+  "$(jq -Sc '[.verdict, .rejectedBy]' "$NOCACHE")" "$(jq -Sc '[.verdict, .rejectedBy]' "$CG")"
+# The finding is INFO: a cached artifact is not itself a wrong. Reading one
+# would be.
+assert_eq "p38.8 finding it is INFO, not a rejection -- having one is not the offence" \
+  "INFO" "$(jq -r '.findings[] | select(.id=="CACHED_VERDICT_IGNORED") | .severity' "$CG")"
+assert_eq "p38.9 a clean candidate reports no cached verdicts at all" "[]" \
+  "$(jq -c '.cache.cachedVerdictArtifactsFound' "$NOCACHE")"
+
+head_ "p39  CACH3: the acceptance store starts empty, observed rather than assumed"
+SC=$TMP/scratchdir
+rm -rf "$SC"; mkdir -p "$SC/cache" "$SC/work/staging"
+printf 'leftover from a previous run\n' > "$SC/cache/deadbeef.narinfo"
+printf 'more leftovers\n' > "$SC/work/staging/junk"
+nse_pg_scratch_prepare "$SC"
+assert_eq "p39.1 the leftovers were counted, not ignored" "true" \
+  "$([ "${NSE_PG_SCRATCH_WIPED:-0}" -ge 4 ] && echo true || echo false)"
+assert_eq "p39.2 and the store is empty afterwards" "0" \
+  "$(find "$SC" -mindepth 1 | wc -l | tr -d ' ')"
+nse_pg_scratch_prepare "$SC"
+assert_eq "p39.3 preparing an already-empty store removes nothing" "0" "${NSE_PG_SCRATCH_WIPED:-x}"
+# The refusal path: a directory that cannot be emptied must FAIL, not report
+# success on a store it did not clear.
+if [ "$(id -u)" -eq 0 ]; then
+  echo "  skipped p39.4 (running as root: an unwritable directory is still writable)"
+else
+  rm -rf "$TMP/locked"; mkdir -p "$TMP/locked/sub"; : > "$TMP/locked/sub/file"; chmod 500 "$TMP/locked"
+  rc=0; nse_pg_scratch_prepare "$TMP/locked/sub" || rc=$?
+  chmod 700 "$TMP/locked" 2>/dev/null || :
+  assert_ne "p39.4 a store that cannot be emptied is a failure, not a success" "0" "$rc"
+fi
+
+head_ "p40  CACH1 / CACH4: only the cost may move"
+mkcost() { jq -n --arg r "$1" --argjson e "$2" --argjson ms "$3" \
+  '{checkName: ("ESCROW_REPLAY " + $r), result: $r, exitCode: $e, guarantee: "escrow-replay", elapsedMilliseconds: $ms}'; }
+mkcost PASS 0 120000 > "$TMP/cold.json"
+mkcost PASS 0 9000   > "$TMP/warm.json"
+CMP=$(nse_pg_cache_compare "$TMP/cold.json" "$TMP/warm.json")
+assert_eq "p40.1 same verdict cold and warm: semantics unchanged" "true" \
+  "$(printf '%s' "$CMP" | jq -r .CACH1_semanticsUnchanged)"
+assert_eq "p40.2 and the only thing that moved is the clock" "true" \
+  "$(printf '%s' "$CMP" | jq -r .CACH4_onlyCostMoved)"
+assert_ne "p40.3 the speedup is reported, because cost is part of the product" "null" \
+  "$(printf '%s' "$CMP" | jq -r '.speedup | tostring')"
+# THE RED CONTROL. A warm run that reaches a DIFFERENT verdict is a cache that
+# changed what the run means, and this comparison must say so.
+mkcost FAIL 1 9000 > "$TMP/warm-bad.json"
+BAD=$(nse_pg_cache_compare "$TMP/cold.json" "$TMP/warm-bad.json")
+assert_eq "p40.4 red control: a warm run with a different verdict is NOT unchanged" "false" \
+  "$(printf '%s' "$BAD" | jq -r .CACH1_semanticsUnchanged)"
+# A warm run that keeps the verdict but changes the GUARANTEE is also a change.
+jq '.guarantee = "source-origin-independence" | .checkName = "SOURCE_ORIGIN_INDEPENDENCE PASS"' \
+  "$TMP/warm.json" > "$TMP/warm-guarantee.json"
+BADG=$(nse_pg_cache_compare "$TMP/cold.json" "$TMP/warm-guarantee.json")
+assert_eq "p40.5 red control: a changed GUARANTEE is a changed meaning, same verdict or not" "false" \
+  "$(printf '%s' "$BADG" | jq -r .CACH1_semanticsUnchanged)"
+
+head_ "p41  CACH2: a corrupt cache cannot become evidence"
+# The policy half, testable here. The store half is measured in CI, where
+# there is a store to corrupt.
+rm -rf "$TMP/corrupt"; cp -r "$CJ/head" "$TMP/corrupt"
+printf 'this is not json {{{\n' > "$TMP/corrupt/facts.json"
+rc=0; ( nse_pg_gate "$CJ/base" "$TMP/corrupt" "$TMP/corrupt-report.json" base head ) >/dev/null 2>&1 || rc=$?
+assert_eq "p41.1 an unreadable candidate graph is a CHECKER_ERROR (3), not an empty one" "3" "$rc"
+# And an empty one is not a graph with nothing in it either.
+rm -rf "$TMP/emptyfacts"; cp -r "$CJ/head" "$TMP/emptyfacts"
+printf '{"schemaVersion":1,"kind":"policy-governed-facts","flakeSource":{"storePath":null,"narHash":null},"dependencies":[]}\n' \
+  > "$TMP/emptyfacts/facts.json"
+EF=$TMP/emptyfacts-report.json
+( nse_pg_gate "$CJ/base" "$TMP/emptyfacts" "$EF" base head ) >/dev/null 2>&1 || true
+assert_eq "p41.2 a graph with zero dependencies still gets a verdict, and it is not silence" \
+  "REJECTED" "$(jq -r .verdict "$EF")"
+assert_eq "p41.3 the judge mismatch is still what rejects it -- 0 of 0 did not go green" \
+  '["JUDGE_MISMATCH"]' "$(jq -c .rejectedBy "$EF")"
 
 # ---------------------------------------------------------------------------
 head_ "p10  the new executable is actually linted, and the lint mirror cannot drift"

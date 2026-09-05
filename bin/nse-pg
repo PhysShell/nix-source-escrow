@@ -33,6 +33,8 @@ export NSE_ROOT
 . "$NSE_ROOT/lib/pg-digest.sh"
 # shellcheck source=../lib/pg-policy.sh
 . "$NSE_ROOT/lib/pg-policy.sh"
+# shellcheck source=../lib/pg-cache.sh
+. "$NSE_ROOT/lib/pg-cache.sh"
 # shellcheck source=../lib/pg-gate.sh
 . "$NSE_ROOT/lib/pg-gate.sh"
 # shellcheck source=../lib/pg-ingest.sh

@@ -237,7 +237,7 @@ jobs:
         run: |
           set -o pipefail
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          ./bin/nse-pg scratch \
+          NSE_PG_STAGING="$RUNNER_TEMP/pg-shared-staging" ./bin/nse-pg scratch \
             --installable "path:$PWD/fixture#default" \
             --guarantee source-origin-independence \
             --scratch-dir "$RUNNER_TEMP/pg-scratch-soi" \
@@ -248,6 +248,68 @@ jobs:
                  "  preflight=\(.preflight.verdict) scrubbed=\(.preflight.credentialsScrubbed | join(",") | if . == "" then "nothing" else . end)",
                  "  durablePromotion=\(.scratch.durablePromotion)"' \
             "experiments/policy-governed/results/scratch-soi-nix${{ matrix.nix }}.json"
+
+      - name: §15 CACH1/CACH4 -- the same run again, warm
+        # The SECOND run of the identical thing. Everything semantic must match
+        # the first; only the clock may move. The staging store is shared with
+        # the run above ON PURPOSE -- that IS the accelerator, and this is the
+        # measurement of what it is allowed to change.
+        run: |
+          set -o pipefail
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          NSE_PG_STAGING="$RUNNER_TEMP/pg-shared-staging" ./bin/nse-pg scratch \
+            --installable "path:$PWD/fixture#default" \
+            --guarantee source-origin-independence \
+            --scratch-dir "$RUNNER_TEMP/pg-scratch-warm" \
+            --out "experiments/policy-governed/results/scratch-warm-nix${{ matrix.nix }}.json" \
+            2>&1 | tail -20
+          R=experiments/policy-governed/results
+          ./bin/nse-pg digest --facts /dev/null >/dev/null 2>&1 || true
+          # The comparison, through the function that defines what may differ.
+          nix-shell -p jq --run true >/dev/null 2>&1 || true
+          bash -c '
+            . lib/common.sh; . lib/pg-common.sh; . lib/pg-cache.sh
+            nse_pg_cache_compare "'"$R"'/scratch-soi-nix${{ matrix.nix }}.json" \
+                                 "'"$R"'/scratch-warm-nix${{ matrix.nix }}.json"' \
+            | tee "$R/cache-compare-nix${{ matrix.nix }}.json" | jq .
+          # CACH1 and CACH4 are the assertion, not the narration.
+          bash -c '
+            . lib/common.sh; . lib/pg-common.sh; . lib/pg-cache.sh
+            nse_pg_cache_compare "'"$R"'/scratch-soi-nix${{ matrix.nix }}.json" \
+                                 "'"$R"'/scratch-warm-nix${{ matrix.nix }}.json"' \
+            | jq -e '.CACH1_semanticsUnchanged and .CACH4_onlyCostMoved' >/dev/null \
+            || { echo "CACH1/CACH4 VIOLATED: the cache changed something other than the clock" >&2; exit 1; }
+          echo "CACH1=held CACH4=held"
+
+      - name: §15 CACH2 -- a corrupted accelerator cannot become evidence
+        # The staging store is the accelerator. Corrupt an object in it and the
+        # run must FAIL rather than accept the corrupted bytes as the ones it
+        # was supposed to preserve.
+        run: |
+          set -o pipefail
+          S="$RUNNER_TEMP/pg-shared-staging"
+          victim=$(find "$S/nix/store" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)
+          if [ -z "$victim" ]; then echo "no staging object to corrupt; CACH2 NOT MEASURED"; exit 0; fi
+          echo "corrupting: $victim"
+          chmod -R u+w "$victim" 2>/dev/null || true
+          find "$victim" -type f | head -1 | while read -r f; do printf 'CORRUPTED\n' >> "$f"; done
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          rc=0
+          NSE_PG_STAGING="$S" ./bin/nse-pg scratch \
+            --installable "path:$PWD/fixture#default" \
+            --guarantee source-origin-independence \
+            --scratch-dir "$RUNNER_TEMP/pg-scratch-corrupt" \
+            --out "experiments/policy-governed/results/scratch-corrupt-nix${{ matrix.nix }}.json" \
+            > /tmp/corrupt.log 2>&1 || rc=$?
+          echo "exit=$rc"
+          tail -30 /tmp/corrupt.log
+          # The claim is NOT "it failed". The claim is that corrupted bytes did
+          # not become evidence: either the run refused, or it repaired itself
+          # from a trustworthy source and the RESULT is still sound. Both are
+          # recorded; neither is a silent pass on the corrupted object.
+          jq -r '"CACH2 outcome: result=\(.result) exit=\(.exitCode)"' \
+            "experiments/policy-governed/results/scratch-corrupt-nix${{ matrix.nix }}.json" 2>/dev/null \
+            || echo "CACH2 outcome: the run produced no report, which is a refusal"
 
       - name: §16 control -- the STRONG path still works with the new machinery
         # At least one control must show ESCROW_REPLAY is still compatible with

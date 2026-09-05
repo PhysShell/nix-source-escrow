@@ -235,6 +235,17 @@ nse_pg_gate() {
   nse_pg_digests "$work/head-with-decisions.json" > "$work/digests-head.json"
   nse_pg_digest_compare "$work/digests-base.json" "$work/digests-head.json" > "$work/digest-compare.json"
 
+  # ---- 6b. CACH5: cached verdicts, looked for so they can be REPORTED -----
+  #
+  # None of these is read. They are enumerated precisely so that finding one
+  # can be stated out loud, because "we did not read it" and "there was
+  # nothing to read" are different claims and only one of them is checkable
+  # from the outside. A candidate can put a gate-report.json saying ACCEPTED
+  # in its own tree; the trusted judge recomputes from facts and policy and
+  # says so in the report.
+  local cached_verdicts
+  cached_verdicts=$(nse_pg_cached_verdicts_in "$candidate")
+
   # ---- 7. findings -------------------------------------------------------
   local judge_listing_t judge_listing_c wf_listing_t wf_listing_c
   judge_listing_t=$(nse_pg_identity_listing "$trusted" "${NSE_PG_JUDGE_FILES[@]}")
@@ -264,6 +275,7 @@ nse_pg_gate() {
     --slurpfile cmp "$work/digest-compare.json" \
     --slurpfile baseFacts "$base_facts" \
     --slurpfile headFacts "$head_facts" \
+    --argjson cachedVerdicts "$cached_verdicts" \
     '
     ($policy[0]) as $P | ($proposed[0]) as $Q | ($decisions[0]) as $D
     | ($preview[0]) as $PV | ($cmp[0]) as $C
@@ -348,6 +360,11 @@ nse_pg_gate() {
               detail: "\($D.counts.quarantined) dependenc(y/ies) are admitted only under quarantine by the enforced policy.",
               affected: [ $D.decisions[] | select(.acceptance == "quarantined") | { sourceId, matchedRuleIds, effective } ] }
           else empty end ),
+        ( if ($cachedVerdicts | length) > 0 then
+            { id: "CACHED_VERDICT_IGNORED", severity: "INFO",
+              detail: "the candidate root carries \($cachedVerdicts | length) document(s) that would be a cached verdict if anything read them: \($cachedVerdicts | join(", ")). None was read. Every decision above was recomputed from the candidate graph and the trusted policy. PREREG.md §15 CACH5: a cached VERIFIED / REQUIRED / PRESENT decision is never authoritative.",
+              artifacts: $cachedVerdicts }
+          else empty end ),
         ( if $D.counts.undecided > 0 then
             { id: "UNDECIDED_DEPENDENCY", severity: "REJECT",
               detail: "\($D.counts.undecided) dependenc(y/ies) have no effective policy at all. An unresolved policy does not get to be a cautious verdict." }
@@ -363,6 +380,9 @@ nse_pg_gate() {
         PROPOSED_POLICY_COMMIT: $proposedRev,
         POLICY_CHANGED: $policyChanged,
         candidateRevision: { value: $candidateRev, source: $candidateRevSource },
+        cache: { cachedVerdictArtifactsFound: $cachedVerdicts,
+                 cachedVerdictArtifactsRead: [],
+                 decisionsRecomputed: true },
         judge: { trustedSha256: $judgeTrusted, candidateSha256: $judgeCandidate,
                  candidateJudgeExecuted: false,
                  files: $judgeListingTrusted },

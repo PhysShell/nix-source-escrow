@@ -189,11 +189,17 @@ nse_pg_check_name() {
 nse_pg_scratch_run() {
   local installable=$1 guarantee=$2 scratch=$3 report=$4
 
-  # FRESH. Not reused, not appended to. The closed line acceptance invariant is
-  # that the store the test replays from starts empty, and a scratch directory
-  # inherited from a previous run is the cheapest possible way to lose it.
-  rm -rf "$scratch"
-  mkdir -p "$scratch" || nse_pg_checker_error "cannot create scratch directory $scratch"
+  # CACH3, through the function that OBSERVES the result rather than assuming
+  # it. `rm -rf` can fail on a path it cannot write, and a prepare that reports
+  # success on a directory it did not empty is the exact shape this repository
+  # refuses everywhere else.
+  nse_pg_scratch_prepare "$scratch" \
+    || nse_pg_checker_error "could not establish an EMPTY scratch store at $scratch.
+       The acceptance test replays from a store that starts empty; a store that
+       may hold objects from a previous run cannot support that claim, and a
+       run that cannot support it does not proceed."
+  [ "$NSE_PG_SCRATCH_WIPED" -eq 0 ] \
+    || nse_pg_log "scratch: removed $NSE_PG_SCRATCH_WIPED leftover entries before starting"
 
   local store_url="file://$scratch/cache?compression=zstd"
   # Called as a STATEMENT, never in $( ). See the note on the function.
