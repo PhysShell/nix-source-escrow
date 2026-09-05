@@ -211,7 +211,13 @@
     },
     {
       "id": "gap-25",
-      "claim": "With a tier verified to hold an object carrying no signature at all, preserve materialised it and wrote a manifest: the SIGNATURE_UNTRUSTED branch did not fire (run 32, t24.11). Whether the cause is that this tool performs no signature check on the tier path, or that Nix does not verify signatures when the destination is a binary cache rather than a local store, is NOT established. t24.9/t24.10 measure it; no fix is being applied to preserve.sh until they answer.",
+      "claim": "RESOLVED AS TO MECHANISM, PENDING THE FIX'S VERDICT: run 33's probe established that signature verification lives in the local store's add path -- the same unsigned object is refused into a local store (t24.9) and accepted into a binary cache (t24.10). Because the replica is a file:// binary cache, the tier copy never verified and the SIGNATURE_UNTRUSTED branch was unreachable. The fix (a local-store hop, DESIGN.md 21d) is written but has not yet been executed anywhere; this gap closes when t24.11-t24.18 go green.",
+      "status": "OPEN",
+      "openedAt": "2026-09-05"
+    },
+    {
+      "id": "gap-26",
+      "claim": "The tier is signature-checked by copying through a local store, which t24.9 measured to enforce. `nix store verify --sigs` against the tier would avoid the second copy, but its flag spelling and trust semantics across Nix 2.24.9 and 2.34.7 have not been measured here and it was deliberately not adopted on the strength of a plausible reading.",
       "status": "OPEN",
       "openedAt": "2026-09-05"
     }

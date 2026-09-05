@@ -187,7 +187,31 @@ nse_tier_materialise() {
   [ "$n_req" -gt 0 ] || { : > "$work/replica-set.txt"; return 0; }
   nse_log "replica: materialising $n_req objects from the approved tier $from -> $to_write"
 
-  if ! nse_nix_batched "$work/tier-requested.txt" copy --from "$from" --to "$to_write"; then
+  # THE TIER IS READ THROUGH A LOCAL STORE, AND THAT IS LOAD-BEARING.
+  #
+  # This used to copy the tier straight into the replica. The replica is a
+  # binary cache, and run 33 measured what that means: the SAME unsigned object,
+  # the SAME require-sigs and trusted-public-keys, refused into a local store
+  # (t24.9) and ACCEPTED into a binary cache (t24.10). Signature verification
+  # lives in the local store's add path. So the SIGNATURE_UNTRUSTED refusal
+  # below was unreachable -- a policy stated in an error message about a code
+  # path that no input could reach.
+  #
+  # Copying into a local store first puts the operator's own trust
+  # configuration back in the path. The second hop uses --no-check-sigs because
+  # by then the objects have been verified once, by Nix, against that
+  # configuration; re-checking a store this tool just wrote is not the point.
+  #
+  # The cost is one extra LOCAL copy and a transient second copy on disk of the
+  # materialised set. Downloads from the tier are unchanged -- the local store
+  # is what fetches them.
+  local verify_store
+  verify_store=$(mktemp -d "${TMPDIR:-/tmp}/nse-tier-verify.XXXXXX") \
+    || nse_die "mktemp -d failed for the tier verification store"
+  # shellcheck disable=SC2064  # expand the path now, not at trap time
+  trap "nse_rm_store '$verify_store' 2>/dev/null || :" EXIT
+
+  if ! nse_nix_batched "$work/tier-requested.txt" copy --from "$from" --to "$verify_store"; then
     nse_warn "a batched copy from '$from' failed; retrying per object to classify it"
     local p
     while IFS= read -r p; do
@@ -199,7 +223,7 @@ nse_tier_materialise() {
       # a trusted key", and that is a POLICY outcome, not an outage. Guessing
       # between them is the same defect as guessing absence from silence.
       local errf=$work/tier-copy-error.txt
-      if nse_nix copy --from "$from" --to "$to_write" "$p" >/dev/null 2>"$errf"; then continue; fi
+      if nse_nix copy --from "$from" --to "$verify_store" "$p" >/dev/null 2>"$errf"; then continue; fi
       local nixsaid; nixsaid=$(tr '\n' ' ' < "$errf" | sed 's/  */ /g' | cut -c1-400)
       printf '%s\t%s\n' "$p" "$nixsaid" >> "$work/tier-copy-failures.tsv"
       # Signature refusals are classified, not lumped in with outages. The
@@ -240,6 +264,21 @@ nse_tier_materialise() {
       fi
       printf '%s\n' "$p" >> "$work/tier-revised-absent.txt"
     done < "$work/tier-requested.txt"
+  fi
+
+  # SECOND HOP: the verified objects into the replica. --no-check-sigs here and
+  # NOT on the hop above: by this point Nix has checked these objects against
+  # the operator's own trust configuration on the way into the local store, and
+  # this hop reads a store this tool wrote itself moments ago. Putting the flag
+  # on the tier hop instead would be the thing this whole section exists to
+  # prevent.
+  LC_ALL=C comm -23 "$work/tier-requested.txt" \
+    <(LC_ALL=C sort -u "$work/tier-revised-absent.txt") > "$work/tier-verified.txt"
+  if [ -s "$work/tier-verified.txt" ]; then
+    nse_nix_batched "$work/tier-verified.txt" \
+      copy --from "$verify_store" --to "$to_write" --no-check-sigs \
+      || nse_die "the tier objects passed signature verification but could not be
+       written to the replica '$to_write'. BINARY_TIER_ERROR."
   fi
 
   # What is in the replica is a fact about the replica, asked of the replica --

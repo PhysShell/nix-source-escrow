@@ -831,14 +831,26 @@ head_ "u24  the binary tier path never weakens the operator's trust policy"
 tierfn=$(awk '/^nse_tier_materialise\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' \
            "$ROOT/lib/preserve.sh")
 assert_ne "u24.1 the function was found at all" "" "$tierfn"
-assert_eq "u24.2 the tier copy does not disable signature checking" "0" \
-  "$(printf '%s\n' "$tierfn" | grep -c -- '--no-check-sigs' || true)"
-# A guard nobody has seen fail is not a guard.
-# shellcheck disable=SC2016  # the $from/$to_write here are literal source text
+# The precise property, since run 33. The tier is now read into a LOCAL store,
+# which is where Nix enforces signatures (t24.9/t24.10 measured that), and the
+# verified objects are then pushed to the replica with --no-check-sigs. So the
+# flag is legitimate on the second hop and never on the first: what must not
+# happen is `copy --from "$from"` carrying it.
+# shellcheck disable=SC2016  # the pattern is literal source text, not an expansion
+assert_eq "u24.2 the copy FROM the tier never disables signature checking" "0" \
+  "$(printf '%s\n' "$tierfn" | grep -c -- 'copy --from "$from".*--no-check-sigs' || true)"
+# shellcheck disable=SC2016  # the specimen is literal shell source
 assert_ne "u24.3 and the guard catches it when it is added" "0" \
-  "$(printf '%s\n' "$tierfn" \
-     | sed 's|copy --from "$from" --to "$to_write"|& --no-check-sigs|' \
-     | grep -c -- '--no-check-sigs' || true)"
+  "$(printf '%s\n' 'nse_nix copy --from "$from" --to "$verify_store" --no-check-sigs "$p"' \
+     | grep -c -- 'copy --from "$from".*--no-check-sigs' || true)"
+# And the tier really is read through a store that verifies, not straight into
+# the replica. This is the fix of 21d; without it the refusal below is
+# unreachable and everything else in u24 is decoration.
+# shellcheck disable=SC2016  # the pattern is literal source text, not an expansion
+assert_ne "u24.3a the tier is copied into a local store first" "0" \
+  "$(printf '%s\n' "$tierfn" | grep -c -- 'copy --from "$from" --to "$verify_store"' || true)"
+assert_ne "u24.3b and that store is removed however the run ends" "0" \
+  "$(printf '%s\n' "$tierfn" | grep -c 'trap .nse_rm_store' || true)"
 assert_ne "u24.4 a signature refusal is classified as SIGNATURE_UNTRUSTED" "0" \
   "$(printf '%s\n' "$tierfn" | grep -c 'SIGNATURE_UNTRUSTED' || true)"
 # The refusal has to carry Nix's own words, or the classification is an

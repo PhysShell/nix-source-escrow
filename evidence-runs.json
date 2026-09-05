@@ -20,6 +20,48 @@
   "ciBranch": "claude/ci-run-6a6687c",
   "runs": [
     {
+      "run": 33,
+      "workflowRunId": 33969956916,
+      "measuredCommit": "b11d627d23fafd4f6e2d759ffa71eb0d893d646f",
+      "kind": "the signature-enforcement probe",
+      "verdict": "191/7 on both legs. The probe ANSWERED and the pre-registered prediction holds exactly.",
+      "results": {
+        "nix-2.34.7": {
+          "unitShell": "159/0",
+          "flakeCheck": "pass",
+          "acceptance": "191/7"
+        },
+        "nix-2.24.9": {
+          "unitShell": "159/0",
+          "flakeCheck": "pass",
+          "acceptance": "191/7"
+        }
+      },
+      "probe": {
+        "t24.9": "PASS -- Nix REFUSES an unsigned object into a LOCAL store with require-sigs=true. Signature checking is live in this environment.",
+        "t24.10": "PASS -- the SAME object, SAME config, into a BINARY CACHE destination is ACCEPTED.",
+        "conclusion": "Signature verification lives in the local store's add path. A file:// binary cache accepts anything. The only difference between the two probes is the destination type, and it decides the outcome."
+      },
+      "establishedDefect": {
+        "what": "nse_tier_materialise copied the tier straight into the replica, which is a file:// binary cache. The SIGNATURE_UNTRUSTED branch was therefore UNREACHABLE -- not mis-worded or mis-classified, but a policy stated in an error message about a code path no input could reach.",
+        "evidence": "t24.11-t24.14 and t24.17/t24.18 red on a fixture whose preconditions (t24.1, t24.4, t24.5, t24.6, t24.7, t24.8) are all green, plus the t24.9/t24.10 pair that attributes the cause.",
+        "alsoDemoted": "t24.20-t24.23 (leg C) currently pass TRIVIALLY, because everything passes. Leg C is an attributable positive control only once legs A and B can fail. Until the fix lands, no part of t24 supports the policy claim."
+      },
+      "fixtureNowSound": [
+        "t24.7 the signed tier carries signatures",
+        "t24.8 BY the key this test generated -- the local-store signing route works where secret-key-files on a cache-to-cache copy did not"
+      ],
+      "fix": "Materialise the tier through a LOCAL store, then push the verified objects to the replica with --no-check-sigs. Chosen because t24.9 MEASURED that a local destination enforces. `nix store verify --sigs` is cheaper but its flags across both Nix versions are unmeasured here, so it is gap-26 rather than an assumption. DESIGN.md 21d.",
+      "green": [
+        "nix flake check",
+        "unit-shell 159/0",
+        "t23",
+        "t22",
+        "t03.9",
+        "every section 20 observable"
+      ]
+    },
+    {
       "run": 32,
       "workflowRunId": 33969223926,
       "measuredCommit": "9fc07e3bbc8d75c7d65835e45347415be6e877d1",

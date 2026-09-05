@@ -2207,3 +2207,82 @@ The binary-tier signature policy is still **not established**, three runs in. Bu
 the reds have changed character: runs 30 and 31 were harness faults that measured
 nothing, and run 32's are findings. That is a different kind of red and it is
 worth saying so.
+
+### 21d. Run 33: the probe answered, and the refusal branch was unreachable
+
+Run 33 (`b11d627`), both Nix versions. `nix flake check` green, `unit-shell`
+159/0, acceptance **191/7**, and every fixture precondition is green for the
+first time — including `t24.8`, the signatures are by **the key this test
+generated**, so the local-store signing route works where `secret-key-files` on a
+cache-to-cache copy did not.
+
+**The probe answered, and the pre-registered prediction holds exactly:**
+
+```
+PASS t24.9  control: Nix refuses an unsigned object into a LOCAL store
+PASS t24.10 predicted: a BINARY CACHE destination does not verify
+```
+
+Same object, same `require-sigs = true`, same `trusted-public-keys`. The only
+difference is the destination, and it decides the outcome. So signature
+verification lives in the **local store's add path**, and a `file://` binary
+cache accepts anything.
+
+`nse_tier_materialise` copies the tier straight into the replica, which is a
+`file://` binary cache. Therefore:
+
+> **The `SIGNATURE_UNTRUSTED` branch was unreachable.** Not mis-worded, not
+> mis-classified — it could not fire, because the copy it guards never checks.
+> The policy this tool states in its own error message was, as written, a
+> statement about a code path no input could reach.
+
+That is the defect, and it is now attributed rather than guessed. `t24.11`–
+`t24.14` and `t24.17`/`t24.18` are red because of it.
+
+And it retroactively demotes the green half: `t24.20`–`t24.23` (leg C, key
+supplied, object materialises) currently pass **trivially**, because everything
+passes. Leg C becomes an attributable positive control only once legs A and B
+can fail. Until the fix lands, no part of `t24` supports the policy claim.
+
+#### The fix, and why this one
+
+Materialise the tier **through a local store**, then push to the replica:
+
+```
+tier  --(nix copy, verifies signatures)-->  local temp store  --(--no-check-sigs)-->  replica
+```
+
+Chosen because `t24.9` **measured** that a local store destination enforces. The
+tempting alternative — `nix store verify --sigs` against the tier, no second copy
+— is cheaper and its flag spelling across Nix 2.24.9 and 2.34.7 has **not been
+measured here**, and this project has now lost four runs to mechanisms that were
+assumed rather than checked. It is recorded as `gap-26`, not adopted.
+
+**The cost, stated rather than discovered later.** One extra *local* copy and a
+transient second copy on disk of the tier objects being materialised. Downloads
+from the tier are unchanged — still one — because the local store is the thing
+that fetches. Peak disk rises by the size of the materialised set, released when
+the temp store is removed.
+
+#### Observables this must not move
+
+The §20 set — `FOD_SOURCES` 166, `COVERED` 164, `EXTERNAL_RECOVERY` 2,
+`WITH_POSTFETCH` 3, `ON_KNOWN_FORGE` 38, `HASH_MODE_FLAT` 160 / `NAR` 6, 639
+derivations, 876 objects, `closureSha256 = 7f141ef1…ecb2` — and:
+
+- `t20` a tier that claims an object then refuses it is still `BINARY_TIER_ERROR`,
+  not a signature refusal. The new check must not swallow that classification.
+- `t21` a tier answering 503 still refuses as an observation error, and still
+  within seconds rather than minutes.
+- `t15`/`t16` the ordinary `source-origin-independence` runs against
+  `cache.nixos.org` stay green — its objects are signed by a default-trusted key,
+  so the new hop must be transparent to them.
+
+#### The red outcomes, classified in advance
+
+- `t24.11` still green (unsigned still accepted) → the hop is not where the
+  enforcement is either; do not add a third mechanism, find out why.
+- `t20` or `t21` turning into `SIGNATURE_UNTRUSTED` → the new check is
+  mis-attributing an outage as a trust decision, which is §19's laundering with
+  the sign reversed.
+- `t15`/`t16` red → ordinary tiers broke; the fix costs more than it buys.
