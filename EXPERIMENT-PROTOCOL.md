@@ -271,6 +271,32 @@ fails in the same run.
 
 ---
 
+## 7c. A new object of study is a new envelope, not one more test
+
+When the remaining work introduces something the finished work never contained —
+a network, a credential, a third party, a kernel facility — it is not a leftover
+of the current experiment. It is a new envelope, and it needs its own question,
+its own pre-registration, and its own red traces described in advance.
+
+The test for this is mechanical: **list what the new thing drags in with it.**
+If the list contains items the existing evidence has never had to attribute a
+failure to, the envelope has changed.
+
+Attaching a new object of study to a closed envelope is how instrumentation
+disasters begin, because the existing checks were designed for a world that did
+not contain it. They will go green anyway — and a green check that was never
+designed to see the new failure mode is worse than no check, since somebody will
+cite it.
+
+Closing an envelope is therefore a real deliverable, and it is stated as one:
+
+> Within <the envelope investigated>, the evidentiary contour is qualified and
+> closed. The outstanding work belongs to new envelopes: <name them>.
+
+The next piece of work then starts at a question, not at the next run number.
+
+---
+
 ## 8. Scope the conclusion to what was run
 
 Name the envelope in the sentence that states the result: this fixture, these
@@ -300,6 +326,9 @@ Before trusting a check:
 - [ ] Its fixture does not carry a default of the surrounding system that would
       satisfy the check on its own. What it must NOT contain is asserted, not
       assumed.
+- [ ] It is inside the envelope that was actually investigated. Anything that
+      introduces a new object of study gets its own envelope, not an extra
+      assertion in this one.
 - [ ] Its own success case cannot abort the run. A tool that signals "found
       nothing" with a non-zero exit will end an errexit script from inside the
       assertion that was about to pass.

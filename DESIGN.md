@@ -2347,3 +2347,85 @@ credential is untested.
 `gap-26` — `nix store verify --sigs` would avoid the second copy, and its flags
 across both Nix versions remain unmeasured. It was not adopted on a plausible
 reading, and that is still the right call.
+
+## 22. The envelope boundary, and why the rest is not this project
+
+The evidentiary contour is **closed for the envelope that was investigated**:
+
+> Within the locally-replicated escrow envelope, the evidentiary contour is
+> qualified and closed. The outstanding work belongs to **new envelopes**:
+> authenticated remote storage, archival availability, and selective network
+> reachability.
+
+That sentence is deliberately not "the project is finished". It draws a line
+between a result and the things that share a repository with it.
+
+### What is closed
+
+| area | verdict |
+| --- | --- |
+| source-escrow core | closed for this envelope |
+| evidence semantics | fail-closed, qualified by negative tests |
+| cross-version Nix behaviour | measured on 2.24.9 and 2.34.7 |
+| workaround removal | `REMOVAL_VALIDATED` (§17d) |
+| gap registry | machine-checked (`u20`) |
+| measurement protocol | prospectively validated (§18) |
+| private-tier signature rejection | measured (§21e, run 34) |
+
+### What is not, and why each one is a different envelope
+
+`gap-24`, `gap-26`, `gap-13a`, SWH archival coverage and selective egress are
+**not undone parts of this experiment.** Each introduces a new object of study,
+and the honest test of that is to list what the new object drags in.
+
+A real authenticated Attic or S3 tier adds, at once:
+
+```
+credentials · network transport · remote authentication · server-side policy
+TLS · possibly a separate signing and trust configuration
+failure attribution ACROSS A NETWORK BOUNDARY
+```
+
+Selective egress adds:
+
+```
+forge unreachable · escrow reachable · DNS behaviour defined
+pre-existing connections handled · IPv4 and IPv6 both accounted for
+egress that cannot silently widen on failure
+```
+
+The last line of each list is the one that matters, and it is the one a
+convenience test never covers. Attribution across a network boundary is a
+different problem from attribution inside one process; egress that fails *open*
+is the network-layer form of every fail-open path §19 and §21 were spent
+closing.
+
+So neither can be attached to this line as "one more test". Doing that is
+precisely how the instrumentation history in §15–§21 happened: an object of
+study arrived without a question, a pre-registration, or a described red trace,
+and the result was a small shell script appointed minister of truth. The cost is
+on record — `t24` alone took five runs, two of them lost to harness faults.
+
+### The disclosure position
+
+Earlier drafts said it was too early to show this to an auditor. After the
+fail-open paths of §19 and the signature attribution of §21e, that is now too
+strong. The correct statement:
+
+> It can be shown, **provided the tested envelope and the OPEN gaps are shown
+> beside the result.**
+
+What that lets someone hand over is what is proven, how each check could have
+gone red, where it actually went red, which versions and platform it was
+measured on, and what is deliberately not proven. That is a materially different
+artefact from "supports Attic/S3".
+
+### The starting condition for whatever comes next
+
+Not run 36. A question:
+
+- *Can we prove authenticated remote escrow without leaking credentials?*
+- *Can we prove selective egress?*
+
+Until one of those exists, with its own pre-registration and its own red traces
+described in advance, this branch should not be pushed further.

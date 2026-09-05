@@ -133,7 +133,7 @@ Not built, on purpose:
 
 ## The part of this that is not about Nix
 
-Eighteen runs produced five defects in the implementation, **six in the
+Thirty-four runs produced defects in the implementation, **more in the
 instruments meant to catch them**, and one sampling design that refuted a
 correct hypothesis. A test that asserted `0 == 0` about a command that never
 ran. A probe whose own invocation determined its answer. An assertion that
@@ -148,7 +148,32 @@ because that is the part that transfers:
 > report failure. If you cannot describe one, or the construction of the check
 > cannot produce one, it is not a check.
 
-`DESIGN.md` §15–§18 are the case histories behind each line of it.
+`DESIGN.md` §15–§21 are the case histories behind each line of it. The last of
+them cost five runs: a fixture that arrived carrying a signature by a key
+everyone trusts, a suite that died because a `grep` found nothing, and a refusal
+branch that turned out to be unreachable because the destination was a binary
+cache and binary caches do not verify.
+
+## What is proven, and what is not
+
+The evidentiary contour is **closed for the envelope that was investigated**:
+
+> Within the locally-replicated escrow envelope, the evidentiary contour is
+> qualified and closed. The outstanding work belongs to **new envelopes**:
+> authenticated remote storage, archival availability, and selective network
+> reachability.
+
+A real authenticated Attic or S3 tier, selective egress, and Software Heritage
+archival coverage are **not** measured here, and are not backlog items of this
+experiment — each introduces an object of study the present evidence has never
+had to attribute a failure to. `DESIGN.md` §22 and `EXPERIMENT-PROTOCOL.md` §7c
+say why that distinction is load-bearing rather than pedantic.
+
+Read the result together with the **tested envelope** and the **OPEN gaps** in
+[`EVIDENCE.md`](EVIDENCE.md) and [`known-gaps.json`](known-gaps.json). Presented
+that way it can be handed to an auditor honestly: what is proven, how each check
+could have gone red, where it actually went red, which Nix versions and platform
+it was measured on, and what is deliberately not proven.
 
 ## Architecture
 

@@ -574,7 +574,68 @@ proves that last check can still fail, by flipping gap-12 back to OPEN.
 
 ---
 
-## Status: this line of work is closed
+## Status: the evidentiary contour is closed for this envelope
+
+> **Within the locally-replicated escrow envelope that was investigated, the
+> evidentiary contour is qualified and closed. The outstanding work belongs to
+> NEW envelopes: authenticated remote storage, archival availability, and
+> selective network reachability.**
+
+| area | verdict |
+| --- | --- |
+| source-escrow core | closed for this envelope |
+| evidence semantics | fail-closed, qualified by negative tests |
+| cross-version Nix behaviour | measured on 2.24.9 and 2.34.7 |
+| workaround removal | `REMOVAL_VALIDATED` |
+| gap registry | machine-checked (`u20`) |
+| measurement protocol | prospectively validated |
+| private-tier signature rejection | measured (run 34) |
+| a real authenticated remote tier | **not measured** |
+| credential non-leak over a network | **not measured** — `gap-24` |
+| `nix store verify --sigs` | **not measured** — `gap-26` |
+| daemon / configuration envelope | open — `gap-13a` |
+| SWH archival coverage | separate future work |
+| selective egress | separate future work |
+
+### Each remaining item introduces a new object of study
+
+They are not leftovers of this experiment. A real authenticated Attic or S3 tier
+adds, in one step: credentials, network transport, remote authentication,
+server-side policy, TLS, possibly a separate signing and trust configuration,
+and **failure attribution across a network boundary**. Selective egress adds:
+forge unreachable, escrow reachable, DNS behaviour defined, pre-existing
+connections handled, IPv4 and IPv6 both accounted for, and egress that cannot
+silently widen on failure.
+
+Neither can honestly be stitched onto this line as "one more test". Attaching a
+new object of study to a finished envelope is how half the instrumentation
+adventures in `DESIGN.md` §15–§21 started. Each needs its own question, its own
+pre-registration, and its own red traces described in advance — otherwise you
+get another small shell script appointed minister of truth.
+
+### Showing this to an auditor
+
+Reasonable **provided the tested envelope and the OPEN gaps are shown next to
+the result.** With that alongside, what can be handed over honestly is:
+
+- what is proven,
+- how each check could have gone red,
+- where it actually went red, and what that cost,
+- which Nix versions, system and runner it was measured on,
+- and what is deliberately **not** proven.
+
+That is a stronger position than "supports Attic/S3", which usually means three
+happy-path integration tests and a prayer.
+
+### The next piece of work does not start at run 36
+
+It starts at a question: *can we prove authenticated remote escrow without
+leaking credentials?* or *can we prove selective egress?* Until such a question
+exists, this branch should not be pushed further.
+
+---
+
+## Status: the experimental line (E1-E3) is closed
 
 > Within the tested envelope, `E1`–`E3` are confirmed, the claimed necessity of
 > the workarounds is falsified, and removal of those workarounds preserves every
@@ -635,30 +696,52 @@ In the order the value arrives.
    unsatisfiable by the change it pre-registered, found and corrected before the
    judging run rather than after it. The `measured on: unknown` defect is fixed
    separately (`u17`).
-3. **Run the escrow against a real remote backend.** Attic or an S3 bucket,
-   end to end, with credentials, so gap 14 stops being an HTTP-server test and
-   becomes deployment evidence.
-4. **Selective egress for the acceptance harness** (gaps 18 and 20). An
-   allowlist that permits only the escrow endpoint turns two simulated
-   properties into measured ones: a remote escrow reachable during the
-   blackout, and an approved binary tier that is genuinely third-party.
-5. **Make the cheap guarantee the CI gate it was designed to be.** Renovate /
-   `update-flake-lock` integration: `preserve → verify →
-   test-origin-independence --guarantee source-origin-independence` as a
-   required check on the update PR, sharing one staging store, so a dependency
-   bump cannot merge until its sources are in escrow — without copying the
-   world on every bump.
-6. **Then the Software Heritage repair layer**, in the order §1 now describes:
-   exact `nar-sha256` / `checksum-*` ExtID hit first, revision/origin recovery
-   next, reconstruction (Disarchive-style for flat artefacts, `postFetch`
-   replay for the rest) only where the first two miss. An archival *check* per
-   source — the equivalent of `guix lint -c archival` — is the cheap half and
-   is worth doing before the recovery half.
-7. Flat-`fetchurl` hashed-mirror layer, reusing the `copy-tarballs.pl` key
-   scheme, for sharing tarballs between organisations.
-8. Incremental staging: diff the manifest against the escrow and fetch only
-   what is new. `--staging-dir` already lets several escrows share one warm
-   staging store, which is the cheap half of this.
-9. Explicit IFD / manual-escrow policy, with a real IFD project as the fixture.
-10. `FULL_AIRGAP_REBUILD` as a separate, separately-named guarantee — the third
-    row of `DESIGN.md` §12, and the one that needs signing per §4.
+3. **Everything below this line belongs to a different envelope.** Not a
+   backlog of this experiment — each item introduces an object of study the
+   present evidence has never had to attribute a failure to, so each needs its
+   own question, pre-registration and described red traces before any code is
+   written. See `DESIGN.md` §22 and `EXPERIMENT-PROTOCOL.md` §7c.
+
+   - **Authenticated remote escrow.** Attic or S3, end to end, with real
+     credentials. Brings credentials, network transport, remote authentication,
+     server-side policy, TLS, possibly a separate trust configuration, and
+     failure attribution across a network boundary. Would close `gap-24`.
+     Starting question: *can we prove authenticated remote escrow without
+     leaking credentials?*
+   - **Selective egress.** nftables or pasta. Brings forge-unreachable,
+     escrow-reachable, defined DNS behaviour, pre-existing connections, IPv4 and
+     IPv6, and egress that cannot silently widen on failure. Starting question:
+     *can we prove selective egress?*
+   - **SWH archival coverage.** Whether the sources are independently
+     retrievable at all, which is a claim about the world rather than about this
+     tool.
+   - `gap-26` — measure `nix store verify --sigs` across both Nix versions, and
+     drop the second copy if it holds.
+   - `gap-13a` — the daemon and configuration envelope.
+4. **The rest is ordinary feature work inside the present envelope** — no new
+   object of study, so it needs a design and tests but not a new
+   pre-registration.
+
+   - **Make the cheap guarantee the CI gate it was designed to be.** Renovate /
+     `update-flake-lock` integration: `preserve → verify →
+     test-origin-independence --guarantee source-origin-independence` as a
+     required check on the update PR, sharing one staging store, so a
+     dependency bump cannot merge until its sources are in escrow.
+   - **The Software Heritage repair layer**, in the order §1 describes: exact
+     `nar-sha256` / `checksum-*` ExtID hit first, revision/origin recovery next,
+     reconstruction (Disarchive-style for flat artefacts, `postFetch` replay for
+     the rest) only where the first two miss. The archival *check* per source —
+     the equivalent of `guix lint -c archival` — is the cheap half and belongs
+     to the archival envelope above; this is the recovery half.
+   - Flat-`fetchurl` hashed-mirror layer, reusing the `copy-tarballs.pl` key
+     scheme, for sharing tarballs between organisations.
+   - Incremental staging: diff the manifest against the escrow and fetch only
+     what is new. `--staging-dir` already lets several escrows share one warm
+     staging store, which is the cheap half of this.
+   - Explicit IFD / manual-escrow policy, with a real IFD project as the
+     fixture.
+
+5. `FULL_AIRGAP_REBUILD` as a separate, separately-named guarantee — the third
+   row of `DESIGN.md` §12, and the one that needs signing per §4. It is its own
+   envelope too: it asserts the graph can be rebuilt from source alone, which is
+   a claim the present evidence explicitly disclaims on every run.
