@@ -110,11 +110,56 @@ jobs:
                  "  detector qualified: \(.directAttr.detectorQualified)",
                  "  sentinel found at:  \(.directAttr.sentinel.attrSite // "NOWHERE")",
                  "  escrow found at:    \(.directAttr.foundAtSite // "NOWHERE")"' "$R"
+          # The TAIL of a Nix eval failure is where the diagnosis is. The head
+          # is the ladder it climbed to get there, and run 1 recorded only that.
+          jq -r 'if .directAttr.evalErrorTail == null then "  (no eval error)"
+                 else "  --- why it was rejected (tail of the eval error) ---",
+                      (.directAttr.evalErrorTail | split("\n") | .[-14:][] | "  " + .)
+                 end' "$R"
           echo "== §3.3 Nix-VALUE visibility (a different surface from §4) =="
-          jq -r '(.nixValueVisibility.plain // {}) | to_entries[]
-                 | "  plain.\(.key): present=\(.value.present)"' "$R"
-          jq -r '(.nixValueVisibility.sentinel // {}) | to_entries[]
-                 | "  sentinel.\(.key): present=\(.value.present)"' "$R"
+          # PRESENT AND VALUE. `tag` came back present=true at the Nix-value
+          # level and UNKNOWN in the derivation document -- which is a real and
+          # interesting difference between the two surfaces, and presence alone
+          # cannot tell "present and null" from "present and set".
+          jq -r '(.nixValueVisibility // {}) | to_entries[] as $v
+                 | ($v.value | to_entries[])
+                 | "  \($v.key).\(.key): present=\(.value.present) value=\((.value.value // "null") | tostring | .[0:60])"' "$R"
+
+      - name: §3.4-§3.6 -- what the annotation moves, and what it must not
+        id: annotate
+        run: |
+          set -o pipefail
+          ./bin/nse-pg qualify-annotation \
+            --out "experiments/policy-governed/results/annotation-qualification-nix${{ matrix.nix }}.json" \
+            2>&1 | tee /tmp/annotate.log
+
+      - name: ANNOTATION READOUT
+        if: always()
+        run: |
+          A=experiments/policy-governed/results/annotation-qualification-nix${{ matrix.nix }}.json
+          [ -f "$A" ] || { echo "no annotation report produced"; exit 0; }
+          echo "== §3.4 the six registered observables =="
+          jq -r '.levels[] | "  \(.level): drv=\(.drvIdentity)  output=\(.outputIdentity)"' "$A"
+          echo "== visibility, with its red control =="
+          jq -r '"  marked source carries it:  \(.annotationVisibility.markedSourceCarriesIt) at \(.annotationVisibility.attrSite // "NOWHERE")",
+                 "  red control (unannotated): \(.annotationVisibility.redControlUnannotatedSource)",
+                 "  guard qualified:           \(.annotationVisibility.qualified)"' "$A"
+          echo "== rebuild work =="
+          jq -r '"  marked outputs valid after building ONLY the plain chain: \(.rebuildWork.markedOutputsAlreadyValidAfterPlainBuildOnly)/\(.rebuildWork.markedOutputsChecked)",
+                 "  verdict: \(.rebuildWork.verdict)"' "$A"
+          echo "== OBJECTS_REALISED (gap-23 arithmetic) =="
+          jq -r '"  count: \(.realisedSet.countIdentity)  (\(.realisedSet.plainCount) vs \(.realisedSet.markedCount))",
+                 "  set:   \(.realisedSet.setIdentity)",
+                 "  only in plain: \(.realisedSet.onlyInPlain) (of which .drv: \(.realisedSet.onlyInPlainDrv))",
+                 "  only in marked: \(.realisedSet.onlyInMarked) (of which .drv: \(.realisedSet.onlyInMarkedDrv))",
+                 "  symmetric difference is ALL .drv: \(.realisedSet.symmetricDifferenceIsAllDrv)",
+                 "  realised-set sha256: \(.realisedSet.realisedSetShaIdentity)  <- PREREG §3.5 expected churn, NOT a regression"' "$A"
+          echo "== C4 =="
+          jq -r '.c4 | "  all three drvs moved:   \(.allThreeDrvsMoved)",
+                       "  all three outputs held: \(.allThreeOutputsHeld)",
+                       "  no rebuild work:        \(.noRebuildWork)",
+                       "  annotation visible:     \(.annotationVisible)",
+                       "  VERDICT: \(.verdict)"' "$A"
 
       - name: Upload the measurement
         if: always()

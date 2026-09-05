@@ -58,6 +58,43 @@
       # Nothing here decides which. That is the measurement.
       # ---------------------------------------------------------------------
       directAttr = pkgs.fetchFromGitHub (pillsArgs // { escrow = true; });
+
+      # ---------------------------------------------------------------------
+      # PROBE 3 -- the annotation, and a chain long enough to tell the
+      # "direct consumer" apart from the "top level".
+      #
+      # PREREG.md §3.4 registers SIX drv/output observables across THREE
+      # derivations. In the closed line's fixture the annotated source's only
+      # consumer IS the top-level derivation, so "direct consumer" and
+      # "top-level" would be one derivation counted twice -- two of the six
+      # observables would be the other two, and the table would look complete
+      # while measuring four things.
+      #
+      #   src  ->  mid  ->  top
+      #
+      # The plain and marked chains use the SAME derivation names and the SAME
+      # builder text. The ONLY difference anywhere in either chain is the
+      # annotation attribute on the source. Anything else that moves is a
+      # confound, not a result.
+      # ---------------------------------------------------------------------
+      marked = plain.overrideAttrs (_: {
+        nseEscrowCoverage = "required";
+      });
+
+      mid =
+        src:
+        pkgs.runCommand "nse-ann-mid" { } ''
+          mkdir -p "$out"
+          cp ${src}/README.md "$out/README.md"
+        '';
+
+      top =
+        m:
+        pkgs.runCommand "nse-ann-top" { } ''
+          mkdir -p "$out"
+          cp ${m}/README.md "$out/README.md"
+          echo "nse-ann ok" > "$out/marker"
+        '';
     in
     {
       packages.${system} = {
@@ -65,6 +102,15 @@
         qual-plain = plain;
         qual-sentinel = sentinel;
         qual-direct-attr = directAttr;
+
+        # The two chains. Same names, same builders, one attribute apart.
+        ann-plain-src = plain;
+        ann-plain-mid = mid plain;
+        ann-plain-top = top (mid plain);
+
+        ann-marked-src = marked;
+        ann-marked-mid = mid marked;
+        ann-marked-top = top (mid marked);
 
         default = plain;
       };
@@ -104,6 +150,11 @@
         {
           plain = facts plain;
           sentinel = facts sentinel;
+          # PREREG.md §3.3. THE table that decides whether a wrapper is
+          # justified: if overrideAttrs preserves owner/repo/rev/tag/meta at
+          # the Nix-value level, a wrapper is machinery invented for a failure
+          # nobody observed.
+          marked = facts marked;
         };
     };
 }

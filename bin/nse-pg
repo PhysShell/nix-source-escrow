@@ -27,6 +27,8 @@ export NSE_ROOT
 . "$NSE_ROOT/lib/pg-facts.sh"
 # shellcheck source=../lib/pg-qualify.sh
 . "$NSE_ROOT/lib/pg-qualify.sh"
+# shellcheck source=../lib/pg-annotate.sh
+. "$NSE_ROOT/lib/pg-annotate.sh"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -37,6 +39,11 @@ commands:
                   document on THIS Nix, with provenance, and classify a bare
                   `escrow = true` as REJECTED / DROPPED / SURVIVED.
                   PREREG.md §3.3, §4, §5.
+  qualify-annotation
+                  measure what a plain `overrideAttrs` annotation moves and
+                  what it does not: three .drv identities, three outputs, the
+                  realised set, and whether anything had to be rebuilt.
+                  PREREG.md §3.4-§3.6, claim C4.
 
 options:
   --flake REF     the qualification fixture to measure
@@ -77,6 +84,13 @@ case $cmd in
     : "${pg_flake:=path:$NSE_ROOT/experiments/policy-governed/fixtures/qualification}"
     : "${pg_out:=$NSE_ROOT/experiments/policy-governed/results/facts-qualification.json}"
     nse_pg_qualify_facts "$pg_flake" "$pg_out"
+    printf 'wrote %s\n' "$pg_out" >&2
+    ;;
+  qualify-annotation)
+    nse_require_cmd nix jq nix-store
+    : "${pg_flake:=path:$NSE_ROOT/experiments/policy-governed/fixtures/qualification}"
+    : "${pg_out:=$NSE_ROOT/experiments/policy-governed/results/annotation-qualification.json}"
+    nse_pg_qualify_annotation "$pg_flake" "$pg_out"
     printf 'wrote %s\n' "$pg_out" >&2
     ;;
   *) printf 'nse-pg: unknown command %s\n' "$cmd" >&2; usage; exit "$NSE_PG_USAGE" ;;

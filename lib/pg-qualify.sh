@@ -86,13 +86,28 @@ nse_pg_classify_direct_attr() {
 
   # Outcome 1: it did not evaluate. That is a real, distinguishable result.
   if [ "$eval_ok" != yes ]; then
+    # HEAD **AND** TAIL.
+    #
+    # Run 1 recorded only the first 1200 characters and got 1200 characters of
+    # Nix call stack -- `while calling a functor`, `from call site`, three
+    # frames of lib/customisation.nix -- and not one word of WHY. The
+    # diagnosis in a Nix eval failure is at the END of the message; the
+    # beginning is the ladder it climbed to get there.
+    #
+    # PREREG.md §5 requires each outcome to have a distinguishable trace, and
+    # "evaluation failed somewhere inside makeOverridable" distinguishes
+    # REJECTED from the other two while saying nothing about the rejection.
+    # Count to detect, name to diagnose -- and the name was in the part that
+    # was thrown away.
     nse_pg_jq -n --rawfile err "$eval_log" \
       '{ attribute: "escrow",
          outcome: "DIRECT_ATTR_REJECTED",
          detectorQualified: null,
          sentinel: null,
          foundAtSite: null,
-         evalError: ($err | .[0:1200]),
+         evalErrorHead: ($err | .[0:800]),
+         evalErrorTail: ($err | if length > 800 then .[-1200:] else . end),
+         evalErrorBytes: ($err | length),
          attrKeys: null }'
     return 0
   fi
@@ -144,7 +159,7 @@ nse_pg_classify_direct_attr() {
                    found: $sentinelFound,
                    attrSite: (if $sentinelSite == "null" then null else $sentinelSite end) },
        foundAtSite: (if $foundAtSite == "null" then null else $foundAtSite end),
-       evalError: null,
+       evalErrorHead: null, evalErrorTail: null, evalErrorBytes: 0,
        attrKeys: $keys,
        note: (if $outcome == "CHECKER_ERROR"
               then "The escrow attribute is absent AND the sentinel attribute is absent. An instrument that cannot find an attribute it was told is there has not measured an absence. This is not DROPPED."

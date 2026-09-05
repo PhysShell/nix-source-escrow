@@ -44,5 +44,71 @@
     "credentials": "none",
     "candidateTrust": "UNTRUSTED"
   },
-  "runs": []
+  "runs": [
+    {
+      "run": 1,
+      "workflowRunId": 33988937054,
+      "measuredCommit": "a84793ffb6bd794e7f12c47c5ef56ca79137a987",
+      "date": "2026-09-05",
+      "kind": "EMPIRICAL",
+      "fixtureIdentity": {
+        "flake": "experiments/policy-governed/fixtures/qualification",
+        "nixpkgsPin": "d2f67949798825fe853f7c5d0492b8bf016d3f88",
+        "pinAgreesWithClosedFixture": true
+      },
+      "nixVersions": [
+        "2.34.7",
+        "2.24.9"
+      ],
+      "preregSections": [
+        "§3.3",
+        "§4",
+        "§5"
+      ],
+      "primaryClaims": [],
+      "supports": "Supporting assertions for §4 (fact visibility) and §5 (direct-attr classification), and the §3.3 wrapper decision. PREREG.md §4.2: fact visibility is a supporting assertion, not a primary claim -- an UNKNOWN fact constrains which selectors the matcher may rely on (§7.3), it does not refute C1-C4.",
+      "expectedTrace": "Each of owner/repo/rev/tag/githubBase/stripRoot/extension classified DERIVATION_ATTR, URL_FALLBACK or UNKNOWN, on BOTH Nix versions. escrow=true classified into exactly one of DIRECT_ATTR_REJECTED / DIRECT_ATTR_DROPPED / DIRECT_ATTR_SURVIVED, with DROPPED admissible only from a detector qualified by the sentinel on the same run.",
+      "observedTrace": {
+        "drvDocumentSchema": {
+          "2.34.7": "envelope",
+          "2.24.9": "flat-map"
+        },
+        "selectorSupport": {
+          "owner": "DERIVATION_ATTR",
+          "repo": "DERIVATION_ATTR",
+          "rev": "DERIVATION_ATTR",
+          "tag": "UNKNOWN",
+          "githubBase": "DERIVATION_ATTR",
+          "stripRoot": "DERIVATION_ATTR",
+          "extension": "DERIVATION_ATTR",
+          "originHost": "URL_FALLBACK"
+        },
+        "selectorSupportIdenticalAcrossNixVersions": true,
+        "attrKeysIdenticalAcrossNixVersions": true,
+        "directAttr": {
+          "outcome": "DIRECT_ATTR_REJECTED",
+          "bothVersions": true
+        },
+        "nixValueVisibility": {
+          "note": "overrideAttrs preserved every probed public attribute at the Nix-value level on both versions: owner, repo, rev, tag, githubBase, stripRoot, extension, meta, name all present on BOTH the plain and the annotated source.",
+          "wrapperJustified": false
+        }
+      },
+      "verdict": "MEASURED",
+      "findings": [
+        "The seven GitHub facts DO travel through derivation arguments on this pin, and the two Nix versions agree on all of them despite emitting different document schemas (envelope vs flat-map). The claim was measured, not read off the nixpkgs source.",
+        "tag is UNKNOWN in the derivation document because this fixture pins by rev and passes no tag. It is present=true at the Nix-VALUE level. That is a real difference between the two surfaces, not a contradiction, and it is why PREREG.md keeps §3.3 and §4 apart.",
+        "originHost has no direct attribute and is taken from the URL, recorded URL_FALLBACK. It is the only fact permitted to do so.",
+        "escrow = true is REJECTED at evaluation on both versions: nixpkgs' makeOverridable-wrapped fetchFromGitHub refuses the argument. The DROPPED branch was therefore never exercised, and remains an unmeasured outcome of this pin rather than an excluded one.",
+        "PREREG.md §3.3 comes back GREEN on both versions, so a wrapper is NOT justified and none is written. Writing one would be machinery invented for a failure nobody observed."
+      ],
+      "defectsFoundInThisRun": [
+        "The probe recorded only the FIRST 1200 characters of an eval failure, which on a Nix error is the call-stack ladder and not the diagnosis. DIRECT_ATTR_REJECTED was therefore distinguishable from the other two outcomes while naming nothing about the rejection. Fixed in the next commit: head AND tail are recorded."
+      ],
+      "artifacts": {
+        "policy-governed-qualification-nix2.34.7": 9976018676,
+        "policy-governed-qualification-nix2.24.9": 9976018630
+      }
+    }
+  ]
 }
