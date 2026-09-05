@@ -392,14 +392,22 @@ nse_pg_corpus_generate() {
 
   # The provenance record. Without it a reader cannot tell a mechanism test
   # from evidence, and PREREG.md §11.1 makes that the whole difference.
+  # THE SEED IS IDENTIFIED BY ITS HASH AND ITS NAME, NEVER BY ITS PATH.
+  #
+  # It used to record the absolute path, so the checked-in SEED.json carried
+  # /home/<whoever>/... and the drift guard -- which regenerates and compares --
+  # went red on every machine but the one that generated it. A checked-in
+  # artifact that encodes where it was made is an artifact that cannot be
+  # regenerated anywhere else, and the identity of a seed is its content, not
+  # its location.
   nse_pg_jq -n \
-    --arg prov "$prov" --arg seedPath "$seed" \
+    --arg prov "$prov" --arg seedName "${seed##*/}" \
     --arg seedSha "$(sha256sum "$seed" | cut -d' ' -f1)" \
     --argjson deps "$(nse_pg_jq '.dependencies | length' "$seed")" \
     --arg movedId "$moved_id" --arg adversaryHost "$adversary_host" \
     --arg mirrorHost "$mirror_host" --arg knownHost "$known_host" \
     '{ seedProvenance: $prov,
-       seedPath: $seedPath,
+       seedName: $seedName,
        seedSha256: $seedSha,
        seedDependencies: $deps,
        movedDependency: $movedId,

@@ -251,6 +251,58 @@
         "policy-governed-qualification-nix2.34.7": 9976768267,
         "policy-governed-qualification-nix2.24.9": 9976768613
       }
+    },
+    {
+      "run": 4,
+      "workflowRunId": 33991871765,
+      "measuredCommit": "b59053c123e3ae4db5de576bac7300089f851c74",
+      "date": "2026-09-05",
+      "kind": "EMPIRICAL",
+      "fixtureIdentity": {
+        "flake": "fixture",
+        "nixpkgsPin": "d2f67949798825fe853f7c5d0492b8bf016d3f88"
+      },
+      "nixVersions": [
+        "2.34.7",
+        "2.24.9"
+      ],
+      "preregSections": [
+        "§15",
+        "§16"
+      ],
+      "primaryClaims": [],
+      "supports": "The §16 control (the strong guarantee still works with the policy machinery) and CACH2. The first run in which every job was green.",
+      "expectedTrace": "ESCROW_REPLAY PASS alongside SOURCE_ORIGIN_INDEPENDENCE PASS, proving the strong path is still compatible; and a corrupted accelerator object not becoming evidence.",
+      "observedTrace": {
+        "escrowReplayControl": {
+          "checkName": "ESCROW_REPLAY PASS",
+          "exitCode": 0,
+          "elapsedMilliseconds": 29794
+        },
+        "sourceOriginIndependence": {
+          "checkName": "SOURCE_ORIGIN_INDEPENDENCE PASS",
+          "exitCode": 0
+        },
+        "cach2": {
+          "verdict": "INCONCLUSIVE",
+          "observed": "the run passed after an object in the shared staging store was corrupted"
+        }
+      },
+      "verdict": "SECTION_16_CONTROL_HOLDS; CACH2 INCONCLUSIVE",
+      "findings": [
+        "PREREG.md §16 is satisfied: ESCROW_REPLAY PASS on the same fixture and the same machinery that produced SOURCE_ORIGIN_INDEPENDENCE PASS. The line has not quietly changed what the project proves by only ever exercising the cheaper guarantee.",
+        "Every job in this run was green. It is the first run for which that is true."
+      ],
+      "defectsFoundInThisRun": [
+        "THE CACH2 STEP WAS NOT A SOUND MEASUREMENT, and its green is withdrawn rather than kept. Two defects. (1) It corrupted whichever store directory `find` returned first -- a zlib build output -- but under SOURCE_ORIGIN_INDEPENDENCE the escrow holds SOURCE material, so the corrupted object may not be in the population the guarantee covers at all. (2) It then read the resulting PASS as CACH2 holding, and a PASS cannot distinguish 'Nix rejected the corrupted bytes' from 'the corrupted bytes were copied into the escrow and replayed' -- which is the violation. A check that cannot emit its failing state is not a check (EXPERIMENT-PROTOCOL.md §1).",
+        "Rewritten for the next run: the victim is taken from the escrow's own discovery document so it is certainly a discovered source, and the verdict is decided by copying the object back OUT of the escrow into a fresh store and comparing hashes against the original and the corrupted content. VIOLATED, HELD_* and NOT_MEASURED_* are distinct outcomes, and NOT_MEASURED is recorded rather than rounded to a pass."
+      ],
+      "notMeasured": [
+        "CACH2. Run 10's step produced a green that the step was not capable of earning, so it is recorded as INCONCLUSIVE and not as a pass."
+      ],
+      "artifacts": {
+        "policy-governed-qualification-nix2.34.7": 9976898123
+      }
     }
   ]
 }

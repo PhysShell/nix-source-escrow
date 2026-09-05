@@ -43,6 +43,27 @@ trap 'chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 . "$ROOT/lib/pg-summary.sh"
 
 pass=0; fail=0; failed_names=()
+# jq, with its stderr treated as a result -- the same rule lib/pg-common.sh
+# applies to the tool, applied to the tests.
+#
+# p42.12 was written as `jq ... || true` around a filter that errored on a
+# `.note` which is sometimes an array. jq printed a diagnostic, produced
+# nothing, and the assertion compared "" with "" and PASSED. A checker that
+# cannot run is not a checker that found nothing -- PREREG.md §17.1 -- and a
+# test suite that exempts itself from its own rule is a test suite with a
+# hole in it.
+JQ_ERR=""
+jqx() {
+  local e out rc=0
+  e=$(mktemp "$TMP/jqx.XXXXXX")
+  out=$(jq "$@" 2>"$e") || rc=$?
+  JQ_ERR=$(tr '\n' ' ' < "$e"); rm -f "$e"
+  if [ "$rc" -ne 0 ] || [ -n "$JQ_ERR" ]; then
+    printf 'CHECKER_ERROR(rc=%s): %s' "$rc" "${JQ_ERR:-no message}"
+    return 0
+  fi
+  printf '%s' "$out"
+}
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n    %s\n' "$1" "${2:-}"; fail=$((fail+1)); failed_names+=("$1"); }
 head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
@@ -1329,8 +1350,15 @@ assert_eq "p42.10 every indexed run names the commit it measured" "" \
 assert_eq "p42.11 and its verdict and observed trace, not just an expectation" "" \
   "$(jq -r '[.runs[] | select((has("observedTrace") and has("verdict")) | not) | (.run|tostring)] | join(",")' "$PGRUNS")"
 # The closed line's index is NOT this line's index, and nothing was appended.
-assert_eq "p42.12 the closed line's run index has not gained entries from this line" "" \
-  "$(jq -r '[.runs[] | select((.note // "") | test("policy-governed"))] | length | select(. > 0) | tostring' "$ROOT/evidence-runs.json")"
+# `tostring` FIRST: some entries carry a .note that is an array, and test() on
+# an array is a jq error rather than a false. Through jqx, so an error is a
+# visible CHECKER_ERROR instead of an empty string that compares equal to the
+# expected empty string and passes.
+assert_eq "p42.12 the closed line's run index has not gained entries from this line" "0" \
+  "$(jqx -r '[.runs[] | (.note // "") | tostring | select(test("policy-governed"))] | length' "$ROOT/evidence-runs.json")"
+assert_eq "p42.12a and the guard did not error while deciding that" "" "$JQ_ERR"
+assert_ne "p42.12b positive control: jqx surfaces an error instead of an empty answer" "0" \
+  "$(jqx -r '.runs[] | .note | test("x")' "$ROOT/evidence-runs.json" | grep -c CHECKER_ERROR || true)"
 assert_ne "p42.13 and this line's index names the frozen commit it branched from" "0" \
   "$(jq -r '.branchedFrom.commit | test("^84354e85") | if . then 1 else 0 end' "$PGRUNS")"
 

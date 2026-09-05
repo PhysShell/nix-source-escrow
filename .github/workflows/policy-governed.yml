@@ -315,28 +315,56 @@ jobs:
           echo "CACH1=held CACH4=held"
 
       - name: §15 CACH2 -- a corrupted accelerator cannot become evidence
-        # The staging store is the accelerator. Corrupt an object in it and the
-        # run must FAIL rather than accept the corrupted bytes as the ones it
-        # was supposed to preserve.
+        # RUN 10 MEASURED THIS AND THE MEASUREMENT WAS NOT SOUND. Two defects,
+        # both of the kind this repository has a protocol about:
+        #
+        #   1. It corrupted whatever directory `find` happened to return first
+        #      -- a zlib build output. Under SOURCE_ORIGIN_INDEPENDENCE the
+        #      escrow holds SOURCE material, so the corrupted object may not be
+        #      in the set under test at all. A specimen outside the population
+        #      is not a specimen.
+        #
+        #   2. It then read a PASS as CACH2 holding. A PASS cannot distinguish
+        #      "Nix rejected the corrupted bytes and refetched" from "the
+        #      corrupted bytes were copied into the escrow and the acceptance
+        #      test happily replayed them" -- and the second is CACH2 VIOLATED.
+        #      A check that cannot emit the failing state is not a check.
+        #
+        # Both are fixed here. The victim is a DISCOVERED SOURCE, taken from
+        # the escrow's own discovery document, so it is certainly in the set.
+        # And the verdict is decided by comparing bytes: the escrowed object is
+        # copied back out into a fresh store and hashed. If it matches the
+        # CORRUPTED hash, corrupted bytes became evidence.
         run: |
           set -o pipefail
           S="$RUNNER_TEMP/pg-shared-staging"
-          # `-print -quit`, NEVER `find | head`.
-          #
-          # EXPERIMENT-PROTOCOL.md §1 lists this shape by name: "destroys its
-          # own specimen -- find | head under pipefail + set -e ended the suite
-          # mid-way". `head` closes the pipe, find dies of SIGPIPE with 141,
-          # pipefail propagates it, and the step is dead before it has looked
-          # at anything. This job reproduced that defect verbatim, in the file
-          # that documents it.
-          victim=$(find "$S/nix/store" -maxdepth 1 -mindepth 1 -type d -print -quit 2>/dev/null || true)
-          if [ -z "$victim" ]; then echo "no staging object to corrupt; CACH2 NOT MEASURED"; exit 0; fi
-          echo "corrupting: $victim"
-          chmod -R u+w "$victim" 2>/dev/null || true
-          target=$(find "$victim" -type f -print -quit 2>/dev/null || true)
-          if [ -z "$target" ]; then echo "the chosen object holds no file; CACH2 NOT MEASURED"; exit 0; fi
-          echo "corrupting file: $target"
-          printf 'CORRUPTED\n' >> "$target"
+          DISC="$RUNNER_TEMP/pg-scratch-soi/discovery.json"
+          if [ ! -f "$DISC" ]; then echo "no discovery document; CACH2 NOT MEASURED"; exit 0; fi
+          # A source the escrow is FOR, that is present in the accelerator.
+          victim=""
+          while read -r p; do
+            [ -n "$p" ] || continue
+            if [ -d "$S$p" ] || [ -f "$S$p" ]; then victim=$p; break; fi
+          done < <(jq -r '.sources[] | select(.storePath != null) | .storePath' "$DISC")
+          if [ -z "$victim" ]; then
+            echo "no DISCOVERED SOURCE is present in the accelerator; CACH2 NOT MEASURED"
+            echo "(and NOT MEASURED is the honest answer -- corrupting something else"
+            echo " would measure a population this guarantee does not cover)"
+            exit 0
+          fi
+          echo "victim (a discovered source): $victim"
+          target=$(find "$S$victim" -type f -print -quit 2>/dev/null || true)
+          [ -n "$target" ] || target="$S$victim"
+          chmod -R u+w "$S$victim" 2>/dev/null || true
+          before=$(sha256sum "$target" | cut -d' ' -f1)
+          printf 'CORRUPTED-BY-CACH2-CONTROL\n' >> "$target"
+          after=$(sha256sum "$target" | cut -d' ' -f1)
+          rel=${target#"$S$victim"}
+          echo "corrupted file: $target"
+          echo "  sha256 before: $before"
+          echo "  sha256 after:  $after"
+          [ "$before" != "$after" ] || { echo "the corruption did not change the file; NOT MEASURED"; exit 0; }
+
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           rc=0
           NSE_PG_STAGING="$S" ./bin/nse-pg scratch \
@@ -345,15 +373,46 @@ jobs:
             --scratch-dir "$RUNNER_TEMP/pg-scratch-corrupt" \
             --out "experiments/policy-governed/results/scratch-corrupt-nix${{ matrix.nix }}.json" \
             > /tmp/corrupt.log 2>&1 || rc=$?
-          echo "exit=$rc"
-          tail -30 /tmp/corrupt.log
-          # The claim is NOT "it failed". The claim is that corrupted bytes did
-          # not become evidence: either the run refused, or it repaired itself
-          # from a trustworthy source and the RESULT is still sound. Both are
-          # recorded; neither is a silent pass on the corrupted object.
-          jq -r '"CACH2 outcome: result=\(.result) exit=\(.exitCode)"' \
-            "experiments/policy-governed/results/scratch-corrupt-nix${{ matrix.nix }}.json" 2>/dev/null \
-            || echo "CACH2 outcome: the run produced no report, which is a refusal"
+          echo "run exit=$rc"
+          tail -20 /tmp/corrupt.log
+
+          # THE DECISIVE OBSERVATION. Copy the object back OUT of the escrow
+          # into a fresh store and hash the same file. This is the only reading
+          # that can tell the two outcomes apart.
+          verdict=NOT_MEASURED
+          CACHE="$RUNNER_TEMP/pg-scratch-corrupt/cache"
+          FRESH=$RUNNER_TEMP/cach2-fresh
+          rm -rf "$FRESH"; mkdir -p "$FRESH"
+          if [ -d "$CACHE" ] && nix copy --no-check-sigs \
+                 --from "file://$CACHE" --to "$FRESH" "$victim" >/tmp/cach2-copy.log 2>&1; then
+            got=$(sha256sum "$FRESH$victim$rel" 2>/dev/null | cut -d' ' -f1 || true)
+            echo "  sha256 in the escrow: ${got:-<absent>}"
+            if [ "$got" = "$after" ]; then
+              verdict=VIOLATED
+            elif [ "$got" = "$before" ]; then
+              verdict=HELD_BYTES_ARE_ORIGINAL
+            elif [ -z "$got" ]; then
+              verdict=NOT_MEASURED_OBJECT_NOT_IN_ESCROW
+            else
+              verdict=HELD_BYTES_ARE_NEITHER
+            fi
+          elif [ "$rc" -ne 0 ]; then
+            verdict=HELD_RUN_REFUSED
+          else
+            echo "could not read the object back out of the escrow:"; tail -5 /tmp/cach2-copy.log || true
+            verdict=NOT_MEASURED_UNREADABLE
+          fi
+          echo "CACH2=$verdict"
+          jq -n --arg v "$verdict" --arg victim "$victim" --arg before "$before" \
+                --arg after "$after" --argjson rc "$rc" \
+             '{control: "CACH2", verdict: $v, victim: $victim,
+               sha256Original: $before, sha256Corrupted: $after, runExitCode: $rc,
+               note: "VIOLATED means the corrupted bytes came back out of the escrow. Any HELD_* means they did not. NOT_MEASURED_* means this run could not tell, which is recorded rather than rounded to a pass."}' \
+             > "experiments/policy-governed/results/cach2-nix${{ matrix.nix }}.json"
+          case $verdict in
+            VIOLATED) echo "CACH2 VIOLATED: corrupted accelerator bytes reached the escrow" >&2; exit 1 ;;
+            *) : ;;
+          esac
 
       - name: §16 control -- the STRONG path still works with the new machinery
         # At least one control must show ESCROW_REPLAY is still compatible with
