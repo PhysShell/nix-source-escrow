@@ -913,9 +913,22 @@ head_ "t23  a supplied credential does not survive into the uploaded artifact"
 # real code path, then a grep over EXACTLY what CI uploads -- evidence/,
 # manifest.json, closure.json, discovery.json and work/**/*.log -- not merely
 # over the files someone remembered to think about.
+#
+# RUN B EXISTS BECAUSE RUN A CANNOT PROVE ITS OWN PREMISE. A credential that is
+# correctly redacted is indistinguishable, from outside, from one that never
+# arrived -- and in run 28 that is exactly what happened: the escrow directory
+# was empty, prove died on the missing manifest before it ever reached the
+# credential path, and t23.2 passed over a run that had not begun. So arrival
+# is measured separately, with a fragment Nix is guaranteed to echo.
 SENTINEL="nse-sentinel-$(date +%s)-do-not-leak"
 SECRETDIR=$WORK/secret-run
-rm_store "$SECRETDIR"; mkdir -p "$SECRETDIR"
+# A real escrow, prepared the way t16 and t18 prepare theirs. prove READS an
+# escrow; it does not create one, and handing it an empty directory measures
+# nothing but the error message.
+rm_store "$SECRETDIR"; mkdir -p "$SECRETDIR/evidence"
+for f in manifest.json closure.json discovery.json; do
+  command cp -f "$ESCROW/$f" "$SECRETDIR/$f"
+done
 rc=0
 NSE_EXTRA_NIX_CONFIG="netrc-file = /dev/null # $SENTINEL" \
   "$NSE" test-origin-independence "$FIXTURE" --escrow-dir "$SECRETDIR" \
@@ -930,11 +943,34 @@ found=$(
 assert_eq "t23.2 the sentinel appears in NOTHING the CI job uploads" "" "$found"
 assert_eq "t23.3 and the evidence records only that a config was supplied" "yes" \
   "$(grep -oE 'NSE_EXTRA_NIX_CONFIG_PRESENT=[a-z]+' "$SECRETDIR/work/prove-env.sh" 2>/dev/null | cut -d= -f2)"
+assert_ne "t23.3a and names the carrier file it was handed to" "" \
+  "$(grep -oE "NSE_EXTRA_NIX_CONFIG_FILE=\S+" "$SECRETDIR/work/prove-env.sh" 2>/dev/null | cut -d= -f2-)"
 assert_eq "t23.4 the 0600 carrier file is gone when the run ends" \
   "absent" "$([ -f "$SECRETDIR/work/prove-extra-nix-config" ] && echo present || echo absent)"
-# Positive control: the sentinel really was in play, or t23.2 proves nothing.
-assert_ne "t23.5 positive control: the sentinel did reach the run" "0" \
-  "$(grep -c -- "$SENTINEL" "$WORK/secret-run.log" || true)"
+
+# RUN B -- ARRIVAL. An unknown setting name, which Nix repeats back verbatim
+# ("unknown setting '...'"). Nothing asserts the exit status: whether Nix warns
+# and continues or refuses outright, either outcome quotes the fragment, and
+# either one proves the file crossed into the isolated namespace. If this goes
+# silent, the escape hatch is dead and run A is measuring an empty pipe.
+ARRIVAL="nse-arrival-$(date +%s)-marker"
+ARRIVEDIR=$WORK/arrival-run
+rm_store "$ARRIVEDIR"; mkdir -p "$ARRIVEDIR/evidence"
+for f in manifest.json closure.json discovery.json; do
+  command cp -f "$ESCROW/$f" "$ARRIVEDIR/$f"
+done
+NSE_EXTRA_NIX_CONFIG="$ARRIVAL = 1" \
+  "$NSE" test-origin-independence "$FIXTURE" --escrow-dir "$ARRIVEDIR" \
+  --escrow-substituter "file://$ESCROW/cache" >"$WORK/arrival-run.log" 2>&1 || true
+arrived=$(
+  { printf '%s\n' "$WORK/arrival-run.log"
+    find "$ARRIVEDIR/work" -name '*.log' -type f 2>/dev/null
+  } | xargs -r grep -l -- "$ARRIVAL" 2>/dev/null | wc -l)
+assert_ne "t23.5 positive control: the fragment reached the isolated nix" "0" "$arrived"
+# And the transport that demonstrably works is still the redacting one: even a
+# fragment Nix shouts about is not written into prove-env.sh by us.
+assert_eq "t23.6 and even an echoed fragment is not serialised into prove-env.sh" "0" \
+  "$(grep -c -- "$ARRIVAL" "$ARRIVEDIR/work/prove-env.sh" 2>/dev/null || true)"
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1mRESULT\033[0m  passed=%d failed=%d\n' "$pass" "$fail"

@@ -475,6 +475,23 @@ unresolved_origins=$(jq -r '[.[]|select(.role=="origin" and .preResolvedAddress=
 
 export HOME="$NSE_TESTHOME"
 export XDG_CACHE_HOME="$NSE_TESTHOME/.cache"
+
+# If a config fragment was supplied, it must ARRIVE. A carrier file that cannot
+# be read here would drop the operator's credential silently, and the run would
+# then fail against their authenticated tier with an error pointing at the tier
+# rather than at us -- or, worse, pass against a store that never needed it. A
+# fragment that was supplied and did not arrive is a harness error, not a
+# degraded run. The message names the file, never its contents.
+nse_extra_cfg=""
+if [ "${NSE_EXTRA_NIX_CONFIG_PRESENT:-no}" = yes ]; then
+  if [ -n "${NSE_EXTRA_NIX_CONFIG_FILE:-}" ] && [ -r "$NSE_EXTRA_NIX_CONFIG_FILE" ]; then
+    nse_extra_cfg=$(cat "$NSE_EXTRA_NIX_CONFIG_FILE")
+  else
+    printf 'prove: a nix config fragment was supplied but its carrier file %s is not readable inside the namespace; refusing to run without it\n' \
+      "${NSE_EXTRA_NIX_CONFIG_FILE:-<unset>}" >&2
+    exit 91
+  fi
+fi
 # `substitute = true` is set on purpose and is load-bearing: Nix only
 # auto-disables substitution when that setting is NOT an explicit override.
 export NIX_CONFIG="experimental-features = nix-command flakes
@@ -487,7 +504,7 @@ flake-registry =
 warn-dirty = false
 build-users-group =
 require-drop-supplementary-groups = false
-$([ -n "${NSE_EXTRA_NIX_CONFIG_FILE:-}" ] && [ -r "${NSE_EXTRA_NIX_CONFIG_FILE}" ] && cat "$NSE_EXTRA_NIX_CONFIG_FILE")
+$nse_extra_cfg
 "
 
 cd "$NSE_PWD" || { printf 'prove: cannot cd to %s\n' "$NSE_PWD" >&2; exit 90; }

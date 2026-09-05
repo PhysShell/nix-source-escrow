@@ -229,6 +229,27 @@ pleasant to look at.
 
 ---
 
+## 7a. A test whose subject is an absence needs a presence control
+
+The hardest check to keep honest is one that asserts something is *not* there —
+a secret absent from an artifact, a host unreachable, a phrase missing from a
+file. It passes when the property holds. It also passes when the run died before
+the subject ever appeared.
+
+> A value that was correctly redacted and a value that never arrived look
+> **identical** from outside.
+
+So the absence assertion is never the whole test. Something alongside it must
+establish that the subject was in play: a positive control that goes red when
+the run does not reach the code path under test. And when the redaction is doing
+its job, that control cannot use the same observation — it needs its own run,
+with a variant of the subject the system is guaranteed to echo.
+
+The tell that this is missing: several assertions in the group pass when the
+run does not happen at all.
+
+---
+
 ## 8. Scope the conclusion to what was run
 
 Name the envelope in the sentence that states the result: this fixture, these
@@ -252,6 +273,9 @@ Before trusting a check:
 - [ ] I have measured how long its FAILING path takes, not only its passing one.
 - [ ] I have EXECUTED it, not merely parsed it. A syntax check is not an
       execution check: a call that lost its arguments is still valid shell.
+- [ ] Its subject was actually present to be measured. If the check asserts an
+      ABSENCE, something separate establishes that the thing existed to be
+      absent from.
 
 Before an intervention:
 

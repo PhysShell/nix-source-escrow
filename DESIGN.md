@@ -1861,3 +1861,84 @@ learned.
 Added to `EXPERIMENT-PROTOCOL.md`'s checklist as its own line:
 
 > I have EXECUTED it, not merely parsed it.
+
+### 20d. Verdict on run 28, and instrument nine: the test that measured its own error message
+
+Run 28 (`1ae0b1c`), both Nix versions, **unit-shell 147/0, flake check pass,
+acceptance 170/3** — and the three reds are all in one test, `t23`, which is the
+instrument and not the subject.
+
+Everything else the run was asked to settle came back green:
+
+| claim | verdict |
+| --- | --- |
+| `t03.1` repaired, called with its arguments | green |
+| `t03.9` the realised set holds exactly one `.drv` per discovered derivation | **green** |
+| `t22.5a`–`t22.5d` a refusal is recorded as `HARNESS_ERROR`, names the unmet prerequisite, fabricates no coverage, and does not read as `NOT_RUN` | green |
+| every §20 observable unchanged from run 24 | green |
+
+`t03.9` green is the one that matters most, because it was the falsifiable half
+of §20b. **gap-23 stays closed on measurement rather than on argument.** The
+observables are identical on both legs and identical to run 24: 166 / 164 / 2 /
+3 / 38, 160 flat + 6 nar, 639 derivations, 876 objects,
+`closureSha256 = 7f141ef1…ecb2`.
+
+#### The instrument defect
+
+```
+FAIL t23.1 the run completes with a credential supplied     expected '0', got '1'
+PASS t23.2 the sentinel appears in NOTHING the CI job uploads
+FAIL t23.3 the evidence records only that a config was supplied   expected 'yes', got ''
+PASS t23.4 the 0600 carrier file is gone when the run ends
+FAIL t23.5 positive control: the sentinel did reach the run  expected something other than '0'
+```
+
+`t23` created a fresh **empty** directory and handed it to
+`test-origin-independence` as `--escrow-dir`. `prove` *reads* an escrow; it does
+not create one. It died on the missing `manifest.json` before it ever reached
+the credential path, so the sentinel was never in play — and `t23.2`, the
+assertion the whole test exists for, was a grep over a run that had not begun.
+`t23.4` passed for the same empty reason: a carrier file that was never written
+is also absent at the end.
+
+So run 28 established **nothing whatever about the secret-handling code, in
+either direction.** Every other test with a custom `--escrow-dir` — `t08`,
+`t16`, `t18` — copies `manifest.json`, `closure.json` and `discovery.json` in
+first. `t23` was written without that step and its author did not notice,
+because two of its four assertions pass when the run does not happen.
+
+#### What caught it
+
+`t23.5`, the positive control, and only that. This is the ninth check in this
+project able to pass by accident, and the first one where the guard against that
+class **worked as designed and named the fault the same minute**. The reason it
+was needed is worth stating on its own, because it generalises past this test:
+
+> A credential that is correctly redacted and a credential that never arrived
+> look **identical** from outside. Any test whose subject is an absence must
+> separately establish that the thing was present to be absent from.
+
+#### Both corrections
+
+`t23` now builds a real escrow the way `t16` does, and **arrival is measured
+separately, in its own run**, because run A cannot prove its own premise. Run B
+supplies an unknown setting name, which Nix repeats back verbatim; nothing
+asserts run B's exit status, since a warning and a refusal both quote the
+fragment and either one proves the file crossed into the namespace. `t23.6` then
+requires that even a fragment Nix shouts about is still not serialised into
+`prove-env.sh`.
+
+And the run exposed a second, quieter fail-open in the escape hatch itself. The
+inner script read the carrier with
+
+```
+$([ -n "$NSE_EXTRA_NIX_CONFIG_FILE" ] && [ -r "$NSE_EXTRA_NIX_CONFIG_FILE" ] && cat …)
+```
+
+An unreadable carrier collapsed to the empty string and **the run continued
+without the credential** — this repository's own missing-is-not-empty, one more
+time, in the one place where the consequence is an operator debugging their
+authenticated tier instead of the tool that dropped the fragment. A fragment
+that was supplied and did not arrive is now a refusal (`exit 91`) naming the
+file and never its contents. `u21.6`–`u21.8` guard it, and `u21.6` was driven
+red against a copy with the old construction restored before being trusted.

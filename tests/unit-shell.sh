@@ -754,6 +754,17 @@ assert_ne "u21.4 that file is created under a restrictive umask" "0" \
   "$(grep -c 'umask 077' "$ROOT/lib/prove.sh")"
 assert_ne "u21.5 and removed however the run ends" "0" \
   "$(grep -cE "trap .rm -f .\\\$extra_cfg_file" "$ROOT/lib/prove.sh")"
+# And a fragment that was supplied must ARRIVE. The old construction was
+# `$([ -r file ] && cat file)`: an unreadable carrier collapsed to the empty
+# string and the run continued without the credential, which is the same
+# missing-read-as-empty this repository keeps finding. It is now a refusal.
+assert_eq "u21.6 an unreadable carrier is refused, not silently dropped" "0" \
+  "$(grep -cE '\$\(\[ -n "\$\{NSE_EXTRA_NIX_CONFIG_FILE' "$ROOT/lib/prove.sh")"
+assert_ne "u21.7 and the refusal is explicit" "0" \
+  "$(grep -c 'refusing to run without it' "$ROOT/lib/prove.sh")"
+# The refusal names the file and not what is in it.
+assert_eq "u21.8 the refusal never prints the fragment" "0" \
+  "$(grep -c 'refusing to run without it.*nse_extra_cfg' "$ROOT/lib/prove.sh")"
 
 # ---------------------------------------------------------------------------
 head_ "u22  the cost of the strong guarantee is stated as retention, not transfer"
