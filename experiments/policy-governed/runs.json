@@ -16,17 +16,20 @@
     {
       "id": "C1",
       "claim": "A candidate cannot weaken its governing policy.",
-      "status": "PREREGISTERED_NOT_MEASURED"
+      "status": "MEASURED_HOLDS",
+      "evidence": "the adversarial corpus, gated with base-against-base controls; run 5 ran the same corpus generated from a RECORDED facts document (PREREG.md §11.1), so it is evidence rather than a mechanism test"
     },
     {
       "id": "C2",
       "claim": "A candidate cannot replace its governing judge.",
-      "status": "PREREGISTERED_NOT_MEASURED"
+      "status": "MEASURED_HOLDS",
+      "evidence": "the adversarial corpus, gated with base-against-base controls; run 5 ran the same corpus generated from a RECORDED facts document (PREREG.md §11.1), so it is evidence rather than a mechanism test"
     },
     {
       "id": "C3",
       "claim": "A policy-relevant graph change cannot hide behind content equality.",
-      "status": "PREREGISTERED_NOT_MEASURED"
+      "status": "MEASURED_HOLDS",
+      "evidence": "the adversarial corpus, gated with base-against-base controls; run 5 ran the same corpus generated from a RECORDED facts document (PREREG.md §11.1), so it is evidence rather than a mechanism test"
     },
     {
       "id": "C4",
@@ -302,6 +305,64 @@
       ],
       "artifacts": {
         "policy-governed-qualification-nix2.34.7": 9976898123
+      }
+    },
+    {
+      "run": 5,
+      "workflowRunId": 33992956558,
+      "measuredCommit": "654a7dcfbb77bf60d199228f3c5bff5a45c795d2",
+      "date": "2026-09-05",
+      "kind": "EMPIRICAL",
+      "fixtureIdentity": {
+        "flake": "fixture",
+        "nixpkgsPin": "d2f67949798825fe853f7c5d0492b8bf016d3f88"
+      },
+      "nixVersions": [
+        "2.34.7",
+        "2.24.9"
+      ],
+      "preregSections": [
+        "§11.1",
+        "§15",
+        "§16"
+      ],
+      "primaryClaims": [
+        "C1",
+        "C2",
+        "C3"
+      ],
+      "supports": "CACH2, re-measured with a step capable of emitting its failing state; and PREREG.md §11.1 -- the SAME adversarial corpus, generated from a RECORDED facts document rather than a hand-written one.",
+      "expectedTrace": "CACH2 decided by copying the object back out of the escrow and comparing hashes, with VIOLATED, HELD_* and NOT_MEASURED_* as distinct outcomes. The corpus on a recorded seed: every control ACCEPTED, every head REJECTED.",
+      "observedTrace": {
+        "cach2": {
+          "verdict": "HELD_RUN_REFUSED",
+          "victim": "/nix/store/43b4f9gi09dha0112qfrhlywvfy6bcl1-source",
+          "corruptedFile": "hello-2.12.1/configure.ac",
+          "sha256Original": "24814d9d52148c1d27705cd62431f97053421e0c68d4ea74395cd7ddca062c41",
+          "sha256Corrupted": "88006ecfc4c6296554056f71b40e75f342d8f6927cc21acc5a552aff51440e2b",
+          "runExitCode": 1,
+          "checkName": "SOURCE_ORIGIN_INDEPENDENCE FAIL"
+        },
+        "corpusOnRecordedSeed": {
+          "allControlsAccepted": true,
+          "allHeadsRejected": true
+        },
+        "escrowReplayControl": {
+          "checkName": "ESCROW_REPLAY PASS",
+          "exitCode": 0,
+          "elapsedMilliseconds": 28731
+        }
+      },
+      "verdict": "CACH2_HELD; CORPUS_ON_RECORDED_SEED_HOLDS",
+      "findings": [
+        "CACH2 HELD. A DISCOVERED SOURCE in the shared accelerator was corrupted -- one byte appended to hello-2.12.1/configure.ac, hash moved from 24814d9d to 88006ecf -- and the run REFUSED: exit 1, SOURCE_ORIGIN_INDEPENDENCE FAIL. The corrupted bytes did not reach the escrow, and the verdict was decided by an observation capable of saying VIOLATED rather than by reading a PASS as a hold.",
+        "This also explains run 4's inconclusive green: that step corrupted a zlib BUILD OUTPUT, which under SOURCE_ORIGIN_INDEPENDENCE is not in the population the escrow covers, so nothing it did could have been detected either way. A specimen outside the population is not a specimen, and the difference between the two runs is exactly that.",
+        "PREREG.md §11.1 is satisfied: the same five proposals, the same mutations, generated from a RECORDED facts document produced by a real Nix from a real graph. Every base-against-base control ACCEPTED and every head REJECTED at that scale. The corpus is no longer a mechanism test.",
+        "ESCROW_REPLAY PASS again (28.7s), so the §16 control holds on this commit too."
+      ],
+      "defectsFoundInThisRun": [],
+      "artifacts": {
+        "policy-governed-qualification-nix2.34.7": 9977203632
       }
     }
   ]

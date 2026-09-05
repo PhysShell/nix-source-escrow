@@ -268,19 +268,34 @@ done. Each item, and where it was established — the run numbers are in
 | head policy is preview only | fixture A, and the preview is in the report so a reviewer can see what it *would* have done |
 | head judge is not authority | fixture B; the report records `candidateJudgeExecuted: false` |
 | acceptance store remains fresh | CACH3, observed rather than assumed |
-| cache is accelerator only | CACH1/CACH4 measured in run 3 (34.5s → 17.2s, every semantic field identical); CACH5 demonstrated by planting a verdict; **CACH2 not yet established** — see below |
+| cache is accelerator only | all five. CACH1/CACH4 in run 3 (34.5s → 17.2s, every semantic field identical); CACH2 in run 5; CACH3 observed rather than assumed; CACH5 demonstrated by planting a verdict the gate then ignores |
 | every new guard has a falsifying specimen | one branch of the scratch-prepare guard has no portable specimen and says so rather than faking one |
 | the closed line's tests remain green | 186/186, on a byte-identical `tests/unit-shell.sh` |
 
-### Not established
+### CACH2, and why it took two runs
 
-* **CACH2** — a corrupted accelerator cannot become evidence. Run 4's step
-  produced a green it was not capable of earning: it corrupted a build output
-  rather than a source the escrow actually holds, and then read a `PASS` as the
-  control holding — when a `PASS` cannot distinguish *Nix rejected the
-  corrupted bytes* from *the corrupted bytes were escrowed and replayed*. The
-  green is withdrawn and recorded as `INCONCLUSIVE`. The step now decides by
-  copying the object back out of the escrow and comparing hashes.
+Run 4's step produced a green it was not capable of earning. It corrupted a
+zlib **build output** — which under `SOURCE_ORIGIN_INDEPENDENCE` is not in the
+population the escrow covers at all — and then read the resulting `PASS` as the
+control holding, when a `PASS` cannot distinguish *Nix rejected the corrupted
+bytes* from *the corrupted bytes were escrowed and replayed*. That green was
+withdrawn and recorded as `INCONCLUSIVE` rather than kept.
+
+Run 5 measured it properly. The victim is taken from the escrow's own discovery
+document, so it is certainly a source the escrow holds; the verdict is decided
+by copying the object back out of the escrow and comparing hashes, with
+`VIOLATED`, `HELD_*` and `NOT_MEASURED_*` as distinct outcomes:
+
+```
+victim:          /nix/store/43b4f9gi…-source
+corrupted file:  hello-2.12.1/configure.ac
+sha256:          24814d9d…  ->  88006ecf…
+run:             exit 1, SOURCE_ORIGIN_INDEPENDENCE FAIL
+CACH2:           HELD_RUN_REFUSED
+```
+
+The corrupted bytes did not reach the escrow. The difference between the two
+runs is the specimen: one was outside the population and one was inside it.
 
 ## Inherited, not re-derived
 
