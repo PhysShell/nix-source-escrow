@@ -249,6 +249,39 @@ App, an organization transfer, a production required workflow,
 PR-built artifacts into a durable escrow. If any of them turns out to be
 *required*, work stops and it is recorded as a new envelope — `PREREG.md` §20.
 
+## Acceptance: where each item stands
+
+`PREREG.md` §21 lists what this line must establish before it can be called
+done. Each item, and where it was established — the run numbers are in
+[`runs.json`](runs.json), which is the only place a run is indexed.
+
+| item | where |
+|---|---|
+| **C1** candidate cannot weaken governing policy | fixture A: the exemption the candidate wrote is shown to be real and shown not to apply |
+| **C2** candidate cannot replace governing judge | fixture B, plus the same gate run over this repository's own tool files |
+| **C3** same content + changed origin re-evaluates | fixture D: content digest unchanged, facts and decision digests both moved |
+| **C4** annotation moves `.drv`, not outputs, no rebuild | run 2, both Nix versions, verdict `C4_AS_PREREGISTERED` |
+| `owner`/`repo`/`rev` measured on both Nix versions | run 1 — all three `DERIVATION_ATTR`, and the two versions agreed while emitting different document schemas |
+| bare `escrow=true` classified explicitly | run 1 — `DIRECT_ATTR_REJECTED` on both versions |
+| typed digests have red controls | both halves for each: the mutation that must move it and the one that must not |
+| decisions carry matched-rule provenance and policy revision | asserted per decision; measured on a real 150-source graph in run 3 |
+| head policy is preview only | fixture A, and the preview is in the report so a reviewer can see what it *would* have done |
+| head judge is not authority | fixture B; the report records `candidateJudgeExecuted: false` |
+| acceptance store remains fresh | CACH3, observed rather than assumed |
+| cache is accelerator only | CACH1/CACH4 measured in run 3 (34.5s → 17.2s, every semantic field identical); CACH5 demonstrated by planting a verdict; **CACH2 not yet established** — see below |
+| every new guard has a falsifying specimen | one branch of the scratch-prepare guard has no portable specimen and says so rather than faking one |
+| the closed line's tests remain green | 186/186, on a byte-identical `tests/unit-shell.sh` |
+
+### Not established
+
+* **CACH2** — a corrupted accelerator cannot become evidence. Run 4's step
+  produced a green it was not capable of earning: it corrupted a build output
+  rather than a source the escrow actually holds, and then read a `PASS` as the
+  control holding — when a `PASS` cannot distinguish *Nix rejected the
+  corrupted bytes* from *the corrupted bytes were escrowed and replayed*. The
+  green is withdrawn and recorded as `INCONCLUSIVE`. The step now decides by
+  copying the object back out of the escrow and comparing hashes.
+
 ## Inherited, not re-derived
 
 The discovery, preserve, verify and prove stages belong to the closed line and
