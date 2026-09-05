@@ -926,3 +926,25 @@ changed, when, and whether the run it affects had already happened.
   only. `rev` still has no fallback of any kind — `LOCK_ATTR` is a direct read,
   not an inference. `UNKNOWN` still means absent, and §7.3 still applies to it
   unchanged.
+
+### A2 — the corpus is generated from a seed, and its policy is derived from one
+
+* **When:** 2026-09-05, during commit 10.
+* **Affected runs:** none retroactively. Runs 1–3 did not gate the corpus.
+* **What:** §11's five fixtures are produced by `nse-pg corpus --seed <facts>`
+  rather than written by hand, and the trusted base policy each fixture is
+  gated under is **derived from that seed** (one rule per observed origin host,
+  one `contentIdentity` rule per source whose origin was never observed, and a
+  default of `quarantine`).
+* **Why:** §11.1 already required a `RECORDED` seed before the corpus could
+  count as evidence rather than as a mechanism test. Reaching that required the
+  mutations to be a *function* of a seed. And a base policy hand-written against
+  a 3-dependency document quarantines much of a real 150-dependency graph, which
+  turns every base-against-base control red and makes the whole corpus prove
+  nothing — the failure §11 exists to prevent, arriving through the policy
+  instead of through the facts.
+* **What it does NOT change:** the required traces in §11.A–E, the requirement
+  that every control be `ACCEPTED`, or the standing of any recorded run. The
+  adversarial dependency each mutation adds remains **constructed** whatever the
+  seed's provenance, and `fixtures/SEED.json` says so in the tree: a recorded
+  seed makes the graph real, not the attack.

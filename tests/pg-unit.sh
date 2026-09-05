@@ -31,6 +31,8 @@ trap 'chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 . "$ROOT/lib/pg-policy.sh"
 # shellcheck source=../lib/pg-cache.sh
 . "$ROOT/lib/pg-cache.sh"
+# shellcheck source=../lib/pg-corpus.sh
+. "$ROOT/lib/pg-corpus.sh"
 # shellcheck source=../lib/pg-gate.sh
 . "$ROOT/lib/pg-gate.sh"
 # shellcheck source=../lib/pg-ingest.sh
@@ -674,6 +676,78 @@ gate_run() {  # $1 fixture, $2 candidate side (base|head) -> report path
   printf '%s\n' "$out"
 }
 
+head_ "p25b  the corpus is a FUNCTION of a seed, and the checked-in copy has not drifted"
+# PREREG.md §11.1 turns on the seed: a SYNTHETIC one makes the corpus a
+# mechanism test, a RECORDED one makes it evidence. That only works if the same
+# code produces both -- so the fixtures in git are the generator's output, and
+# this asserts it byte for byte. A hand-edited fixture is a fixture whose
+# recorded twin proves something else.
+REGEN=$TMP/corpus-regen
+nse_pg_corpus_generate "$ROOT/tests/pg-fixtures/facts-seed.json" "$REGEN" >/dev/null 2>&1
+drift=$(diff -r --exclude=qualification "$CORPUS" "$REGEN" 2>&1 | head -20 || true)
+assert_eq "p25b.1 the checked-in corpus is exactly what the generator emits" "" "$drift"
+assert_eq "p25b.2 and it declares its seed provenance in the tree" "SYNTHETIC" \
+  "$(jq -r .seedProvenance "$CORPUS/SEED.json")"
+assert_ne "p25b.3 and says, in the file, what that provenance MEANS" "0" \
+  "$(jq -r '.meaning | test("MECHANISM TEST") | if . then 1 else 0 end' "$CORPUS/SEED.json")"
+assert_ne "p25b.4 and that the added adversarial dependency is constructed either way" "0" \
+  "$(jq -r '.caveat | test("does not make the attack real") | if . then 1 else 0 end' "$CORPUS/SEED.json")"
+# A seed that does not declare its provenance cannot be used at all.
+jq 'del(.seedProvenance)' "$ROOT/tests/pg-fixtures/facts-seed.json" > "$TMP/noprov.json"
+rc=0; ( nse_pg_corpus_generate "$TMP/noprov.json" "$TMP/noprov-corpus" ) >/dev/null 2>&1 || rc=$?
+assert_eq "p25b.5 a seed with no declared provenance is refused, not defaulted" "3" "$rc"
+# THE POINT OF THE GENERATOR: the same mutations on a RECORDED seed, at real
+# scale, with sources whose origin was never observed -- and the controls must
+# still be ACCEPTED, or the corpus stops proving anything.
+python3 - "$TMP/big-seed.json" <<'PYEOF'
+import json, sys, random
+random.seed(11)
+hosts = ["github.com", "ftp.gnu.org", "cache.nixos.org", "codeberg.org"]
+deps = []
+for i in range(120):
+    sp = "/nix/store/%032d-dep%03d" % (i, i)
+    unknown = (i % 50 == 0)
+    deps.append({
+      "id": "fod:" + sp, "class": "fod",
+      "kind": random.choice(["fetchurl", "fetchzip-like", "builtin:fetchurl"]),
+      "requiredByPlan": True, "requiredByPlanReason": "DERIVATION_CLOSURE",
+      "drvPath": "/nix/store/%032d-dep%03d.drv" % (i, i),
+      "contentIdentity": {"storePath": sp, "expectedHash": "sha256-" + "A" * 42 + "=",
+                          "expectedHashAlgo": "sha256", "hashMode": "nar"},
+      "originHost": ({"value": None, "source": "UNKNOWN", "attrKey": None, "attrSite": None}
+                     if unknown else
+                     {"value": random.choice(hosts), "source": "URL_FALLBACK",
+                      "attrKey": "url", "attrSite": "url"}),
+      "owner": {"value": None, "source": "UNKNOWN", "attrKey": None, "attrSite": None},
+      "repo": {"value": None, "source": "UNKNOWN", "attrKey": None, "attrSite": None},
+      "rev": {"value": None, "source": "UNKNOWN", "attrKey": None, "attrSite": None},
+      "tag": {"value": None, "source": "UNKNOWN", "attrKey": None, "attrSite": None},
+      "aliasPaths": [], "discoveryStatus": "COVERED", "annotation": None})
+json.dump({"schemaVersion": 1, "kind": "policy-governed-facts",
+           "seedProvenance": "RECORDED",
+           "flakeSource": {"storePath": "/nix/store/ffff-src", "narHash": None},
+           "dependencies": deps}, open(sys.argv[1], "w"))
+PYEOF
+BIG=$TMP/corpus-big
+nse_pg_corpus_generate "$TMP/big-seed.json" "$BIG" >/dev/null 2>&1
+assert_eq "p25b.6 a RECORDED seed is labelled as evidence, not as a mechanism test" "1" \
+  "$(jq -r '.meaning | test("is evidence") | if . then 1 else 0 end' "$BIG/SEED.json")"
+assert_eq "p25b.7 the derived policy names a rule per observed host AND per unobserved source" "true" \
+  "$(h=$(jq -r '[.dependencies[]|select(.originHost.source!="UNKNOWN")|.originHost.value]|unique|length' "$TMP/big-seed.json")
+     u=$(jq -r '[.dependencies[]|select(.originHost.source=="UNKNOWN")|.contentIdentity.storePath]|unique|length' "$TMP/big-seed.json")
+     r=$(grep -c '^\[\[rule\]\]' "$BIG/origin-moved/base/nix-source-escrow.toml")
+     [ "$r" -eq "$((h+u))" ] && echo true || echo "false (hosts=$h unknown=$u rules=$r)")"
+for fx in policy-self-exemption judge-replacement workflow-replacement \
+          origin-moved policy-dependency-cochange; do
+  bg=$TMP/big-$fx-ctl.json; hg=$TMP/big-$fx.json
+  ( nse_pg_gate "$BIG/$fx/base" "$BIG/$fx/base" "$bg" base base ) >/dev/null 2>&1 || true
+  ( nse_pg_gate "$BIG/$fx/base" "$BIG/$fx/head" "$hg" base head ) >/dev/null 2>&1 || true
+  assert_eq "p25b.8 $fx on a 120-source recorded seed: control ACCEPTED" \
+    "ACCEPTED" "$(jq -r .verdict "$bg")"
+  assert_eq "p25b.9 $fx on a 120-source recorded seed: head REJECTED" \
+    "REJECTED" "$(jq -r .verdict "$hg")"
+done
+
 head_ "p26  the control: every fixture accepts its own base state"
 for fx in policy-self-exemption judge-replacement workflow-replacement \
           origin-moved policy-dependency-cochange; do
@@ -755,9 +829,19 @@ assert_ne "p30.2 ORIGIN_MOVED is reported as a finding" "0" \
   "$(jq -r '[.findings[] | select(.id == "ORIGIN_MOVED")] | length' "$D")"
 assert_eq "p30.3 policy RE-EVALUATED: the same policy reached a different decision" \
   "CHANGED" "$(jq -r .digests.effectiveDecision "$D")"
-assert_eq "p30.4 the dependency lost the rule that used to cover it" \
-  "r-unnamed-origin-quarantine" \
-  "$(jq -r '.decisions.decisions[] | select(.sourceId|test("nix-pills")) | .matchedRuleIds | join(",")' "$D")"
+# Asserted as a PROPERTY, not as a rule name. The corpus is generated from a
+# seed and its policy is derived from that seed, so a literal rule id here
+# would be an assertion about the synthetic seed rather than about the
+# mechanism -- and would go red the moment the corpus ran on a recorded one.
+Dbase=$(gate_run origin-moved base)
+moved_id=$(jq -r '.movedDependency' "$CORPUS/SEED.json")
+assert_ne "p30.4 the moved dependency WAS covered by a rule before the move" "" \
+  "$(jq -r --arg id "$moved_id" '.decisions.decisions[] | select(.sourceId == $id) | .matchedRuleIds | join(",")' "$Dbase")"
+assert_eq "p30.4a and matches nothing after it -- it lost the rule that covered it" "" \
+  "$(jq -r --arg id "$moved_id" '.decisions.decisions[] | select(.sourceId == $id) | .matchedRuleIds | join(",")' "$D")"
+assert_eq "p30.4b so its admission falls to the policy DEFAULT, which is quarantine" \
+  "quarantine DEFAULT" \
+  "$(jq -r --arg id "$moved_id" '.decisions.decisions[] | select(.sourceId == $id) | [.effective.admission, .axisSource.admission] | join(" ")' "$D")"
 assert_eq "p30.5 and is rejected, on the strength of a fact a content hash cannot carry" \
   '["QUARANTINED_DEPENDENCY"]' "$(jq -c .rejectedBy "$D")"
 # The bytes really are identical. If they were not, this fixture would be
@@ -775,9 +859,20 @@ assert_eq "p31.1 POLICY_DEPENDENCY_COCHANGE, and it is the ONLY rejection" \
   '["POLICY_DEPENDENCY_COCHANGE"]' "$(jq -c .rejectedBy "$E")"
 assert_eq "p31.2 the added dependency is named" "1" \
   "$(jq -r '[.findings[] | select(.id=="POLICY_DEPENDENCY_COCHANGE") | .affected[]] | length' "$E")"
-assert_eq "p31.3 and so is the verdict the weakening would have moved it to" \
-  "required ignore" \
-  "$(jq -r '.findings[] | select(.id=="POLICY_DEPENDENCY_COCHANGE") | .affected[] | [.enforced.coverage, .proposed.coverage] | join(" ")' "$E")"
+# The WEAKENING, asserted as a direction on the axis rather than as two
+# literal words: the proposal moves the added dependency DOWN the coverage
+# order, which is the whole reason the conjunction is refused.
+assert_eq "p31.3 the proposal would move the added dependency DOWN the coverage axis" \
+  "true" \
+  "$(jq -r '.findings[] | select(.id=="POLICY_DEPENDENCY_COCHANGE") | .affected[]
+            | . as $a | ["ignore","auto","required"] as $ord
+            # `. as $a` FIRST. `$ord | index(.proposed.coverage)` rebinds . to
+            # the array, so .proposed indexes the ORDER LIST -- the third time
+            # this exact trap has appeared in this line, and the third time jq
+            # refused outright rather than answering wrongly.
+            | (($ord | index($a.proposed.coverage)) < ($ord | index($a.enforced.coverage)))' "$E")"
+assert_eq "p31.3a and the proposed value is the exemption the candidate wrote" "ignore" \
+  "$(jq -r '.findings[] | select(.id=="POLICY_DEPENDENCY_COCHANGE") | .affected[] | .proposed.coverage' "$E")"
 # THE SPECIMEN TEST. If this fixture were red for some other reason, deleting
 # the cochange guard would leave it red and the guard would be untested.
 assert_eq "p31.4 the added dependency is, on its own, perfectly acceptable to the base policy" \

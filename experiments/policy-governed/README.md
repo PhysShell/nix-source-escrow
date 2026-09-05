@@ -129,7 +129,38 @@ external dependencies.
 ## The adversarial corpus
 
 Five proposals with a base state and a head state, in
-[`fixtures/`](fixtures/). **Every one is gated base-against-base first**, and
+[`fixtures/`](fixtures/) — **generated from a seed**, not written by hand:
+
+```sh
+./bin/nse-pg corpus --seed <a facts document> --corpus-dir <where>
+```
+
+That is not a convenience. A hand-written facts document is the "fixture the
+world never produces" shape, and the pre-registration makes the corpus mean two
+different things depending on where its seed came from:
+
+| `SEED_PROVENANCE` | what a passing corpus means |
+|---|---|
+| `SYNTHETIC` | a **mechanism test**, indexed as one, **not** evidence for C1/C2/C3 |
+| `RECORDED` | the graph came off a real Nix; the corpus is evidence |
+
+So the corpus is a *function* of a seed, and the identical mutations run against
+both. The checked-in fixtures use the synthetic seed so the corpus runs with no
+Nix and no network; CI regenerates it from a recorded facts document and gates
+that too. `fixtures/SEED.json` records which one a tree was built from, and a
+unit test asserts the checked-in copy is byte-for-byte the generator's output.
+
+The base policy is **derived from the seed** as well — one rule per origin host
+the seed contains, one `contentIdentity` rule per source whose origin was never
+observed, and a default of `quarantine`. A fixed policy written against a
+3-dependency seed quarantines half of a real 150-dependency graph, every control
+goes red, and the corpus stops proving anything.
+
+The adversarial dependency each mutation *adds* is constructed in every case. A
+recorded seed makes the **graph** real; it does not make the **attack** real,
+and this line does not claim it does.
+
+**Every fixture is gated base-against-base first**, and
 that control must be `ACCEPTED`: a corpus whose baseline is already red proves
 nothing about any mutation. The first version of this corpus had exactly that
 defect — all five rejected, three of them for a reason unrelated to what they

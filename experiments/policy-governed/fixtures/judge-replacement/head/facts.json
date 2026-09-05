@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "policy-governed-facts",
   "seedProvenance": "SYNTHETIC",
-  "seedNote": "PREREG.md \u00a711.1. A hand-authored facts document. Evidence for the DIGEST MECHANISM only; a corpus standing on this seed is a mechanism test and is indexed as one, never as evidence for C1/C2/C3. It must nonetheless validate against the schema of a RECORDED document, and tests/pg-unit.sh checks that it does.",
+  "seedNote": "PREREG.md §11.1. A hand-authored facts document. Evidence for the DIGEST MECHANISM only; a corpus standing on this seed is a mechanism test and is indexed as one, never as evidence for C1/C2/C3. It must nonetheless validate against the schema of a RECORDED document, and tests/pg-unit.sh checks that it does.",
   "flakeSource": {
     "storePath": "/nix/store/ffff0000000000000000000000000000-project-src",
     "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -20,36 +20,11 @@
         "expectedHashAlgo": "sha256",
         "hashMode": "nar"
       },
-      "originHost": {
-        "value": "github.com",
-        "source": "URL_FALLBACK",
-        "attrKey": "url",
-        "attrSite": "url"
-      },
-      "owner": {
-        "value": "NixOS",
-        "source": "DERIVATION_ATTR",
-        "attrKey": "owner",
-        "attrSite": "structuredAttrs"
-      },
-      "repo": {
-        "value": "nix-pills",
-        "source": "DERIVATION_ATTR",
-        "attrKey": "repo",
-        "attrSite": "structuredAttrs"
-      },
-      "rev": {
-        "value": "4df971884fa974c49b944ba648f2e48a82404c84",
-        "source": "DERIVATION_ATTR",
-        "attrKey": "rev",
-        "attrSite": "structuredAttrs"
-      },
-      "tag": {
-        "value": null,
-        "source": "UNKNOWN",
-        "attrKey": null,
-        "attrSite": null
-      },
+      "originHost": { "value": "github.com", "source": "URL_FALLBACK", "attrKey": "url", "attrSite": "url" },
+      "owner": { "value": "NixOS", "source": "DERIVATION_ATTR", "attrKey": "owner", "attrSite": "structuredAttrs" },
+      "repo": { "value": "nix-pills", "source": "DERIVATION_ATTR", "attrKey": "repo", "attrSite": "structuredAttrs" },
+      "rev": { "value": "4df971884fa974c49b944ba648f2e48a82404c84", "source": "DERIVATION_ATTR", "attrKey": "rev", "attrSite": "structuredAttrs" },
+      "tag": { "value": null, "source": "UNKNOWN", "attrKey": null, "attrSite": null },
       "aliasPaths": [],
       "discoveryStatus": "COVERED",
       "annotation": null
@@ -66,36 +41,11 @@
         "expectedHashAlgo": "sha256",
         "hashMode": "flat"
       },
-      "originHost": {
-        "value": "ftp.gnu.org",
-        "source": "URL_FALLBACK",
-        "attrKey": "url",
-        "attrSite": "url"
-      },
-      "owner": {
-        "value": null,
-        "source": "UNKNOWN",
-        "attrKey": null,
-        "attrSite": null
-      },
-      "repo": {
-        "value": null,
-        "source": "UNKNOWN",
-        "attrKey": null,
-        "attrSite": null
-      },
-      "rev": {
-        "value": null,
-        "source": "UNKNOWN",
-        "attrKey": null,
-        "attrSite": null
-      },
-      "tag": {
-        "value": null,
-        "source": "UNKNOWN",
-        "attrKey": null,
-        "attrSite": null
-      },
+      "originHost": { "value": "ftp.gnu.org", "source": "URL_FALLBACK", "attrKey": "url", "attrSite": "url" },
+      "owner": { "value": null, "source": "UNKNOWN", "attrKey": null, "attrSite": null },
+      "repo": { "value": null, "source": "UNKNOWN", "attrKey": null, "attrSite": null },
+      "rev": { "value": null, "source": "UNKNOWN", "attrKey": null, "attrSite": null },
+      "tag": { "value": null, "source": "UNKNOWN", "attrKey": null, "attrSite": null },
       "aliasPaths": [],
       "discoveryStatus": "COVERED",
       "annotation": null
@@ -111,39 +61,12 @@
         "storePath": "/nix/store/rrrr0000000000000000000000000000-source",
         "narHash": "sha256-Bu/6A51yGcb8NdfzEu4NzWxpsWovtKWLAXUSKdLdf5U="
       },
-      "originHost": {
-        "value": "github.com",
-        "source": "LOCK_ATTR",
-        "attrKey": "type",
-        "attrSite": "flake.lock"
-      },
-      "owner": {
-        "value": "github",
-        "source": "LOCK_ATTR",
-        "attrKey": "owner",
-        "attrSite": "flake.lock"
-      },
-      "repo": {
-        "value": "gitignore",
-        "source": "LOCK_ATTR",
-        "attrKey": "repo",
-        "attrSite": "flake.lock"
-      },
-      "rev": {
-        "value": "32652622a46d7588a40b155ad309da6a7d6f9690",
-        "source": "LOCK_ATTR",
-        "attrKey": "rev",
-        "attrSite": "flake.lock"
-      },
-      "tag": {
-        "value": null,
-        "source": "UNKNOWN",
-        "attrKey": null,
-        "attrSite": null
-      },
-      "aliasPaths": [
-        "gitignore-src"
-      ],
+      "originHost": { "value": "github.com", "source": "LOCK_ATTR", "attrKey": "type", "attrSite": "flake.lock" },
+      "owner": { "value": "github", "source": "LOCK_ATTR", "attrKey": "owner", "attrSite": "flake.lock" },
+      "repo": { "value": "gitignore", "source": "LOCK_ATTR", "attrKey": "repo", "attrSite": "flake.lock" },
+      "rev": { "value": "32652622a46d7588a40b155ad309da6a7d6f9690", "source": "LOCK_ATTR", "attrKey": "rev", "attrSite": "flake.lock" },
+      "tag": { "value": null, "source": "UNKNOWN", "attrKey": null, "attrSite": null },
+      "aliasPaths": [ "gitignore-src" ],
       "discoveryStatus": "COVERED",
       "annotation": null
     }

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "policy-governed-facts",
   "seedProvenance": "SYNTHETIC",
-  "seedNote": "PREREG.md \u00a711.1. A hand-authored facts document. Evidence for the DIGEST MECHANISM only; a corpus standing on this seed is a mechanism test and is indexed as one, never as evidence for C1/C2/C3. It must nonetheless validate against the schema of a RECORDED document, and tests/pg-unit.sh checks that it does.",
+  "seedNote": "PREREG.md §11.1. A hand-authored facts document. Evidence for the DIGEST MECHANISM only; a corpus standing on this seed is a mechanism test and is indexed as one, never as evidence for C1/C2/C3. It must nonetheless validate against the schema of a RECORDED document, and tests/pg-unit.sh checks that it does.",
   "flakeSource": {
     "storePath": "/nix/store/ffff0000000000000000000000000000-project-src",
     "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="

@@ -1,0 +1,14 @@
+{
+  "caveat": "The adversarial dependency each mutation ADDS is constructed in every case. A recorded seed makes the graph real; it does not make the attack real, and this line does not claim it does.",
+  "constructedHosts": {
+    "adversary": "vendor.example.invalid",
+    "known": "github.com",
+    "mirror": "mirror.example.invalid"
+  },
+  "meaning": "The graph is hand-authored. PREREG.md §11.1: this corpus is a MECHANISM TEST, indexed as one, and is NOT evidence for C1/C2/C3.",
+  "movedDependency": "fod:/nix/store/pppp0000000000000000000000000000-nix-pills-src",
+  "seedDependencies": 3,
+  "seedPath": "/home/user/nix-source-escrow/tests/pg-fixtures/facts-seed.json",
+  "seedProvenance": "SYNTHETIC",
+  "seedSha256": "b53ffff831a206e2395d6ee6e41cdfb8bd20aa73297791804d1c75d7c20ce40d"
+}

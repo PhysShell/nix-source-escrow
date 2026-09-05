@@ -1,18 +1,18 @@
-# TRUSTED BASE POLICY for the adversarial corpus.
+# TRUSTED BASE POLICY -- DERIVED FROM THE SEED by lib/pg-corpus.sh.
 #
-# This is the policy the gate ENFORCES. A candidate may propose a different
-# one; that proposal is previewed and governs nothing.
+# Not hand-written, because it has to ACCEPT ITS OWN BASE STATE on whatever
+# seed it was derived from: every fixture is gated base-against-base first and
+# that control must be ACCEPTED, or the corpus proves nothing about any
+# mutation.
 #
-# IT MUST ACCEPT ITS OWN BASE STATE. Every fixture below is gated base-against-
-# base as a CONTROL before the mutation is gated, because a corpus whose
-# baseline is already red proves nothing about the mutation: every specimen
-# would be rejected with the guard under test deleted.
+# The default is QUARANTINE. A source with neither a named origin nor an
+# exemption by content identity is admitted only under quarantine.
 schemaVersion = 1
 
 [defaults]
 coverage = "auto"
 retention = "while-referenced"
-admission = "normal"
+admission = "quarantine"
 
 [governance]
 judgeOnMismatch = "reject"
@@ -20,29 +20,20 @@ workflowOnMismatch = "reject"
 policyDependencyCochange = "reject"
 
 [[rule]]
-id = "r-github-required"
-originHost = "github.com"
-coverage = "required"
-admission = "normal"
-
-[[rule]]
-id = "r-gnu-auto"
+id = "r-host-ftp-gnu-org"
 originHost = "ftp.gnu.org"
-coverage = "auto"
 admission = "normal"
+coverage = "auto"
 
 [[rule]]
-id = "r-unnamed-origin-quarantine"
-# A plain fetch from a host this policy does not name is admitted only under
-# quarantine. `kind` is the weakest selector (weight 2), so any rule that names
-# a real origin (weight 6) outranks it -- which is why the two rules above make
-# the base state clean rather than the default doing it.
-kind = "fetchurl"
-admission = "quarantine"
+id = "r-host-github-com"
+originHost = "github.com"
+admission = "normal"
+coverage = "required"
 
 [[rule]]
-id = "r-vendor-exempt"
 # The exemption the candidate wrote for itself.
+id = "r-vendor-exempt"
 originHost = "vendor.example.invalid"
 admission = "normal"
 coverage = "ignore"

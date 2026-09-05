@@ -35,6 +35,8 @@ export NSE_ROOT
 . "$NSE_ROOT/lib/pg-policy.sh"
 # shellcheck source=../lib/pg-cache.sh
 . "$NSE_ROOT/lib/pg-cache.sh"
+# shellcheck source=../lib/pg-corpus.sh
+. "$NSE_ROOT/lib/pg-corpus.sh"
 # shellcheck source=../lib/pg-gate.sh
 . "$NSE_ROOT/lib/pg-gate.sh"
 # shellcheck source=../lib/pg-ingest.sh
@@ -74,6 +76,10 @@ commands:
                   could not remove. PREREG.md §14.
   summary         the human-readable check summary, including what it does NOT
                   establish. PREREG.md §10, §16.
+  corpus          generate the five adversarial proposals FROM A SEED facts
+                  document. The seed declares SYNTHETIC or RECORDED, and that
+                  decides whether the corpus is a mechanism test or evidence.
+                  PREREG.md §11, §11.1.
   gate            render a verdict on an UNTRUSTED candidate. Policy and judge
                   come from the trusted root; the graph, and only the graph,
                   comes from the candidate root. PREREG.md §8, §10.
@@ -96,6 +102,8 @@ options:
                       omits the guarantee is refused rather than defaulted.
   --scratch-dir D     where the ephemeral store lives (scratch)
   --requisites F      a realised requisite list, if one exists (facts)
+  --seed FILE         seed facts document (corpus)
+  --corpus-dir D      where the generated proposals go (corpus)
   --gate-report F     the gate report to summarise (summary)
   --scratch-report F  the scratch report to summarise (summary)
   --policy-rev R  the revision the policy was read from; recorded on every
@@ -134,6 +142,8 @@ pg_scratch_dir=""
 pg_requisites=""
 pg_gate_report=""
 pg_scratch_report=""
+pg_seed=""
+pg_corpus_dir=""
 pg_base=""
 pg_head=""
 while [ $# -gt 0 ]; do
@@ -168,6 +178,10 @@ while [ $# -gt 0 ]; do
              pg_gate_report=$(nse_abspath "$2"); shift 2 ;;
     --scratch-report) [ $# -ge 2 ] || { printf 'nse-pg: --scratch-report needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_scratch_report=$(nse_abspath "$2"); shift 2 ;;
+    --seed) [ $# -ge 2 ] || { printf 'nse-pg: --seed needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_seed=$(nse_abspath "$2"); shift 2 ;;
+    --corpus-dir) [ $# -ge 2 ] || { printf 'nse-pg: --corpus-dir needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_corpus_dir=$(nse_abspath "$2"); shift 2 ;;
     --base)  [ $# -ge 2 ] || { printf 'nse-pg: --base needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_base=$(nse_abspath "$2"); shift 2 ;;
     --head)  [ $# -ge 2 ] || { printf 'nse-pg: --head needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
@@ -222,6 +236,12 @@ case $cmd in
     esac
     if [ -n "$pg_out" ]; then nse_pg_decide "$pg_facts" "$pg_loaded" | nse_pg_write_json "$pg_out"
     else nse_pg_decide "$pg_facts" "$pg_loaded"; fi
+    ;;
+  corpus)
+    nse_require_cmd jq
+    : "${pg_seed:=$NSE_ROOT/tests/pg-fixtures/facts-seed.json}"
+    : "${pg_corpus_dir:=$NSE_ROOT/experiments/policy-governed/fixtures}"
+    nse_pg_corpus_generate "$pg_seed" "$pg_corpus_dir"
     ;;
   gate)
     nse_require_cmd jq awk
