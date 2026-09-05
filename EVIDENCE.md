@@ -657,6 +657,12 @@ Honest list. None of these are hidden behind a green result.
 
 ## Status: this line of work is closed
 
+> Within the tested envelope, `E1`–`E3` are confirmed, the claimed necessity of
+> the workarounds is falsified, and removal of those workarounds preserves every
+> pre-registered observable. The experiment protocol itself was prospectively
+> validated, by rejecting a defective measurement criterion **before** the
+> intervention.
+
 ```
 E1-E3 hypothesis .................. CONFIRMED
 workaround necessity .............. FALSIFIED

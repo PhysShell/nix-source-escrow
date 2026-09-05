@@ -344,6 +344,14 @@
       "measurementInstruments": 6,
       "samplingDesign": 1,
       "protocol": "EXPERIMENT-PROTOCOL.md"
-    }
+    },
+    "resultStatement": "Within the tested envelope, E1-E3 are confirmed, the claimed necessity of the workarounds is falsified, and removal of those workarounds preserves every pre-registered observable. The experiment protocol itself was prospectively validated, by rejecting a defective measurement criterion BEFORE the intervention.",
+    "closureCommit": {
+      "commit": "a168c21",
+      "note": [
+        "The commit that closed the experimental line. Recorded by a later commit, because a commit cannot name its own hash -- the same measured/recorded split this file exists to keep straight."
+      ]
+    },
+    "runIndexPolicy": "Only executions that carry an empirical claim are indexed as runs. A documentation commit still triggers CI; that execution is operational verification, not a new experiment, and is deliberately absent from `runs`. Otherwise the index becomes a graveyard of identical green executions where the numbers grow and the knowledge does not."
   }
 }

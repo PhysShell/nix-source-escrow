@@ -1291,6 +1291,18 @@ result, and §17a, §17b and §17c say which was which.
 
 ## 18. This line of work is closed
 
+**The result, in one statement.**
+
+> Within the tested envelope, `E1`–`E3` are confirmed, the claimed necessity of
+> the workarounds is falsified, and removal of those workarounds preserves every
+> pre-registered observable. The experiment protocol itself was prospectively
+> validated, by rejecting a defective measurement criterion **before** the
+> intervention.
+
+The second sentence is the one that could not have been written after any
+earlier run. Everything up to run 14 explains past failures; run 15 onward is
+the protocol refusing a bad instrument in advance.
+
 Eighteen runs. Another cold run of the same commit costs time and yields
 almost no information, so there will not be one: the next run should exist
 because a **new falsifiable claim** does, not because green is pleasant.
@@ -1350,6 +1362,13 @@ review reference .................. 6a6687c (frozen, never moved)
    *six crashes, then a rule explaining the crashes*. It is not any more. The
    rule stopped the next instrument defect from becoming an experimental
    conclusion.
+
+**A run is not automatically an experiment.** Pushing a documentation commit
+triggers CI, and that execution is *operational verification* — it confirms the
+tree still builds. It is not a new empirical claim and it is not indexed as an
+experimental run. Without that distinction `evidence-runs.json` becomes a
+graveyard of identical green executions where the numbers grow and the
+knowledge does not.
 
 The rules themselves are now in **`EXPERIMENT-PROTOCOL.md`**, deliberately with
 no Nix in them, because that is the portable artefact. The funny part of the

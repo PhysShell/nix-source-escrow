@@ -11,8 +11,14 @@ nothing, and the count is not flattering — **five defects in the implementatio
 six in the instruments that were supposed to catch them, and one sampling
 design that refuted a correct hypothesis.**
 
-`DESIGN.md` §15, §15a, §16, §16a and §17–§17d in that repository are the case
+`DESIGN.md` §15, §15a, §16, §16a and §17–§18 in that repository are the case
 histories. This file is the rules without the archaeology.
+
+The reason it is worth reading rather than nodding at: in that series the rules
+were **prospectively validated**. They did not merely explain six instruments
+that had already failed — they rejected the seventh before its output could
+become a conclusion. A protocol that has only ever been applied backwards is a
+narrative device.
 
 ---
 
@@ -145,6 +151,19 @@ state nobody ran. A result whose provenance is a rumour is a rumour.
 
 Corollary: stamp provenance at **build** time, not by asking the environment at
 run time. An installed artefact has no working tree to interrogate.
+
+---
+
+## 6a. A run is not automatically an experiment
+
+Pushing a documentation commit triggers the same CI as a code change. That
+execution is **operational verification** — it confirms the tree still builds.
+It is not a new empirical claim, and it should not be indexed as an
+experimental run.
+
+Without the distinction the run index becomes a graveyard of identical green
+executions in which the numbers grow and the knowledge does not. Index a run
+when it carries a claim; record the rest, if at all, as what they are.
 
 ---
 
