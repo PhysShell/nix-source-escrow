@@ -269,9 +269,24 @@ nse_store_present() {
   # never affected: it stats a narinfo.
   #
   # An unrecognised response shape is fatal, not empty.
+  # THE COST OF A REFUSAL IS PART OF THE REFUSAL. Measured: a tier answering
+  # 503 took ONE `preserve` 17 minutes 16 seconds to give up, because the
+  # per-path sweep asked Nix about 227 objects one at a time and Nix retried
+  # each with its own backoff. Correct, fail-closed, and unusable -- a store
+  # that is down should be reported in seconds, not after a coffee break.
+  #
+  # A store that has answered nothing for NSE_OBSERVE_GIVEUP paths IN A ROW is
+  # not answering, and the remaining questions add no information. One bad
+  # object among healthy ones still gets isolated individually, because a
+  # single success resets the run.
   local -a chunk
-  local pathinfo_json p unobserved=0
+  local pathinfo_json p unobserved=0 unasked=0 streak=0 giving_up=0
+  local giveup=${NSE_OBSERVE_GIVEUP:-5}
   while mapfile -t -n "$NSE_BATCH_SIZE" chunk && [ "${#chunk[@]}" -gt 0 ]; do
+    if [ "$giving_up" -eq 1 ]; then
+      unasked=$((unasked + ${#chunk[@]}))
+      continue
+    fi
     if pathinfo_json=$(nse_nix path-info --store "$url" --json "${chunk[@]}" 2>/dev/null); then
       printf '%s\n' "$pathinfo_json" | nse_pathinfo_present_keys || return 1
       continue
@@ -280,18 +295,23 @@ nse_store_present() {
     # one malformed object among many. Ask per path so a real answer is still
     # obtained where one exists -- and COUNT the ones that never answered.
     for p in "${chunk[@]}"; do
+      if [ "$giving_up" -eq 1 ]; then unasked=$((unasked + 1)); continue; fi
       if pathinfo_json=$(nse_nix path-info --store "$url" --json "$p" 2>/dev/null); then
         printf '%s\n' "$pathinfo_json" | nse_pathinfo_present_keys || return 1
+        streak=0
       else
         unobserved=$((unobserved + 1))
+        streak=$((streak + 1))
+        if [ "$streak" -ge "$giveup" ]; then giving_up=1; fi
       fi
     done
   done
-  if [ "$unobserved" -gt 0 ]; then
-    nse_warn "$unobserved path(s) could not be observed in '$url'. The store did
-       not answer for them, which is not the same as answering that it does not
-       hold them. This observation is incomplete and nothing may be called
-       absent on the strength of it."
+  if [ "$unobserved" -gt 0 ] || [ "$unasked" -gt 0 ]; then
+    nse_warn "'$url' did not answer for $unobserved path(s)$(
+      [ "$unasked" -gt 0 ] && printf ', and %d more were not asked after %d consecutive silences' "$unasked" "$giveup"
+    ). Not answering is not the same as answering that it does not hold them.
+       This observation is INCOMPLETE and nothing may be called absent on the
+       strength of it."
     return 4
   fi
   return 0

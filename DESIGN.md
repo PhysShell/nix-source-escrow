@@ -1609,3 +1609,60 @@ stated reason is evidence; a hash that moves and then acquires a reason is not.
 The last row is the one worth running for. If the versions disagree here, the
 compatibility claim from run 18 was resting on a sample that could not have
 shown a difference.
+
+### 19a. Verdict on §19, and the cost of a refusal
+
+**Both red traces appeared exactly as pre-registered.** Run 22, commit
+`8d0a725`, both Nix versions: `unit-shell` 113/0, `flake check` pass,
+`t00`–`t22` **161/0**, with every forbidden string absent.
+
+```
+t21.2  the run refuses rather than reporting a coverage figure          PASS
+t21.3  and says the observation failed, naming the store                PASS
+t21.4  it never reports the tier as holding 0 of N                      PASS
+t21.5  and never calls anything absent on an unanswered question        PASS
+t21.6  no manifest is written from an observation that did not complete PASS
+t22.1-9  unreadable and zero-object closures refused; 0/0 never reported;
+         positive control still verifies                                PASS
+```
+
+The §18 regression floor is intact — `165/163/2/3/38`, 638 derivations, 874
+objects, `closureSha256 = 9243083e…f8ec` — and the report carries
+`MEASUREMENT_VALIDITY=closure readable, expected objects 874, observation
+complete`.
+
+**And the run found a defect the pre-registration did not think to forbid.**
+
+```
+t21.1  the 503 tier is serving      09:56:14
+t21.2  the run refuses              10:13:30      <- 17 minutes 16 seconds
+```
+
+One `preserve` against a store answering 503 took **seventeen minutes** to give
+up. The whole suite went from ~2.5 minutes to 20, and 17 of those were one
+command. The cause is the fix from §19 itself: on a batch failure the sweep asks
+Nix about each of 227 objects individually, and Nix retries each with its own
+backoff.
+
+The semantics were right and the **cost of the refusal was never measured**. In
+production that is a tool which, when the approved tier goes down, hangs for a
+quarter of an hour before saying so — and an operator watching it has no way to
+tell a slow refusal from a hang.
+
+So the sweep now stops after `NSE_OBSERVE_GIVEUP` (default 5) **consecutive**
+silences: a store that has answered nothing five times in a row is not
+answering, and the remaining 222 questions add no information. The counter is
+consecutive, so one unanswerable object among healthy ones still gets isolated
+individually — `u19.3`/`u19.4` assert exactly that, because a cutoff that gave
+up on the first failure would be a different and worse tool. The evidence
+records both numbers: how many paths did not answer, and how many were never
+asked.
+
+**The rule this adds**, and it is now in `EXPERIMENT-PROTOCOL.md` §1:
+
+> Ask not only what makes the check go red, but what a red one **costs**. A
+> refusal nobody can afford to wait for is a refusal that will be worked around.
+
+§16a's question — *what observable trace makes this refuse?* — was answered here
+and the answer was correct. It simply never asked how long the answer takes,
+and a seventeen-minute correct answer is a defect of its own.

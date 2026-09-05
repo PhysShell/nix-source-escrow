@@ -40,6 +40,17 @@ criteria alike. Two minutes, out loud, before the thing is trusted:
 Every measurement defect in the source series failed this at the first
 question.
 
+And one more question, added after a check that answered correctly and took
+seventeen minutes to do it:
+
+> **What does a red one cost?**
+
+A refusal nobody can afford to wait for is a refusal that will be worked around,
+disabled, or mistaken for a hang. Timing is part of the contract: measure how
+long the failing path takes, not only that it fails. In the source series a
+fail-closed store probe was exactly right and interrogated 227 objects one at a
+time, each with its own network retry, before reporting that the store was down.
+
 ### The shapes it catches
 
 | shape | what it looks like | the case |
@@ -238,6 +249,7 @@ Before trusting a check:
 - [ ] It does not read a field that has one possible value.
 - [ ] Its fixture is a shape the real system emits.
 - [ ] Its sample can exhibit the difference under investigation.
+- [ ] I have measured how long its FAILING path takes, not only its passing one.
 
 Before an intervention:
 

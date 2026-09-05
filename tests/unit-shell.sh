@@ -566,6 +566,49 @@ assert_eq "u17.9 a missing conclusion field is UNRECORDED, not a verdict" \
   "combined default safe: UNRECORDED" "$(expsum "$TMP/exp-norev.json" | sed -n 3p)"
 
 # ---------------------------------------------------------------------------
+head_ "u19  a store that has gone silent is not interrogated 227 times"
+# MEASURED IN CI, not theorised: with a tier answering 503, one `preserve` took
+# 17 minutes 16 seconds to give up (t21.1 at 09:56:14, t21.2 at 10:13:30 in run
+# 22). The fail-closed contract was right and its COST was never measured -- the
+# per-path sweep asked Nix about 227 objects one at a time, each with Nix's own
+# retry backoff. A store that is down must be reported in seconds.
+#
+# The counter is CONSECUTIVE, so one bad object among healthy ones is still
+# isolated individually. u19.3 is the assertion that keeps the cutoff honest.
+mkpaths() { seq 1 "$1" | sed 's|^|/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-p|'; }
+
+# Every query fails: the batch, then each path.
+# shellcheck disable=SC2317,SC2329  # called indirectly, through nse_store_present
+nse_nix() { printf '%s\n' "call" >> "$TMP/u19-calls.txt"; return 1; }
+: > "$TMP/u19-calls.txt"
+rc=0
+mkpaths 227 | nse_store_present "https://silent.invalid" >/dev/null 2>&1 || rc=$?
+assert_ne "u19.1 a silent store yields an INCOMPLETE observation, not absence" "0" "$rc"
+calls=$(wc -l < "$TMP/u19-calls.txt")
+assert_eq "u19.2 and it stops asking after the give-up threshold, not after 227" \
+  "yes" "$([ "$calls" -le 12 ] && echo yes || echo "no: $calls calls")"
+
+# One object fails among many that answer. The streak resets, so the sweep does
+# NOT give up, and the healthy ones are still observed.
+# shellcheck disable=SC2317,SC2329  # called indirectly, through nse_store_present
+nse_nix() {
+  local a n=0 last=""
+  for a in "$@"; do case $a in /nix/store/*) n=$((n+1)); last=$a ;; esac; done
+  # More than one path means the BATCH query, which fails and sends the caller
+  # into the per-path sweep. That is the only situation the sweep exists for.
+  [ "$n" -eq 1 ] || return 1
+  case $last in
+    *-p7) return 1 ;;                       # the one object that never answers
+    *) printf '{"%s":{"narSize":1}}\n' "$last" ;;
+  esac
+}
+rc=0
+seen=$(mkpaths 20 | nse_store_present "https://mostly.invalid" 2>/dev/null | wc -l) || rc=$?
+assert_ne "u19.3 one unanswerable object still makes the whole observation incomplete" "0" "$rc"
+assert_eq "u19.4 but the other 19 were still asked and answered" "19" "$seen"
+unset -f nse_nix mkpaths
+
+# ---------------------------------------------------------------------------
 head_ "u18  a hash algorithm is read, never assumed"
 # nse_to_sri defaulted a bare digest to sha256. That is the presence-probe
 # defect in better clothes -- UNKNOWN promoted to a concrete claim:
