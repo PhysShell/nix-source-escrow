@@ -23,6 +23,29 @@
 # instrument from the first -- and its own tests keep passing untouched.
 
 # ---------------------------------------------------------------------------
+# nse_pg_drv_facts_map <normalised-drv-map.json>
+#
+# The attribute facts for every derivation in the graph, keyed by bare drv
+# name. Its own function because it is a jq program, and a jq program reachable
+# only from a CI-only code path is a jq program whose first compile error costs
+# a whole run: this one called `nse_pg_attr` where the helper is named
+# `nse_attr`, and the only notice was a red job four steps in.
+# ---------------------------------------------------------------------------
+nse_pg_drv_facts_map() {
+  nse_pg_jq "$(nse_pg_jq_prelude)"'
+    to_entries
+    | map({ key: .key,
+            value: { facts: nse_pg_github_facts(.value),
+                     attrKeys: nse_pg_attr_keys(.value),
+                     # The annotation VALUE, read like any other attribute.
+                     # Recorded even when it is not a value any axis accepts --
+                     # the matcher refuses it there, loudly, rather than this
+                     # reader quietly dropping it.
+                     annotationCoverage: (nse_attr(.value; "nseEscrowCoverage")) } })
+    | from_entries' "$1"
+}
+
+# ---------------------------------------------------------------------------
 # nse_pg_facts_join <discovery.json> <drv-facts.json> <required-file>
 #                   <required-mode> <nix-version> <drv-schema> <installable>
 #
@@ -186,13 +209,7 @@ nse_pg_facts_build() {
   nse_drv_map "$work/drvs-raw.json" > "$work/drvs.json" \
     || nse_pg_checker_error "cannot normalise $work/drvs-raw.json"
 
-  nse_pg_jq "$(nse_pg_jq_prelude)"'
-    to_entries
-    | map({ key: .key,
-            value: { facts: nse_pg_github_facts(.value),
-                     attrKeys: nse_pg_attr_keys(.value),
-                     annotationCoverage: (nse_pg_attr(.value; "nseEscrowCoverage")) } })
-    | from_entries' "$work/drvs.json" > "$work/drv-facts.json"
+  nse_pg_drv_facts_map "$work/drvs.json" > "$work/drv-facts.json"
 
   # ---- 3. requiredByPlan -------------------------------------------------
   local required_mode required_file=$work/required.txt

@@ -447,13 +447,25 @@ assert_eq "p18.6 while the policy-facts projection covers every discovered depen
 # $f.err and then grepped a different file -- the assertion was about an empty
 # file, which is the "asserts a constant" shape from EXPERIMENT-PROTOCOL.md §1.
 POLICY_ERR=$TMP/policy-load.err
+# The revision is a REQUIRED argument, passed at every call site.
+#
+# It was optional, with a default, and never passed -- which SC2120 reported on
+# the runner while the locally installed shellcheck 0.11.0 said nothing.
+# (Note the wording: a comment line that BEGINS with the word shellcheck is
+# parsed as a directive, and the first draft of this very comment was a
+# SC1072/SC1073 parse error.)
+# Making it required is better than silencing the finding: the trusted
+# policy revision is the thing every decision carries as provenance, and a test
+# that never states which revision it is testing under is a test that has
+# stopped caring about the field.
 policy_of() {  # $1 = revision; TOML text on stdin -> path to loaded policy JSON
+  local rev=$1
   local f; f=$(mktemp "$TMP/pol.XXXXXX.toml"); cat > "$f"
   local j; j=$(mktemp "$TMP/pol.XXXXXX.json")
   # A subshell: nse_pg_policy_load EXITS on a checker error, and an exit inside
   # this suite would end the suite rather than the assertion -- the
   # "destroys its own specimen" shape.
-  if ( nse_pg_policy_load "$f" "${1:-rev-test}" ) > "$j" 2>"$POLICY_ERR"; then
+  if ( nse_pg_policy_load "$f" "$rev" ) > "$j" 2>"$POLICY_ERR"; then
     printf '%s\n' "$j"
   else
     return 1
@@ -471,7 +483,7 @@ head_ "p19  the policy reader refuses what it does not understand"
 # SELECTOR as a rule with NO selectors: specificity 0, matching every
 # dependency, exempting all of them. A typo becomes a blanket exemption.
 rc=0; printf '%s\n' '[[rule]]' 'id = "r1"' 'ownr = "NixOS"' 'coverage = "ignore"' \
-        | policy_of >/dev/null 2>/dev/null || rc=$?
+        | policy_of rev-test >/dev/null 2>/dev/null || rc=$?
 assert_ne "p19.1 a MISTYPED SELECTOR is refused, not ignored" "0" "$rc"
 assert_ne "p19.2 and the refusal names the key, so the author can find it" "0" \
   "$(grep -c 'ownr' "$POLICY_ERR" || true)"
@@ -479,27 +491,27 @@ assert_ne "p19.2a and lists what WAS permitted" "0" \
   "$(grep -c 'Permitted: id, contentIdentity' "$POLICY_ERR" || true)"
 # The red control for p19.1: the CORRECT spelling must load.
 rc=0; printf '%s\n' '[[rule]]' 'id = "r1"' 'owner = "NixOS"' 'coverage = "ignore"' \
-        | policy_of >/dev/null 2>/dev/null || rc=$?
+        | policy_of rev-test >/dev/null 2>/dev/null || rc=$?
 assert_eq "p19.3 red control: the correctly spelled selector DOES load" "0" "$rc"
-rc=0; printf '%s\n' '[[rule]]' 'coverage = "required"' | policy_of >/dev/null 2>/dev/null || rc=$?
+rc=0; printf '%s\n' '[[rule]]' 'coverage = "required"' | policy_of rev-test >/dev/null 2>/dev/null || rc=$?
 assert_ne "p19.4 a rule with no id is refused -- an id is the provenance a decision carries" "0" "$rc"
 rc=0; printf '%s\n' '[[rule]]' 'id = "dup"' 'owner = "a"' '[[rule]]' 'id = "dup"' 'owner = "b"' \
-        | policy_of >/dev/null 2>/dev/null || rc=$?
+        | policy_of rev-test >/dev/null 2>/dev/null || rc=$?
 assert_ne "p19.5 duplicate ids are refused -- two rules with one id make provenance a lie" "0" "$rc"
-rc=0; printf '%s\n' '[nonsense]' 'x = "y"' | policy_of >/dev/null 2>/dev/null || rc=$?
+rc=0; printf '%s\n' '[nonsense]' 'x = "y"' | policy_of rev-test >/dev/null 2>/dev/null || rc=$?
 assert_ne "p19.6 an unknown table is refused" "0" "$rc"
-rc=0; printf '%s\n' 'this is not toml at all' | policy_of >/dev/null 2>/dev/null || rc=$?
+rc=0; printf '%s\n' 'this is not toml at all' | policy_of rev-test >/dev/null 2>/dev/null || rc=$?
 assert_ne "p19.7 an unparseable line is refused" "0" "$rc"
-rc=0; printf '' | policy_of >/dev/null 2>/dev/null || rc=$?
+rc=0; printf '' | policy_of rev-test >/dev/null 2>/dev/null || rc=$?
 assert_ne "p19.8 an EMPTY policy is a read failure, not a policy that governs nothing" "0" "$rc"
-rc=0; printf '%s\n' '[defaults]' 'coverge = "auto"' | policy_of >/dev/null 2>/dev/null || rc=$?
+rc=0; printf '%s\n' '[defaults]' 'coverge = "auto"' | policy_of rev-test >/dev/null 2>/dev/null || rc=$?
 assert_ne "p19.9 a mistyped key in [defaults] is refused too" "0" "$rc"
 
 head_ "p20  precedence is specificity, never the order of the file"
 POL_A=$(printf '%s\n' \
   '[[rule]]' 'id = "r-host"'  'originHost = "github.com"' 'coverage = "ignore"' \
   '[[rule]]' 'id = "r-owner"' 'originHost = "github.com"' 'owner = "NixOS"' 'coverage = "required"' \
-  | policy_of)
+  | policy_of rev-test)
 D=$(decide_with "$POL_A" "$SEED")
 assert_eq "p20.1 the more specific rule wins the axis (6 vs 6+8)" \
   "required r-owner" \
@@ -508,7 +520,7 @@ assert_eq "p20.1 the more specific rule wins the axis (6 vs 6+8)" \
 POL_B=$(printf '%s\n' \
   '[[rule]]' 'id = "r-owner"' 'originHost = "github.com"' 'owner = "NixOS"' 'coverage = "required"' \
   '[[rule]]' 'id = "r-host"'  'originHost = "github.com"' 'coverage = "ignore"' \
-  | policy_of)
+  | policy_of rev-test)
 D2=$(decide_with "$POL_B" "$SEED")
 assert_eq "p20.2 reversing the FILE does not move a single verdict" \
   "$(jq -Sc '[.decisions[] | {sourceId, effective, matchedRuleIds, axisWonBy}]' "$D")" \
@@ -519,7 +531,7 @@ assert_eq "p20.3 declared order is recorded, so it was AVAILABLE to be used and 
 POL_C=$(printf '%s\n' \
   '[[rule]]' 'id = "r-catchall"' 'coverage = "required"' \
   '[[rule]]' 'id = "r-kind"' 'kind = "fetchurl"' 'coverage = "ignore"' \
-  | policy_of)
+  | policy_of rev-test)
 D3=$(decide_with "$POL_C" "$SEED")
 assert_eq "p20.4 a selectorless rule matches everything, at specificity 0" \
   "required" \
@@ -534,7 +546,7 @@ head_ "p21  a tie that disagrees FAILS CLOSED"
 POL_T=$(printf '%s\n' \
   '[[rule]]' 'id = "r-a"' 'owner = "NixOS"' 'coverage = "required"' \
   '[[rule]]' 'id = "r-b"' 'owner = "NixOS"' 'coverage = "ignore"' \
-  | policy_of)
+  | policy_of rev-test)
 DT=$(decide_with "$POL_T" "$SEED")
 assert_eq "p21.1 the conflict is recorded as RULE_CONFLICT" "RULE_CONFLICT" \
   "$(jq -r '.decisions[] | select(.sourceId | test("nix-pills")) | .conflicts[0].kind' "$DT")"
@@ -549,7 +561,7 @@ assert_eq "p21.4 the conflict names both rules and the tied specificity" "1" \
 POL_S=$(printf '%s\n' \
   '[[rule]]' 'id = "r-a"' 'owner = "NixOS"' 'coverage = "required"' \
   '[[rule]]' 'id = "r-b"' 'owner = "NixOS"' 'coverage = "required"' \
-  | policy_of)
+  | policy_of rev-test)
 DS=$(decide_with "$POL_S" "$SEED")
 assert_eq "p21.5 red control: a tie AGREEING is not a conflict" "0" \
   "$(jq -r '.counts.ruleConflicts' "$DS")"
@@ -557,7 +569,7 @@ assert_eq "p21.6 and it resolves normally" "required" \
   "$(jq -r '.decisions[] | select(.sourceId | test("nix-pills")) | .effective.coverage' "$DS")"
 
 head_ "p22  annotations may only strengthen -- C1 at the axis level"
-POL_REQ=$(printf '%s\n' '[[rule]]' 'id = "r-req"' 'owner = "NixOS"' 'coverage = "required"' | policy_of)
+POL_REQ=$(printf '%s\n' '[[rule]]' 'id = "r-req"' 'owner = "NixOS"' 'coverage = "required"' | policy_of rev-test)
 # base auto + annotation required -> required
 F_UP=$(mut '.dependencies[1].annotation = {coverage: "required"}')
 D_UP=$(decide_with "$POL_REQ" "$F_UP")
@@ -576,7 +588,7 @@ assert_eq "p22.5 mustPreserve is still true -- the annotation bought nothing" "t
 # All three axes, not just coverage.
 F_ALL=$(mut '.dependencies[0].annotation = {coverage: "ignore", retention: "while-referenced", admission: "normal"}')
 POL_STRONG=$(printf '%s\n' '[[rule]]' 'id = "r-s"' 'owner = "NixOS"' \
-  'coverage = "required"' 'retention = "permanent"' 'admission = "quarantine"' | policy_of)
+  'coverage = "required"' 'retention = "permanent"' 'admission = "quarantine"' | policy_of rev-test)
 D_ALL=$(decide_with "$POL_STRONG" "$F_ALL")
 assert_eq "p22.6 no axis can be walked down by an annotation" \
   "required permanent quarantine" \
@@ -584,7 +596,7 @@ assert_eq "p22.6 no axis can be walked down by an annotation" \
 assert_eq "p22.7 and all three refusals are recorded" "3" \
   "$(jq -r '[.decisions[] | .conflicts[] | select(.kind=="POLICY_CONFLICT")] | length' "$D_ALL")"
 # A real exemption is grantable by the BASE policy and by nothing else.
-POL_IGN=$(printf '%s\n' '[[rule]]' 'id = "r-ign"' 'owner = "NixOS"' 'coverage = "ignore"' | policy_of)
+POL_IGN=$(printf '%s\n' '[[rule]]' 'id = "r-ign"' 'owner = "NixOS"' 'coverage = "ignore"' | policy_of rev-test)
 D_IGN=$(decide_with "$POL_IGN" "$SEED")
 assert_eq "p22.8 the BASE policy CAN grant a real ignore" "ignore false" \
   "$(jq -r '.decisions[] | select(.sourceId | test("nix-pills")) | [.effective.coverage, (.mustPreserve|tostring)] | join(" ")' "$D_IGN")"
@@ -600,7 +612,7 @@ assert_ne "p22.9 a MISSPELLED annotation value is an error, not the weakest valu
 head_ "p23  an UNKNOWN fact does not match, and says why"
 # PREREG.md §7.3. Not permissively, not conservatively -- it does not match,
 # and the reason is recorded so an inert rule is diagnosable.
-POL_OWNER=$(printf '%s\n' '[[rule]]' 'id = "r-owner"' 'owner = "NixOS"' 'coverage = "required"' | policy_of)
+POL_OWNER=$(printf '%s\n' '[[rule]]' 'id = "r-owner"' 'owner = "NixOS"' 'coverage = "required"' | policy_of rev-test)
 D_UNK=$(decide_with "$POL_OWNER" "$SEED")
 assert_eq "p23.1 the hello tarball has owner UNKNOWN and does NOT match" "" \
   "$(jq -r '.decisions[] | select(.sourceId | test("hello")) | .matchedRuleIds | join(",")' "$D_UNK")"
@@ -631,13 +643,13 @@ assert_eq "p24.4 the decision digest is computable from the decisions document" 
   "$(printf '%s' "$(nse_pg_digest_of "$DP" nse_pg_decision_projection)" | wc -c | tr -d ' ')"
 
 head_ "p25  coverage semantics: auto means what the plan used"
-POL_AUTO=$(printf '%s\n' '[defaults]' 'coverage = "auto"' | policy_of)
+POL_AUTO=$(printf '%s\n' '[defaults]' 'coverage = "auto"' | policy_of rev-test)
 DA=$(decide_with "$POL_AUTO" "$SEED")
 assert_eq "p25.1 auto + requiredByPlan  -> preserve" "true" \
   "$(jq -r '.decisions[] | select(.sourceId | test("nix-pills")) | .mustPreserve | tostring' "$DA")"
 assert_eq "p25.2 auto + NOT requiredByPlan -> do not" "false" \
   "$(jq -r '.decisions[] | select(.sourceId | test("hello")) | .mustPreserve | tostring' "$DA")"
-POL_RQ=$(printf '%s\n' '[defaults]' 'coverage = "required"' | policy_of)
+POL_RQ=$(printf '%s\n' '[defaults]' 'coverage = "required"' | policy_of rev-test)
 DR=$(decide_with "$POL_RQ" "$SEED")
 assert_eq "p25.3 required preserves even what the plan never reached" "true" \
   "$(jq -r '.decisions[] | select(.sourceId | test("hello")) | .mustPreserve | tostring' "$DR")"
@@ -836,7 +848,7 @@ nse_pg_facts_join "$DISC" "$DRVF" "$TMP/req-empty.txt" NOT_OBSERVED "nix 2.34.7"
 assert_eq "p33.7 an UNOBSERVED requiredByPlan is null, never false" \
   "null null" \
   "$(jq -r '[.dependencies[] | select(.class=="fod") | .requiredByPlan | tostring] | join(" ")' "$JN")"
-POL_A2=$(printf '%s\n' '[defaults]' 'coverage = "auto"' | policy_of)
+POL_A2=$(printf '%s\n' '[defaults]' 'coverage = "auto"' | policy_of rev-test)
 DU=$(decide_with "$POL_A2" "$JN")
 assert_eq "p33.8 and it makes mustPreserve UNDECIDED rather than false" "2" \
   "$(jq -r '[.decisions[] | select(.class=="fod") | select(.mustPreserve == null)] | length' "$DU")"
@@ -844,6 +856,32 @@ assert_eq "p33.9 the document declares itself RECORDED, not synthetic" "RECORDED
   "$(jq -r .seedProvenance "$J")"
 assert_eq "p33.10 the digests are computable over it, and differ from each other" "false" \
   "$(nse_pg_digests "$J" | jq -r '.dependencyContentDigest == .policyFactsDigest')"
+
+head_ "p33b  the drv-facts map compiles, and reads the annotation"
+# THE REASON THIS TEST EXISTS. This jq lived only on a CI-only code path and
+# called `nse_pg_attr` where the helper is named `nse_attr`. jq refused to
+# compile it, the facts step died four steps into a run, and the only notice
+# was a red job. A jq program reachable only from CI is a jq program whose
+# first typo costs a whole cycle.
+jq -n '{"a.drv":{name:"x",
+                 env:{owner:"NixOS",repo:"b",
+                      urls:"https://github.com/NixOS/b/archive/x.tar.gz",
+                      nseEscrowCoverage:"required"},
+                 outputs:{out:{hash:"sha256-A="}}},
+        "b.drv":{name:"y",
+                 env:{urls:"https://ftp.gnu.org/x.tar.gz"},
+                 outputs:{out:{hash:"sha256-B="}}}}' > "$TMP/drvmap.json"
+DM=$(nse_pg_drv_facts_map "$TMP/drvmap.json")
+assert_eq "p33b.1 it compiles and covers every derivation" "2" \
+  "$(printf '%s' "$DM" | jq 'length')"
+assert_eq "p33b.2 the annotation VALUE is read, not merely its presence" "required" \
+  "$(printf '%s' "$DM" | jq -r '.["a.drv"].annotationCoverage')"
+assert_eq "p33b.3 an unannotated derivation reports null, not the neighbour value" "null" \
+  "$(printf '%s' "$DM" | jq -r '.["b.drv"].annotationCoverage | tostring')"
+assert_eq "p33b.4 and the facts come with provenance" "NixOS DERIVATION_ATTR" \
+  "$(printf '%s' "$DM" | jq -r '.["a.drv"].facts.owner | [.value,.source] | join(" ")')"
+assert_eq "p33b.5 the annotation key appears in attrKeys too" "true" \
+  "$(printf '%s' "$DM" | jq -r '(.["a.drv"].attrKeys | index("nseEscrowCoverage")) != null')"
 
 head_ "p34  the untrusted phase runs local, ephemeral and credential-free"
 # The preflight is pure -- paths, URLs and environment names in, findings out --
@@ -1086,6 +1124,23 @@ else
              bin/nse-pg lib/pg-*.sh tests/pg-unit.sh 2>&1) && sc_rc=0 || sc_rc=$?
   assert_eq "p10.3 shellcheck is clean on this line's files" "0" "$sc_rc"
   [ "$sc_rc" -eq 0 ] || printf '%s\n' "$sc_out" | head -30
+  # THE DELTA THAT HAS ACTUALLY BITTEN.
+  #
+  # Three shellchecks run against this tree and they are not the same version:
+  # the one installed here, the one on the GitHub runner, and the one nixpkgs
+  # pins for `nix flake check`. Twice now the runner has reported a class the
+  # local one does not emit by default -- SC2015, then SC2120/SC2119 -- and
+  # both times the first notice was a red CI job.
+  #
+  # So the local mirror explicitly INCLUDES the classes that have bitten. Not
+  # --enable=all, which buries them under two thousand style findings nobody
+  # will read; the specific ones, growable by one line the next time a version
+  # difference costs a cycle.
+  sc_delta=$(cd "$ROOT" && shellcheck -x -e SC1091 --shell=bash \
+               --include=SC2015,SC2119,SC2120,SC2310,SC1009,SC1072,SC1073 \
+               bin/nse-pg lib/pg-*.sh tests/pg-unit.sh 2>&1) && scd_rc=0 || scd_rc=$?
+  assert_eq "p10.3a and clean on the classes other shellcheck versions enable" "0" "$scd_rc"
+  [ "$scd_rc" -eq 0 ] || printf '%s\n' "$sc_delta" | head -30
   # Positive control: without one, p10.3 is green whenever shellcheck does
   # nothing at all -- a green lamp wired to the battery.
   sc_tmp=$(mktemp -d "${TMPDIR:-/tmp}/nse-pg-p10.XXXXXX")
