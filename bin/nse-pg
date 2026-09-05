@@ -31,6 +31,8 @@ export NSE_ROOT
 . "$NSE_ROOT/lib/pg-annotate.sh"
 # shellcheck source=../lib/pg-digest.sh
 . "$NSE_ROOT/lib/pg-digest.sh"
+# shellcheck source=../lib/pg-policy.sh
+. "$NSE_ROOT/lib/pg-policy.sh"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -50,11 +52,19 @@ commands:
                   projection each one is computed over. PREREG.md §12.
   digest-compare  name the SHAPE of the difference between two digest
                   documents, rather than reporting that something changed.
+  policy-load     read a policy TOML into JSON. Anything this reader does not
+                  fully understand is a POLICY_PARSE_ERROR, never an ignored
+                  line. PREREG.md §13.
+  decide          FACTS + POLICY -> DECISIONS, with matched-rule provenance and
+                  the trusted policy revision on every decision.
 
 options:
   --flake REF     the qualification fixture to measure
                   (default: path:<repo>/experiments/policy-governed/fixtures/qualification)
-  --facts FILE    facts document to digest (digest)
+  --facts FILE    facts document (digest, decide)
+  --policy FILE   policy TOML (policy-load) or loaded policy JSON (decide)
+  --policy-rev R  the revision the policy was read from; recorded on every
+                  decision, so a verdict says WHICH policy produced it
   --base FILE     base digests (digest-compare)
   --head FILE     head digests (digest-compare)
   --out FILE      where the report is written
@@ -77,6 +87,8 @@ cmd=$1; shift
 pg_flake=""
 pg_out=""
 pg_facts=""
+pg_policy=""
+pg_policy_rev="UNKNOWN"
 pg_base=""
 pg_head=""
 while [ $# -gt 0 ]; do
@@ -87,6 +99,10 @@ while [ $# -gt 0 ]; do
              pg_out=$(nse_abspath "$2"); shift 2 ;;
     --facts) [ $# -ge 2 ] || { printf 'nse-pg: --facts needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_facts=$(nse_abspath "$2"); shift 2 ;;
+    --policy) [ $# -ge 2 ] || { printf 'nse-pg: --policy needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_policy=$(nse_abspath "$2"); shift 2 ;;
+    --policy-rev) [ $# -ge 2 ] || { printf 'nse-pg: --policy-rev needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_policy_rev=$2; shift 2 ;;
     --base)  [ $# -ge 2 ] || { printf 'nse-pg: --base needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_base=$(nse_abspath "$2"); shift 2 ;;
     --head)  [ $# -ge 2 ] || { printf 'nse-pg: --head needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
@@ -123,6 +139,24 @@ case $cmd in
     { [ -n "$pg_base" ] && [ -n "$pg_head" ]; } \
       || { printf 'nse-pg: digest-compare needs --base FILE and --head FILE\n' >&2; exit "$NSE_PG_USAGE"; }
     nse_pg_digest_compare "$pg_base" "$pg_head"
+    ;;
+  policy-load)
+    nse_require_cmd jq awk
+    [ -n "$pg_policy" ] || { printf 'nse-pg: policy-load needs --policy FILE\n' >&2; exit "$NSE_PG_USAGE"; }
+    if [ -n "$pg_out" ]; then nse_pg_policy_load "$pg_policy" "$pg_policy_rev" | nse_pg_write_json "$pg_out"
+    else nse_pg_policy_load "$pg_policy" "$pg_policy_rev"; fi
+    ;;
+  decide)
+    nse_require_cmd jq awk
+    { [ -n "$pg_facts" ] && [ -n "$pg_policy" ]; } \
+      || { printf 'nse-pg: decide needs --facts FILE and --policy FILE\n' >&2; exit "$NSE_PG_USAGE"; }
+    pg_loaded=$pg_policy
+    case $pg_policy in
+      *.toml) pg_loaded=$(mktemp "${TMPDIR:-/tmp}/nse-pg-policy.XXXXXX.json")
+              nse_pg_policy_load "$pg_policy" "$pg_policy_rev" > "$pg_loaded" ;;
+    esac
+    if [ -n "$pg_out" ]; then nse_pg_decide "$pg_facts" "$pg_loaded" | nse_pg_write_json "$pg_out"
+    else nse_pg_decide "$pg_facts" "$pg_loaded"; fi
     ;;
   *) printf 'nse-pg: unknown command %s\n' "$cmd" >&2; usage; exit "$NSE_PG_USAGE" ;;
 esac

@@ -1,0 +1,68 @@
+# nix-source-escrow policy
+#
+# THE POLICY THAT GOVERNS A PROPOSAL IS THE ONE AT ITS **BASE** REVISION.
+# A pull request may change this file. That change is PROPOSED, it is previewed
+# in the check summary, and it does not govern the pull request that makes it.
+# See experiments/policy-governed/PREREG.md §8.
+#
+# Three independent axes, each a total order. A source-local annotation may
+# only move a value UP its axis; it can never move one down. A genuine
+# exemption -- a real `coverage = "ignore"` -- is grantable HERE and nowhere
+# else.
+#
+#   coverage   ignore < auto < required
+#                required  preserve it, whether or not the build plan used it
+#                auto      preserve it if the build plan actually used it
+#                ignore    do not preserve it
+#   retention  while-referenced < permanent
+#   admission  normal < quarantine
+#
+# PRECEDENCE IS NOT THE ORDER OF THIS FILE. Each selector carries a fixed
+# weight; a rule's specificity is the sum of the weights it constrains; the
+# highest specificity wins each axis independently; and a tie that assigns
+# DIFFERENT values on one axis fails closed rather than picking one.
+#
+#   contentIdentity 40   aliasPath 30   repo 12
+#   owner            8   originHost 6   kind 2
+#
+# Sorting this file cannot change a verdict, and a unit test asserts it.
+
+schemaVersion = 1
+
+[defaults]
+coverage = "auto"
+retention = "while-referenced"
+admission = "normal"
+
+[governance]
+# A change to the judge, or to the workflow that is supposed to run it, must
+# land as a BASE change before it can govern anything -- exactly as a policy
+# change must. Otherwise a proposal edits its own referee.
+judgeOnMismatch = "reject"
+workflowOnMismatch = "reject"
+# One proposal that BOTH weakens policy AND adds a dependency the weakening
+# would affect is refused. The first version does not try to be clever about
+# such a merge: the policy change lands first, the dependency arrives after.
+policyDependencyCochange = "reject"
+
+# --- rules ------------------------------------------------------------------
+
+[[rule]]
+id = "r-github-required"
+# Everything this project fetches from github.com is preserved whether or not
+# a given build plan happens to reach it.
+originHost = "github.com"
+coverage = "required"
+
+[[rule]]
+id = "r-gnu-mirror-auto"
+originHost = "ftp.gnu.org"
+coverage = "auto"
+
+[[rule]]
+id = "r-unknown-origin-quarantine"
+# A fixed-output fetch whose origin host this policy does not name is admitted
+# only under quarantine. `kind` is the weakest selector (weight 2), so any rule
+# that names an actual origin outranks this one.
+kind = "fetchurl"
+admission = "normal"
