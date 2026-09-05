@@ -31,6 +31,12 @@ trap 'chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 . "$ROOT/lib/pg-policy.sh"
 # shellcheck source=../lib/pg-gate.sh
 . "$ROOT/lib/pg-gate.sh"
+# shellcheck source=../lib/pg-ingest.sh
+. "$ROOT/lib/pg-ingest.sh"
+# shellcheck source=../lib/pg-scratch.sh
+. "$ROOT/lib/pg-scratch.sh"
+# shellcheck source=../lib/pg-summary.sh
+. "$ROOT/lib/pg-summary.sh"
 
 pass=0; fail=0; failed_names=()
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
@@ -787,6 +793,169 @@ rm -rf "$TMP/nobase"; cp -r "$CORPUS/judge-replacement/base" "$TMP/nobase"
 rm -f "$TMP/nobase/facts.json"
 rc=0; ( nse_pg_gate "$TMP/nobase" "$CORPUS/judge-replacement/head" "$TMP/y.json" a b ) >/dev/null 2>/dev/null || rc=$?
 assert_eq "p32.3 no base graph is a CHECKER_ERROR, not an empty set of added dependencies" "3" "$rc"
+
+# ---------------------------------------------------------------------------
+head_ "p33  the join from a real discovery document to facts"
+# The Nix half of lib/pg-ingest.sh runs only in CI. The MAPPING DECISIONS live
+# in the join, and a mapping that can only be tested in CI is a mapping nobody
+# re-tests -- so the join takes files and is exercised here, against a document
+# shaped the way lib/discover.sh actually emits one.
+DISC=$ROOT/tests/pg-fixtures/discovery-shape.json
+DRVF=$ROOT/tests/pg-fixtures/drv-facts-shape.json
+printf '%s\n' /nix/store/abcd0000000000000000000000000000-nix-pills-src.drv \
+               /nix/store/tttt0000000000000000000000000000-escrow-fixture-0.1.drv > "$TMP/req.txt"
+J=$TMP/joined.json
+nse_pg_facts_join "$DISC" "$DRVF" "$TMP/req.txt" DERIVATION_CLOSURE "nix 2.34.7" envelope "inst" > "$J"
+assert_eq "p33.1 both classes arrive" "flake-input,fod,fod" \
+  "$(jq -r '[.dependencies[].class] | join(",")' "$J")"
+assert_eq "p33.2 a flake input carries LOCK_ATTR provenance, not DERIVATION_ATTR" \
+  "LOCK_ATTR LOCK_ATTR LOCK_ATTR" \
+  "$(jq -r '.dependencies[] | select(.class=="flake-input") | [.owner.source,.repo.source,.rev.source] | join(" ")' "$J")"
+assert_eq "p33.3 and says WHY it is required, rather than merely that it is" \
+  "true FLAKE_EVALUATION_INPUT" \
+  "$(jq -r '.dependencies[] | select(.class=="flake-input") | [(.requiredByPlan|tostring), .requiredByPlanReason] | join(" ")' "$J")"
+assert_eq "p33.4 a source WITH attribute facts gets them, with provenance" \
+  "NixOS DERIVATION_ATTR github.com URL_FALLBACK" \
+  "$(jq -r '.dependencies[] | select(.kind=="fetchzip-like") | [.owner.value,.owner.source,.originHost.value,.originHost.source] | join(" ")' "$J")"
+# THE IMPORTANT ONE. A derivation the attribute reader has no entry for must
+# yield UNKNOWN facts -- not absent keys, and above all not facts borrowed from
+# whichever neighbour happened to be nearby.
+assert_eq "p33.5 a source with NO attribute-reader entry is UNKNOWN, not its neighbour" \
+  "UNKNOWN UNKNOWN UNKNOWN UNKNOWN" \
+  "$(jq -r '.dependencies[] | select(.kind=="no-fetcher") | [.owner.source,.repo.source,.rev.source,.originHost.source] | join(" ")' "$J")"
+assert_eq "p33.6 requiredByPlan is read from the requisite set, per source" \
+  "true false" \
+  "$(jq -r '[.dependencies[] | select(.class=="fod") | .requiredByPlan | tostring] | join(" ")' "$J")"
+# THE FAIL-CLOSED ONE. An unobserved requiredByPlan must be null, not false --
+# `auto` coverage plus a false is a silent exemption granted by an instrument.
+: > "$TMP/req-empty.txt"
+JN=$TMP/joined-unobserved.json
+nse_pg_facts_join "$DISC" "$DRVF" "$TMP/req-empty.txt" NOT_OBSERVED "nix 2.34.7" envelope "inst" > "$JN"
+assert_eq "p33.7 an UNOBSERVED requiredByPlan is null, never false" \
+  "null null" \
+  "$(jq -r '[.dependencies[] | select(.class=="fod") | .requiredByPlan | tostring] | join(" ")' "$JN")"
+POL_A2=$(printf '%s\n' '[defaults]' 'coverage = "auto"' | policy_of)
+DU=$(decide_with "$POL_A2" "$JN")
+assert_eq "p33.8 and it makes mustPreserve UNDECIDED rather than false" "2" \
+  "$(jq -r '[.decisions[] | select(.class=="fod") | select(.mustPreserve == null)] | length' "$DU")"
+assert_eq "p33.9 the document declares itself RECORDED, not synthetic" "RECORDED" \
+  "$(jq -r .seedProvenance "$J")"
+assert_eq "p33.10 the digests are computable over it, and differ from each other" "false" \
+  "$(nse_pg_digests "$J" | jq -r '.dependencyContentDigest == .policyFactsDigest')"
+
+head_ "p34  the untrusted phase runs local, ephemeral and credential-free"
+# The preflight is pure -- paths, URLs and environment names in, findings out --
+# so the invariants that bound the untrusted phase can be re-checked by anyone
+# on any machine in a second, without a Nix or a store.
+# `env -i`, not `unset` in a subshell. THIS container has AWS_ACCESS_KEY_ID,
+# GH_TOKEN and two more in the ambient environment, so a test that merely
+# unsets the ones it knows about measures the machine it happens to run on.
+# A clean environment is constructed, never assumed.
+clean_env() {  # clean_env <shell-snippet>
+  # shellcheck disable=SC2016  # the bash -c program is deliberately unexpanded
+  env -i PATH="$PATH" HOME="${HOME:-/root}" TMPDIR="$TMP" NSE_ROOT="$ROOT" \
+    bash -c '. "$NSE_ROOT/lib/common.sh"; . "$NSE_ROOT/lib/pg-common.sh"
+             . "$NSE_ROOT/lib/pg-scratch.sh"; eval "$1"' _ "$1"
+}
+pf() { clean_env "nse_pg_scratch_preflight '$1' '$2' '$3'"; }
+assert_eq "p34.1 a local store inside the scratch dir is CLEARED" "CLEARED" \
+  "$(pf /tmp/sc "file:///tmp/sc/cache?compression=zstd" escrow-replay | jq -r .verdict)"
+assert_eq "p34.2 an s3:// destination is REFUSED, and named NOT_LOCAL" "REFUSED NOT_LOCAL" \
+  "$(pf /tmp/sc "s3://a-bucket" escrow-replay | jq -r '[.verdict, .findings[0].id] | join(" ")')"
+assert_eq "p34.3 an ssh-ng:// destination too" "REFUSED NOT_LOCAL" \
+  "$(pf /tmp/sc "ssh-ng://builder" escrow-replay | jq -r '[.verdict, .findings[0].id] | join(" ")')"
+assert_eq "p34.4 a LOCAL path outside the scratch dir is durable storage with a shorter name" \
+  "REFUSED NOT_EPHEMERAL" \
+  "$(pf /tmp/sc "file:///srv/escrow" escrow-replay | jq -r '[.verdict, .findings[0].id] | join(" ")')"
+assert_eq "p34.5 an unnamed guarantee cannot be run at all" "REFUSED GUARANTEE_UNNAMED" \
+  "$(pf /tmp/sc "file:///tmp/sc/cache" FULL_AIRGAP_REBUILD | jq -r '[.verdict, .findings[0].id] | join(" ")')"
+# A credential in reach, NAMED.
+# shellcheck disable=SC2016  # the bash -c program is deliberately unexpanded
+cred=$(env -i PATH="$PATH" HOME="${HOME:-/root}" TMPDIR="$TMP" NSE_ROOT="$ROOT" \
+        AWS_SECRET_ACCESS_KEY=hunter2 \
+        bash -c '. "$NSE_ROOT/lib/common.sh"; . "$NSE_ROOT/lib/pg-common.sh"
+                 . "$NSE_ROOT/lib/pg-scratch.sh"
+                 nse_pg_scratch_preflight /tmp/sc "file:///tmp/sc/cache" escrow-replay')
+assert_eq "p34.6 a credential in reach is REFUSED" "REFUSED" "$(printf '%s' "$cred" | jq -r .verdict)"
+assert_eq "p34.7 and it is NAMED, not counted" "AWS_SECRET_ACCESS_KEY" \
+  "$(printf '%s' "$cred" | jq -r '.credentialsInReach | join(",")')"
+
+head_ "p35  the scrub is a side effect, so it must not run in a subshell"
+# THE DEFECT THIS TEST EXISTS FOR. The first version returned the scrubbed list
+# on stdout, every caller wrote `x=$(nse_pg_scrub_credentials)`, and a command
+# substitution is a SUBSHELL: the unsets happened in a child that exited, the
+# parent kept every credential, and the function reported having removed four.
+# It printed the right answer and did nothing -- which is worse than doing
+# nothing, because the report says the property holds.
+# shellcheck disable=SC2016  # the bash -c program is deliberately unexpanded
+scrub_check=$(env -i PATH="$PATH" HOME="${HOME:-/root}" NSE_ROOT="$ROOT" \
+        AWS_SECRET_ACCESS_KEY=hunter2 GITHUB_TOKEN=ghp_x \
+        bash -c '. "$NSE_ROOT/lib/common.sh"; . "$NSE_ROOT/lib/pg-common.sh"
+                 . "$NSE_ROOT/lib/pg-scratch.sh"
+                 nse_pg_scrub_credentials
+                 printf "%s|%s|%s" "$NSE_PG_SCRUBBED" "${AWS_SECRET_ACCESS_KEY:-GONE}" "${GITHUB_TOKEN:-GONE}"')
+assert_eq "p35.1 the names come back AND the variables are actually gone" \
+  "AWS_SECRET_ACCESS_KEY GITHUB_TOKEN|GONE|GONE" "$scrub_check"
+# The red control: the broken shape, demonstrated, so the assertion above is
+# known to be capable of failing.
+# shellcheck disable=SC2016  # the bash -c program is deliberately unexpanded
+subshell_check=$(env -i PATH="$PATH" HOME="${HOME:-/root}" NSE_ROOT="$ROOT" \
+        AWS_SECRET_ACCESS_KEY=hunter2 \
+        bash -c '. "$NSE_ROOT/lib/common.sh"; . "$NSE_ROOT/lib/pg-common.sh"
+                 . "$NSE_ROOT/lib/pg-scratch.sh"
+                 discard=$( nse_pg_scrub_credentials )
+                 printf "%s" "${AWS_SECRET_ACCESS_KEY:-GONE}"')
+assert_eq "p35.2 red control: called inside \$( ), the unset does NOT survive" \
+  "hunter2" "$subshell_check"
+
+head_ "p36  the check name states the guarantee, always"
+assert_eq "p36.1 the strong one" "ESCROW_REPLAY PASS" "$(nse_pg_check_name escrow-replay PASS)"
+assert_eq "p36.2 the weaker one, named so nobody confuses the two" \
+  "SOURCE_ORIGIN_INDEPENDENCE FAIL" "$(nse_pg_check_name source-origin-independence FAIL)"
+rc=0; ( nse_pg_check_name "source escrow" PASS ) >/dev/null 2>&1 || rc=$?
+assert_eq "p36.3 an unnamed guarantee cannot be given a check name" "3" "$rc"
+# A comment may NAME the forbidden phrase -- lib/pg-scratch.sh does, in the
+# passage explaining why it is forbidden. An EMITTED line may not. Anchoring at
+# the start of a non-comment line is what separates the two, exactly as u07
+# does for a hardcoded host in the closed line.
+assert_eq "p36.4 no non-comment line can emit the bare phrase this line forbids" "" \
+  "$(grep -REn '^[^#]*Source escrow (PASS|FAIL)' "$ROOT/lib" "$ROOT/bin" || true)"
+assert_ne "p36.4a positive control: such a line WOULD be caught" "0" \
+  "$(printf '%s\n' 'printf "Source escrow PASS"' | grep -cE '^[^#]*Source escrow (PASS|FAIL)' || true)"
+assert_eq "p36.4b and a comment naming it is NOT caught" "" \
+  "$(printf '%s\n' '#   Source escrow PASS' | grep -E '^[^#]*Source escrow (PASS|FAIL)' || true)"
+
+head_ "p37  the summary says what it does NOT establish, on every run"
+SUM=$TMP/summary.txt
+nse_pg_summary "$TMP/gate-judge-replacement-head.json" > "$SUM"
+assert_ne "p37.1 the verdict is in it" "0" "$(grep -c '^VERDICT: REJECTED' "$SUM" || true)"
+assert_ne "p37.2 the enforced policy revision is in it" "0" "$(grep -c 'enforced from:' "$SUM" || true)"
+# EVERY control is listed, including the ones that did not fire. Binding an
+# empty jq stream with `as` produces no output, so the first version silently
+# dropped every untriggered control -- and a list of only the guards that fired
+# cannot say a guard was considered and found nothing.
+assert_eq "p37.3 every adversarial control is listed, fired or not" "6" \
+  "$(awk '/^Adversarial controls:/{f=1;next} f&&/^$/{exit} f' "$SUM" | grep -c ':' || true)"
+assert_ne "p37.4 including ones that did not trigger" "0" \
+  "$(grep -c 'not triggered' "$SUM" || true)"
+# The disclosure is at the BOTTOM, where a reader who stops early has already
+# passed the verdict -- and it is printed on green runs too.
+assert_ne "p37.5 the non-claims are present" "0" \
+  "$(grep -c 'What this does NOT establish' "$SUM" || true)"
+assert_ne "p37.6 and they name GitHub-level judge independence" "0" \
+  "$(grep -c 'judge independence' "$SUM" || true)"
+assert_ne "p37.7 and durable promotion" "0" "$(grep -c 'durable promotion' "$SUM" || true)"
+assert_eq "p37.8 the disclosure comes AFTER the verdict, not before it" "true" \
+  "$(v=$(grep -n '^VERDICT:' "$SUM" | cut -d: -f1); d=$(grep -n 'What this does NOT establish' "$SUM" | cut -d: -f1); [ "$d" -gt "$v" ] && echo true || echo false)"
+# A run with no acceptance test must not imply one happened.
+assert_ne "p37.9 no acceptance test means no guarantee is claimed" "0" \
+  "$(grep -c 'no guarantee is claimed' "$SUM" || true)"
+# The green case must carry the disclosure too. Especially the green case.
+SUMG=$TMP/summary-green.txt
+nse_pg_summary "$TMP/gate-judge-replacement-base.json" > "$SUMG"
+assert_ne "p37.10 an ACCEPTED run carries the same disclosure" "0" \
+  "$(grep -c 'What this does NOT establish' "$SUMG" || true)"
+assert_ne "p37.11 and still says the verdict" "0" "$(grep -c '^VERDICT: ACCEPTED' "$SUMG" || true)"
 
 # ---------------------------------------------------------------------------
 head_ "p10  the new executable is actually linted, and the lint mirror cannot drift"

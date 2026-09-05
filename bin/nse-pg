@@ -35,6 +35,12 @@ export NSE_ROOT
 . "$NSE_ROOT/lib/pg-policy.sh"
 # shellcheck source=../lib/pg-gate.sh
 . "$NSE_ROOT/lib/pg-gate.sh"
+# shellcheck source=../lib/pg-ingest.sh
+. "$NSE_ROOT/lib/pg-ingest.sh"
+# shellcheck source=../lib/pg-scratch.sh
+. "$NSE_ROOT/lib/pg-scratch.sh"
+# shellcheck source=../lib/pg-summary.sh
+. "$NSE_ROOT/lib/pg-summary.sh"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -57,6 +63,15 @@ commands:
   policy-load     read a policy TOML into JSON. Anything this reader does not
                   fully understand is a POLICY_PARSE_ERROR, never an ignored
                   line. PREREG.md §13.
+  facts           build a FACTS document from a real graph: the closed line
+                  does the discovery, this line reads the attribute facts, and
+                  the two are joined with provenance. PREREG.md §6, §11.1.
+  scratch         run the acceptance test in a LOCAL, EPHEMERAL,
+                  CREDENTIAL-FREE store. Refuses if the destination is not
+                  local and ephemeral, or if a credential is in reach that it
+                  could not remove. PREREG.md §14.
+  summary         the human-readable check summary, including what it does NOT
+                  establish. PREREG.md §10, §16.
   gate            render a verdict on an UNTRUSTED candidate. Policy and judge
                   come from the trusted root; the graph, and only the graph,
                   comes from the candidate root. PREREG.md §8, §10.
@@ -72,6 +87,15 @@ options:
   --candidate-root D  the root the dependency graph is read from (gate)
   --trusted-rev R     revision of the trusted root, if git cannot say
   --candidate-rev R   revision of the candidate root, if git cannot say
+  --installable I     what to build (facts, scratch)
+  --guarantee G       escrow-replay | source-origin-independence (scratch).
+                      The check NAME carries it, so the guarantee is visible to
+                      a reader who sees nothing but the name. A check name that
+                      omits the guarantee is refused rather than defaulted.
+  --scratch-dir D     where the ephemeral store lives (scratch)
+  --requisites F      a realised requisite list, if one exists (facts)
+  --gate-report F     the gate report to summarise (summary)
+  --scratch-report F  the scratch report to summarise (summary)
   --policy-rev R  the revision the policy was read from; recorded on every
                   decision, so a verdict says WHICH policy produced it
   --base FILE     base digests (digest-compare)
@@ -102,6 +126,12 @@ pg_trusted_root=""
 pg_candidate_root=""
 pg_trusted_rev=""
 pg_candidate_rev=""
+pg_installable=""
+pg_guarantee="escrow-replay"
+pg_scratch_dir=""
+pg_requisites=""
+pg_gate_report=""
+pg_scratch_report=""
 pg_base=""
 pg_head=""
 while [ $# -gt 0 ]; do
@@ -124,6 +154,18 @@ while [ $# -gt 0 ]; do
              pg_trusted_rev=$2; shift 2 ;;
     --candidate-rev) [ $# -ge 2 ] || { printf 'nse-pg: --candidate-rev needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_candidate_rev=$2; shift 2 ;;
+    --installable) [ $# -ge 2 ] || { printf 'nse-pg: --installable needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_installable=$2; shift 2 ;;
+    --guarantee) [ $# -ge 2 ] || { printf 'nse-pg: --guarantee needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_guarantee=$2; shift 2 ;;
+    --scratch-dir) [ $# -ge 2 ] || { printf 'nse-pg: --scratch-dir needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_scratch_dir=$(nse_abspath "$2"); shift 2 ;;
+    --requisites) [ $# -ge 2 ] || { printf 'nse-pg: --requisites needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_requisites=$(nse_abspath "$2"); shift 2 ;;
+    --gate-report) [ $# -ge 2 ] || { printf 'nse-pg: --gate-report needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_gate_report=$(nse_abspath "$2"); shift 2 ;;
+    --scratch-report) [ $# -ge 2 ] || { printf 'nse-pg: --scratch-report needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
+             pg_scratch_report=$(nse_abspath "$2"); shift 2 ;;
     --base)  [ $# -ge 2 ] || { printf 'nse-pg: --base needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
              pg_base=$(nse_abspath "$2"); shift 2 ;;
     --head)  [ $# -ge 2 ] || { printf 'nse-pg: --head needs a value\n' >&2; exit "$NSE_PG_USAGE"; }
@@ -189,6 +231,27 @@ case $cmd in
     : "${pg_out:=$pg_candidate_root/gate-report.json}"
     nse_pg_gate "$pg_trusted_root" "$pg_candidate_root" "$pg_out" \
                 "$pg_trusted_rev" "$pg_candidate_rev"
+    ;;
+  facts)
+    nse_require_cmd nix jq nix-store
+    [ -n "$pg_installable" ] || { printf 'nse-pg: facts needs --installable\n' >&2; exit "$NSE_PG_USAGE"; }
+    : "${pg_out:=$NSE_ROOT/experiments/policy-governed/results/facts.json}"
+    mkdir -p "$(dirname "$pg_out")"
+    nse_pg_facts_build "$pg_installable" "$pg_out" "$pg_requisites"
+    printf 'wrote %s\n' "$pg_out" >&2
+    ;;
+  scratch)
+    nse_require_cmd nix jq
+    [ -n "$pg_installable" ] || { printf 'nse-pg: scratch needs --installable\n' >&2; exit "$NSE_PG_USAGE"; }
+    : "${pg_scratch_dir:=${TMPDIR:-/tmp}/nse-pg-scratch}"
+    : "${pg_out:=$NSE_ROOT/experiments/policy-governed/results/scratch.json}"
+    mkdir -p "$(dirname "$pg_out")"
+    nse_pg_scratch_run "$pg_installable" "$pg_guarantee" "$pg_scratch_dir" "$pg_out"
+    ;;
+  summary)
+    nse_require_cmd jq
+    [ -n "$pg_gate_report" ] || { printf 'nse-pg: summary needs --gate-report FILE\n' >&2; exit "$NSE_PG_USAGE"; }
+    nse_pg_summary "$pg_gate_report" "$pg_scratch_report"
     ;;
   *) printf 'nse-pg: unknown command %s\n' "$cmd" >&2; usage; exit "$NSE_PG_USAGE" ;;
 esac

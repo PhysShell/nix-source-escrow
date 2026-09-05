@@ -362,7 +362,16 @@ nse_pg_decide() {
                 #             policy can put an axis here
                 mustPreserve:
                   (if .effective.coverage == "required" then true
-                   elif .effective.coverage == "auto" then (.requiredByPlan == true)
+                   elif .effective.coverage == "auto" then
+                     # NOT `.requiredByPlan == true`. jq evaluates `null ==
+                     # true` to FALSE, so a requiredByPlan the run could not
+                     # OBSERVE arrived here as "the plan did not use it" --
+                     # which under `auto` is an exemption, granted by an
+                     # instrument that failed rather than by a policy that
+                     # said so. The standing rule of this repository, one
+                     # layer further in: UNKNOWN is not EMPTY, and it is not
+                     # false either.
+                     (if .requiredByPlan == null then null else .requiredByPlan end)
                    elif .effective.coverage == "ignore" then false
                    else null end),
                 acceptance:

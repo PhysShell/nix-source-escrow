@@ -1,0 +1,16 @@
+{
+  "abcd0000000000000000000000000000-nix-pills-src.drv": {
+    "facts": {
+      "owner":      { "value": "NixOS", "source": "DERIVATION_ATTR", "attrKey": "owner", "attrSite": "structuredAttrs" },
+      "repo":       { "value": "nix-pills", "source": "DERIVATION_ATTR", "attrKey": "repo", "attrSite": "structuredAttrs" },
+      "rev":        { "value": "4df971884fa974c49b944ba648f2e48a82404c84", "source": "DERIVATION_ATTR", "attrKey": "rev", "attrSite": "structuredAttrs" },
+      "tag":        { "value": null, "source": "UNKNOWN", "attrKey": null, "attrSite": null },
+      "githubBase": { "value": "github.com", "source": "DERIVATION_ATTR", "attrKey": "githubBase", "attrSite": "structuredAttrs" },
+      "stripRoot":  { "value": true, "source": "DERIVATION_ATTR", "attrKey": "stripRoot", "attrSite": "structuredAttrs" },
+      "extension":  { "value": "tar.gz", "source": "DERIVATION_ATTR", "attrKey": "extension", "attrSite": "structuredAttrs" },
+      "originHost": { "value": "github.com", "source": "URL_FALLBACK", "attrKey": "url", "attrSite": "url" }
+    },
+    "attrKeys": ["extension","githubBase","owner","repo","rev","stripRoot","urls"],
+    "annotationCoverage": null
+  }
+}

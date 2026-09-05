@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 3,
+  "installable": "path:/repo/fixture#default",
+  "derivationDocument": { "schema": "envelope", "version": 4, "derivations": 3 },
+  "flakeRef": "path:/repo/fixture",
+  "storeDir": "/nix/store",
+  "topLevelDerivation": "/nix/store/tttt0000000000000000000000000000-escrow-fixture-0.1.drv",
+  "flakeSourcePath": "/nix/store/ffff0000000000000000000000000000-source",
+  "lockRoot": "root",
+  "originHostsClassified": ["github.com"],
+  "flakeInputs": [
+    {
+      "name": "nixpkgs",
+      "aliasPaths": ["nixpkgs"],
+      "lockNodeId": "nixpkgs",
+      "storePath": "/nix/store/nnnn0000000000000000000000000000-source",
+      "transitive": false,
+      "locked": { "type": "github", "owner": "NixOS", "repo": "nixpkgs",
+                  "rev": "d2f67949798825fe853f7c5d0492b8bf016d3f88",
+                  "narHash": "sha256-pa4Q0qErvCvzCaaUph7Sm37RhR4xvPrYI8Lgz6k85+A=" },
+      "type": "github",
+      "rev": "d2f67949798825fe853f7c5d0492b8bf016d3f88",
+      "narHash": "sha256-pa4Q0qErvCvzCaaUph7Sm37RhR4xvPrYI8Lgz6k85+A=",
+      "origin": "github.com/NixOS/nixpkgs",
+      "originHost": "github.com",
+      "discovery": { "method": "nix flake archive --dry-run", "status": "COVERED" }
+    }
+  ],
+  "sources": [
+    {
+      "kind": "fetchzip-like",
+      "name": "nix-pills-src",
+      "drvPath": "/nix/store/abcd0000000000000000000000000000-nix-pills-src.drv",
+      "outputName": "out",
+      "storePath": "/nix/store/pppp0000000000000000000000000000-nix-pills-src",
+      "expectedHash": "sha256-MIMqNvR3oazdybbVbQv/gF3oY7Tzma6NgRYedJGdqz0=",
+      "expectedHashAlgo": "sha256",
+      "hashMode": "nar",
+      "origin": { "urls": ["https://github.com/NixOS/nix-pills/archive/4df9718.tar.gz"],
+                  "hosts": ["github.com"], "knownForge": true },
+      "transform": { "postFetch": true, "stripRoot": true, "downloadToTemp": null, "recursiveHash": null },
+      "discovery": { "method": "nix derivation show -r", "status": "COVERED" }
+    },
+    {
+      "kind": "no-fetcher",
+      "name": "bootstrap-thing",
+      "drvPath": "/nix/store/eeee0000000000000000000000000000-bootstrap-thing.drv",
+      "outputName": "out",
+      "storePath": "/nix/store/bbbb0000000000000000000000000000-bootstrap-thing",
+      "expectedHash": "sha256-BOOTSTRAPBOOTSTRAPBOOTSTRAPBOOTSTRAPBOOTs=",
+      "expectedHashAlgo": "sha256",
+      "hashMode": "flat",
+      "origin": { "urls": [], "hosts": [], "knownForge": false },
+      "transform": { "postFetch": false, "stripRoot": null, "downloadToTemp": null, "recursiveHash": null },
+      "discovery": { "method": "nix derivation show -r", "status": "EXTERNAL_RECOVERY" }
+    }
+  ],
+  "counts": { "flakeInputs": 1, "sources": 2 }
+}

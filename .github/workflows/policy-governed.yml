@@ -39,6 +39,39 @@ jobs:
       - name: The policy-governed line's units
         run: ./tests/pg-unit.sh
 
+      - name: The adversarial corpus, gated, with its controls
+        run: |
+          set -o pipefail
+          fail=0
+          for fx in policy-self-exemption judge-replacement workflow-replacement \
+                    origin-moved policy-dependency-cochange; do
+            D=experiments/policy-governed/fixtures/$fx
+            echo "=============================== $fx"
+            # THE CONTROL FIRST. A corpus whose baseline is already red proves
+            # nothing about any mutation.
+            ./bin/nse-pg gate --trusted-root "$D/base" --candidate-root "$D/base" \
+              --trusted-rev base --candidate-rev base \
+              --out "/tmp/gate-$fx-control.json" >/dev/null 2>&1 || true
+            ctl=$(jq -r .verdict "/tmp/gate-$fx-control.json")
+            echo "  CONTROL base-vs-base: $ctl"
+            [ "$ctl" = ACCEPTED ] || { echo "  !! the control is not ACCEPTED; this specimen proves nothing"; fail=1; }
+            ./bin/nse-pg gate --trusted-root "$D/base" --candidate-root "$D/head" \
+              --trusted-rev base --candidate-rev head \
+              --out "/tmp/gate-$fx.json" >/dev/null 2>&1 || true
+            echo "  HEAD verdict: $(jq -r .verdict "/tmp/gate-$fx.json")  rejectedBy: $(jq -c .rejectedBy "/tmp/gate-$fx.json")"
+            [ "$(jq -r .verdict "/tmp/gate-$fx.json")" = REJECTED ] \
+              || { echo "  !! the head state was NOT rejected"; fail=1; }
+          done
+          exit $fail
+
+      - name: The check summary, rendered
+        run: |
+          echo "############ a REJECTED proposal ############"
+          ./bin/nse-pg summary --gate-report /tmp/gate-policy-self-exemption.json
+          echo
+          echo "############ an ACCEPTED one (the control) ############"
+          ./bin/nse-pg summary --gate-report /tmp/gate-judge-replacement-control.json
+
   qualify:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -160,6 +193,77 @@ jobs:
                        "  no rebuild work:        \(.noRebuildWork)",
                        "  annotation visible:     \(.annotationVisible)",
                        "  VERDICT: \(.verdict)"' "$A"
+
+      - name: §6/§11.1 -- a RECORDED facts document from a real graph
+        id: facts
+        run: |
+          set -o pipefail
+          ./bin/nse-pg facts \
+            --installable "path:$PWD/experiments/policy-governed/fixtures/qualification#ann-plain-top" \
+            --out "experiments/policy-governed/results/facts-nix${{ matrix.nix }}.json" \
+            2>&1 | tee /tmp/facts.log
+          echo "--- what the matcher can select on, over a REAL graph ---"
+          jq -r '[.dependencies[] | {c:.class, o:.owner.source, h:.originHost.source, s:.discoveryStatus}]
+                 | group_by([.c,.o,.h,.s])
+                 | .[] | "  \(.[0].c) owner=\(.[0].o) originHost=\(.[0].h) status=\(.[0].s): \(length)"' \
+            "experiments/policy-governed/results/facts-nix${{ matrix.nix }}.json"
+
+      - name: §13 -- decide the real graph under the repository policy
+        run: |
+          set -o pipefail
+          F=experiments/policy-governed/results/facts-nix${{ matrix.nix }}.json
+          ./bin/nse-pg decide --facts "$F" \
+            --policy nix-source-escrow.toml \
+            --policy-rev "$(git rev-parse HEAD)" \
+            --out "experiments/policy-governed/results/decisions-nix${{ matrix.nix }}.json"
+          jq -r '.counts | to_entries[] | "  \(.key)=\(.value)"' \
+            "experiments/policy-governed/results/decisions-nix${{ matrix.nix }}.json"
+          echo "--- rules that matched, and rules that could not ---"
+          jq -r '[.decisions[] | .matchedRuleIds[]] | group_by(.) | .[] | "  \(.[0]): \(length)"' \
+            "experiments/policy-governed/results/decisions-nix${{ matrix.nix }}.json"
+          jq -r '[.decisions[] | .unmatchedForUnknownFact[] | "\(.ruleId)/\(.selectors|join("+"))"]
+                 | group_by(.) | .[] | "  inert (unknown fact) \(.[0]): \(length)"' \
+            "experiments/policy-governed/results/decisions-nix${{ matrix.nix }}.json"
+          # An UNDECIDED dependency means the policy could not be resolved for
+          # it. That is a fail-closed state and this measurement must not pass
+          # over it quietly.
+          u=$(jq -r '.counts.undecided' "experiments/policy-governed/results/decisions-nix${{ matrix.nix }}.json")
+          echo "UNDECIDED=$u"
+
+      - name: §14 -- the untrusted phase, local and ephemeral, SOURCE_ORIGIN_INDEPENDENCE
+        # The CHEAPER guarantee, named explicitly. PREREG.md §16 allows a
+        # cheaper guarantee for governance work WHEN IT IS STATED, and the
+        # ESCROW_REPLAY control below is what keeps the strong path honest.
+        run: |
+          set -o pipefail
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          ./bin/nse-pg scratch \
+            --installable "path:$PWD/fixture#default" \
+            --guarantee source-origin-independence \
+            --scratch-dir "$RUNNER_TEMP/pg-scratch-soi" \
+            --out "experiments/policy-governed/results/scratch-soi-nix${{ matrix.nix }}.json" \
+            2>&1 | tail -40
+          jq -r '"CHECK: \(.checkName)",
+                 "  exit=\(.exitCode) elapsed=\(.elapsedMilliseconds)ms",
+                 "  preflight=\(.preflight.verdict) scrubbed=\(.preflight.credentialsScrubbed | join(",") | if . == "" then "nothing" else . end)",
+                 "  durablePromotion=\(.scratch.durablePromotion)"' \
+            "experiments/policy-governed/results/scratch-soi-nix${{ matrix.nix }}.json"
+
+      - name: §16 control -- the STRONG path still works with the new machinery
+        # At least one control must show ESCROW_REPLAY is still compatible with
+        # the policy layer. A line that only ever exercises the cheap guarantee
+        # has quietly changed what the project proves.
+        run: |
+          set -o pipefail
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          ./bin/nse-pg scratch \
+            --installable "path:$PWD/fixture#default" \
+            --guarantee escrow-replay \
+            --scratch-dir "$RUNNER_TEMP/pg-scratch-replay" \
+            --out "experiments/policy-governed/results/scratch-replay-nix${{ matrix.nix }}.json" \
+            2>&1 | tail -40
+          jq -r '"CHECK: \(.checkName)", "  exit=\(.exitCode) elapsed=\(.elapsedMilliseconds)ms"' \
+            "experiments/policy-governed/results/scratch-replay-nix${{ matrix.nix }}.json"
 
       - name: Upload the measurement
         if: always()
