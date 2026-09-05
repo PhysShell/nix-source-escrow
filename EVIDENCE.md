@@ -43,10 +43,10 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > | 8 | **all steps green** | 135 / 9 | first fully green leg. All nine remaining failures are one finding: the 2.24.9 derivation-attribute gap |
 > | 9 | all steps green | 135 / 9 | the probe added to diagnose that finding ran `nix derivation show` without `-r` and measured its own invocation |
 > | 10 | all steps green | 135 / 9 | the probe, fixed, named the outliers: 17 `__structuredAttrs` derivations carrying their attributes in `env.__json` |
-> | **11** | **all steps green** | **all steps green** | **144 / 0 and 144 / 0.** The canonical result below |
+> | 11 | all steps green | all steps green | **144 / 0 and 144 / 0** — the first run green everywhere, and the pre-removal reference every later observable is compared against |
 > | 15 | 143 / 1 | 143 / 1 | the **removal** run (`913df97`). Every pre-registered observable unchanged from run 11, `closureSha256` included. The one failure is `t07.9`, which asserted `.restoreExit == 0` — the exit code of a `nix copy` the default path never ran. `DESIGN.md` §17b |
->> | 17 | 144 / 1 | 144 / 1 | the repair (`102d5a1`). Observables still unchanged. The repaired `t07.9a` asserted all four flake inputs are in the test store; the answer is **2 of 4**, and 2 of 4 is Nix being correct. `DESIGN.md` §17c |
->> | **18** | **146 / 0** | **146 / 0** | `a4f07ea`. Minimization closed: both workarounds deleted, every pre-registered observable equal to run 11's, and the two versions agree on which locked inputs an offline evaluation needs. **The canonical result below** |
+> | 17 | 144 / 1 | 144 / 1 | the repair (`102d5a1`). Observables still unchanged. The repaired `t07.9a` asserted all four flake inputs are in the test store; the answer is **2 of 4**, and the assertion was the thing that was wrong. `DESIGN.md` §17c |
+> | **18** | **146 / 0** | **146 / 0** | `a4f07ea`. Minimization closed: both workarounds deleted, every pre-registered observable equal to run 11's, and both versions report the same two locked inputs present after the build. **The canonical result below** |
 >
 > The nine are `t01.3`, `t01.4`, `t01.7` and all of `t10` — every one an
 > assertion about an origin URL, a hash mode or a `postFetch`. On 2.24.9
@@ -111,8 +111,9 @@ experiment that measured them unnecessary is retired with them
 
 The two versions agree on every discovery number
 (`COVERED=163`, `EXTERNAL_RECOVERY=2`, `WITH_POSTFETCH=3`, `ON_KNOWN_FORGE=38`)
-and on which locked flake inputs an offline evaluation needs
-(`gitignore-src`, `nixpkgs`). The only difference either report shows is the one
+and on which locked flake inputs are **present** after the build
+(`gitignore-src`, `nixpkgs` — a presence measurement, not a necessity one;
+`DESIGN.md` §17c). The only difference either report shows is the one
 that is a fact about Nix: `DERIVATION_DOCUMENT=envelope v4` against
 `flat-map vabsent`, over the same 638 derivations.
 
@@ -226,7 +227,7 @@ OFFLINE_EVAL_PROBE=clean
 HTTP_FETCHES_IN_BUILD_LOG=0
 REQUIRED_SOURCES_PRESENT_AFTER_BUILD=4/4
 FLAKE_INPUTS_PRESENT_AFTER_BUILD=2/4 (gitignore-src, nixpkgs)
-  note: Nix materialises a locked input when evaluation reaches it; one it never touches is never fetched, so this is normally fewer than the total
+  note: only these were present. That is a PRESENCE measurement, not a necessity one: the tested offline evaluation succeeded with the others absent, which does not show that each of these is required. An ablation per input would be needed for that.
 OUTPUT_PATH=/nix/store/kfmaahsrnil10qp66f3dnisv557bpa3a-escrow-fixture-0.1
 OUTPUT_MATCHES_MANIFEST=true
 
@@ -651,6 +652,40 @@ Honest list. None of these are hidden behind a green result.
 19. Closed. The Nix-dependent suite has been run cold on both Nix versions and
     is 144/0 on each (run 11, `783bc5a`), and the canonical Result section is
     that run's report rather than the v0.1.0 one.
+
+---
+
+## Status: this line of work is closed
+
+```
+E1-E3 hypothesis .................. CONFIRMED
+workaround necessity .............. FALSIFIED
+workaround removal ................ REMOVAL_VALIDATED
+tested envelope ................... Nix 2.24.9 and 2.34.7, x86_64-linux,
+                                    this fixture, GitHub Actions ubuntu-latest
+post-minimization canonical run ... 18 @ a4f07ea
+pre-removal reference run ......... 11 @ 783bc5a
+removal commit .................... 913df97
+review reference .................. 6a6687c (frozen, never moved)
+```
+
+The causal conclusion is scoped: **in the tested configuration**, the dummy
+interface and the manual flake-input restore are not necessary for the observed
+result. Not "Nix never needs them".
+
+Another cold run of the same commit yields almost no information, so there will
+not be one. **The next run should exist because a new falsifiable claim does.**
+Everything already in hand: a pre-removal canonical state, pre-registered
+removal criteria, the causal intervention, a post-removal canonical state,
+cross-version replication, closure identity, observational identity, provenance
+identities kept apart, a frozen review reference, the historical wrong evidence
+preserved, and the failed measurement designs documented separately from the
+results.
+
+Tally: **5 implementation defects, 6 measurement defects, 1 sampling-design
+failure.** The rules that came out of them are in
+[`EXPERIMENT-PROTOCOL.md`](EXPERIMENT-PROTOCOL.md), with no Nix in them;
+`DESIGN.md` §15–§18 are the case histories.
 
 ---
 

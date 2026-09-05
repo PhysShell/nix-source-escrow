@@ -128,6 +128,25 @@ Not built, on purpose:
   ExtID lookup first, reconstruction only on a miss) and **not implemented
   here**; `DESIGN.md` §1 and §3.
 
+## The part of this that is not about Nix
+
+Eighteen runs produced five defects in the implementation, **six in the
+instruments meant to catch them**, and one sampling design that refuted a
+correct hypothesis. A test that asserted `0 == 0` about a command that never
+ran. A probe whose own invocation determined its answer. An assertion that
+could pass only while the code under it was fail-open. A fixture in a shape the
+real tool never emits.
+
+The rule that came out of it is one sentence, and it is in
+**[`EXPERIMENT-PROTOCOL.md`](EXPERIMENT-PROTOCOL.md)** with no Nix in it,
+because that is the part that transfers:
+
+> Before relying on a check, state the observable trace that would make it
+> report failure. If you cannot describe one, or the construction of the check
+> cannot produce one, it is not a check.
+
+`DESIGN.md` §15–§18 are the case histories behind each line of it.
+
 ## Architecture
 
 ```

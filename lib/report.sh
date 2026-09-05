@@ -276,7 +276,7 @@ nse_report() {
              "HTTP_FETCHES_IN_BUILD_LOG=\(.httpFetchesInBuildLog)",
              "REQUIRED_SOURCES_PRESENT_AFTER_BUILD=\(.sourcesRestored)/\(.sourcesRequired)",
              "FLAKE_INPUTS_PRESENT_AFTER_BUILD=\(.flakeInputsPresentAfterBuild // "not recorded")/\(.flakeInputsRequired // "?") (\((.flakeInputsPresentAfterBuildNames // []) | join(", ")))",
-             "  note: Nix materialises a locked input when evaluation reaches it; one it never touches is never fetched, so this is normally fewer than the total",
+             "  note: only these were present. That is a PRESENCE measurement, not a necessity one: the tested offline evaluation succeeded with the others absent, which does not show that each of these is required. An ablation per input would be needed for that.",
              "OUTPUT_PATH=" + .builtOutput,
              "OUTPUT_MATCHES_MANIFEST=" + (.outputMatches|tostring),
              "",

@@ -915,6 +915,9 @@ read `env.__json` when there is no parsed `structuredAttrs`, and **error** on an
 
 ## 16. Empty is data only after a successful parse
 
+*(Stated generally, with no Nix in it, in `EXPERIMENT-PROTOCOL.md` §2 — that
+file is the portable form of this section, §16a and §17–§17d.)*
+
 The rule, stated once, because three separate defects were the same violation
 of it:
 
@@ -1224,8 +1227,17 @@ evidence does not account for. The report prints the names next to the count,
 with a note saying why the count is normally below the total — a reader who
 sees `2/4` should not have to rediscover this section.
 
-The number itself is now evidence: if a future Nix changes *which* locked inputs
-an offline evaluation needs, that list changes and `t07.9a` goes red.
+The number itself is now evidence: if that set of present inputs changes on a
+future Nix, `t07.9a` goes red.
+
+**And the verb matters, so it is pinned here.** `2/4` is a **presence**
+measurement. What it establishes: *the tested offline evaluation succeeds while
+only these two of the four locked flake inputs remain present after the build.*
+It does **not** establish that either present input is *necessary* — nothing has
+removed a surviving input to see the build fail. That would be a separate
+ablation with its own pre-registered red trace, and it has not been run. After
+six instruments that could only agree with their author, this experiment has
+earned the right to be pedantic about verbs.
 
 ### 17d. Verdict: REMOVAL_VALIDATED
 
@@ -1253,16 +1265,94 @@ restore are gone, which is exactly the claim `E1`–`E3` made and could not
 themselves prove: they measured a *disabled* workaround, this measures an
 *absent* one.
 
+**Scope, stated once and not widened.** This is a result about *the tested
+configuration*: this fixture, this flake, `x86_64-linux`, Nix 2.24.9 and 2.34.7,
+on a GitHub Actions runner. It says these mechanisms are not necessary for the
+observed result **here**. It does not say Nix never needs them — two CI jobs do
+not license a universal claim, and the world has enough of those already.
+
 Two things are stronger than they were before the amputation, not merely
 unchanged. `t07`, `t15` and `t16` now run the `E3` configuration with no flag
 left to disable, so a future Nix that reinstates the offline-substituter
-behaviour turns them red rather than being quietly worked around. And
-`FLAKE_INPUTS_PRESENT_AFTER_BUILD` is a real number where `restoreExit` was a
-constant: the two versions agree on *which* locked inputs an offline evaluation
-needs, and if that ever changes, `t07.9a` says so.
+behaviour turns them red rather than being quietly worked around — the deletion
+removed a region of state space in which a regression could exist unexamined,
+which raises the falsifiability of the system rather than only its tidiness.
+And `FLAKE_INPUTS_PRESENT_AFTER_BUILD` is a measured set where `restoreExit`
+was a constant: both versions produced the same two names, and `t07.9a` says so
+if that set ever changes. (Presence, not necessity — §17c.)
 
 The cost of getting here was four runs and three wrong assertions in a row —
 one that asserted nothing, one that asserted too much, and a pre-registration
 whose own acceptance criterion could not be met by the change it
 pre-registered. All three were caught before they could be written up as a
 result, and §17a, §17b and §17c say which was which.
+
+---
+
+## 18. This line of work is closed
+
+Eighteen runs. Another cold run of the same commit costs time and yields
+almost no information, so there will not be one: the next run should exist
+because a **new falsifiable claim** does, not because green is pleasant.
+
+```
+E1-E3 hypothesis .................. CONFIRMED
+workaround necessity .............. FALSIFIED
+workaround removal ................ REMOVAL_VALIDATED
+tested envelope ................... Nix 2.24.9 and 2.34.7, x86_64-linux,
+                                    this fixture, GitHub Actions ubuntu-latest
+post-minimization canonical run ... 18 @ a4f07ea
+pre-removal reference run ......... 11 @ 783bc5a
+removal commit .................... 913df97
+review reference .................. 6a6687c (frozen, never moved)
+```
+
+**What is established, at four levels.**
+
+1. **Empirical.** The dummy interface and the manual flake-input restore were
+   deleted with no change to any observable §17 pre-registered, on both tested
+   Nix versions, including a `closureSha256` identical to the pre-removal run's.
+
+2. **Causal, scoped.** Their absence is compatible with the same confirmed
+   behaviour `E1`–`E3` observed while they were merely disabled. **In the tested
+   configuration**, these mechanisms are not necessary for the observed result.
+   Not "Nix never needs them" — two CI jobs do not license that.
+
+3. **Regression.** The removal deleted a region of state space in which a
+   regression could exist unexamined. `t07`, `t15` and `t16` now exercise the
+   validated configuration with no bypass switch, so a future Nix that
+   reinstates the old behaviour turns the ordinary suite red. Minimization
+   raised the falsifiability of the system, not only its tidiness.
+
+4. **Methodological.** The series produced **five implementation defects, six
+   measurement defects, and one sampling-design failure** — and the last round
+   is the one that matters, because the rules worked *prospectively* rather than
+   only explaining past crashes:
+
+   * `t07.9` — a pre-registered criterion caught an assertion that was, in
+     substance, `0 == 0`;
+   * `t07.9a` — the first real run immediately refuted an over-strong model
+     (`4/4`);
+   * §17 — an acceptance criterion was found unsatisfiable **before** the causal
+     intervention, so it could not afterwards be declared "roughly what we
+     meant".
+
+   ```
+   bad instrument
+       -> explicit falsifying-trace requirement
+       -> instrument fails qualification
+       -> claim corrected before measurement
+       -> intervention only once the criterion is coherent
+       -> REMOVAL_VALIDATED
+   ```
+
+   Until this round, §16a was open to the charge of being post-hoc wisdom:
+   *six crashes, then a rule explaining the crashes*. It is not any more. The
+   rule stopped the next instrument defect from becoming an experimental
+   conclusion.
+
+The rules themselves are now in **`EXPERIMENT-PROTOCOL.md`**, deliberately with
+no Nix in them, because that is the portable artefact. The funny part of the
+whole exercise: this repository set out to demonstrate properties of a source
+escrow, and the most transferable thing it produced is a rule about how not to
+build a test that is only capable of agreeing with its author.

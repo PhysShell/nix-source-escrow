@@ -596,12 +596,14 @@ restored=$(present_in_teststore "${required_paths[@]+"${required_paths[@]}"}" | 
 # and is measured here.
 #
 # The first honest version of it over-claimed in the other direction, and the
-# run said so: 2 of 4. Nix materialises a locked input when evaluation reaches
-# it, and an input the evaluation never touches is never fetched -- correct
-# behaviour, and the reason "all four are in the test store" is simply false.
-# So the NAMES are recorded, not just the count: WHICH locked inputs the
-# offline evaluation actually needed is the fact, and it is one a future Nix
-# could change.
+# run said so: 2 of 4. So the NAMES are recorded, not just the count.
+#
+# READ THIS FIELD PRECISELY. It says which locked inputs were PRESENT in the
+# test store after a build that succeeded with every origin unreachable. It
+# does NOT say those inputs are NECESSARY, and it does not say the absent two
+# are unnecessary in general -- only that this evaluation completed without
+# them. Necessity is a different experiment: remove one surviving input and
+# require a pre-defined red trace. Nobody has run that.
 mapfile -t input_paths < <(jq -r '.flakeInputs[] | select(.storePath != null) | .storePath' "$NSE_MANIFEST")
 inputs_required=${#input_paths[@]}
 present_in_teststore "${input_paths[@]+"${input_paths[@]}"}" > "$NSE_WORK/prove-inputs-present.txt"

@@ -55,8 +55,9 @@
           "gitignore-src",
           "nixpkgs"
         ],
-        "flakeInputNamesIdenticalAcrossNixVersions": true,
-        "originIndependence": "PASS on both"
+        "originIndependence": "PASS on both",
+        "flakeInputsPresentAfterBuildNote": "PRESENCE, not necessity: the tested offline evaluation succeeded while only these two of the four locked inputs remained present after the build. No ablation has removed a surviving input, so nothing here shows either is required.",
+        "flakeInputNamesAgreeAcrossNixVersions": true
       },
       "note": [
         "Closes the minimization phase. The dummy interface and the manual",
@@ -310,5 +311,39 @@
       "rules": "lib/experiment.sh keeps nse_experiment_outcome and NSE_EXPERIMENTS_SUMMARY_JQ, unit-tested by u10 and u17."
     }
   },
-  "canonicalRun": 18
+  "canonicalRun": 18,
+  "status": {
+    "lineOfWork": "CLOSED",
+    "closedAt": "2026-09-04",
+    "e1_e3_hypothesis": "CONFIRMED",
+    "workaroundNecessity": "FALSIFIED",
+    "workaroundRemoval": "REMOVAL_VALIDATED",
+    "testedEnvelope": {
+      "nixVersions": [
+        "2.24.9",
+        "2.34.7"
+      ],
+      "system": "x86_64-linux",
+      "runner": "GitHub Actions ubuntu-latest",
+      "installable": "the repository's own fixture flake",
+      "note": "The causal conclusion holds IN THE TESTED CONFIGURATION. It is not a claim that Nix never requires these mechanisms."
+    },
+    "postMinimizationCanonicalRun": {
+      "run": 18,
+      "commit": "a4f07ea366a921b81f03565a3e032b69be5f94f5"
+    },
+    "preRemovalReferenceRun": {
+      "run": 11,
+      "commit": "783bc5a9c8acb71613ac302abf1abb541f4c5823"
+    },
+    "removalCommit": "913df97007250e8c55bcae700036d856a8c1679c",
+    "reviewReferenceCommit": "6a6687c592858f398e8ebde6a7aaf72d4b98937c",
+    "nextRunPolicy": "A further cold run of the same commit yields almost no information. The next run should exist because a new falsifiable claim exists.",
+    "defectTally": {
+      "implementation": 5,
+      "measurementInstruments": 6,
+      "samplingDesign": 1,
+      "protocol": "EXPERIMENT-PROTOCOL.md"
+    }
+  }
 }
