@@ -125,6 +125,15 @@ assert_eq "t01.5 no source left UNKNOWN" "0" "$(jq -r '.counts.sourcesUnknown' "
 assert_eq "t01.6 no source left UNSUPPORTED" "0" "$(jq -r '.counts.sourcesUnsupported' "$DISCOVERY")"
 assert_eq "t01.7 origin-less bootstrap FODs classified EXTERNAL_RECOVERY, not UNKNOWN" \
   "2" "$(jq -r '.counts.sourcesExternalRecovery' "$DISCOVERY")"
+# Every source must carry the hash algorithm the derivation stated. A null here
+# is what makes verify guess -- and verify no longer guesses, so a null becomes
+# a hard stop at content-identity time. Better to fail on the real data, by
+# name, in discovery. DESIGN.md §19, §20.
+assert_eq "t01.8 every discovered source records the hash algorithm, none assumed" \
+  "0" "$(jq -r '[.sources[] | select(.expectedHash != null and .expectedHashAlgo == null)] | length' "$DISCOVERY")"
+assert_ne "t01.9 and at least one of them is NOT sha256, so the fixture can expose a difference" \
+  "0" "$(jq -r '[.sources[] | select(.expectedHashAlgo != null and .expectedHashAlgo != "sha256")] | length' "$DISCOVERY")"
+
 assert_eq "t01.8 IFD probe ran and reports a definite answer" \
   "absent" "$(jq -r '.evalTimeFetches.ifd.status' "$DISCOVERY")"
 

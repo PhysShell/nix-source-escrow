@@ -80,6 +80,24 @@
         stripRoot = true;
         hash = "sha256-1kJjhtlsAkpNB7f6tZEs+dbKd8z7KoNHyDHEJ0tmhnc=";
       };
+
+      # ---------------------------------------------------------------------
+      # Source #5: the SAME kind of fetch, with a DIFFERENT HASH ALGORITHM.
+      #
+      # Every other source here is sha256, so a compatibility test across two
+      # Nix versions was only ever exercising the subset of the derivation
+      # format where the two happen to agree. `nse_to_sri` defaulted a bare
+      # digest to sha256, and nothing in this fixture could have noticed.
+      #
+      # A different URL on purpose: sources #2-#4 make the postFetch argument
+      # by sharing one URL and differing in one attribute each, and this must
+      # not become a fourth member of that set. Small and permanent -- the
+      # detached signature that sits beside the tarball forever.
+      # ---------------------------------------------------------------------
+      srcSha512 = pkgs.fetchurl {
+        url = "https://ftp.gnu.org/gnu/hello/hello-2.12.1.tar.gz.sig";
+        hash = "sha512-7+A+OIwdDIssDp5FKmPXXAg7O4HlhZRI4RbaSuWIg65MawoueO3pD+no+oTE7uFFfkpj7hrFRMfPPLdBGKTdNQ==";
+      };
     in
     {
       packages.${system} = {
@@ -93,6 +111,7 @@
           cp ${srcZipUnstripped}/hello-2.12.1/README    "$out/from-fetchzip-unstripped.txt"
           cp ${srcZipStripped}/README                   "$out/from-fetchzip-stripped.txt"
           cp ${gitignore-src}/Nix.gitignore             "$out/from-flake-input.txt"
+          cp ${srcSha512}                               "$out/from-sha512-fetchurl.sig"
           echo "escrow-fixture ok" > "$out/marker"
         '';
 
@@ -101,6 +120,7 @@
         src-tarball = srcTarball;
         src-zip-unstripped = srcZipUnstripped;
         src-zip-stripped = srcZipStripped;
+        src-sha512 = srcSha512;
       };
     };
 }

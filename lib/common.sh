@@ -54,16 +54,41 @@ nse_flakeref_of() {
 #   fixed:r:sha256-<base64>    the same field as newer Nix renders it in JSON
 # The content-address prefix is stripped first, so the algo/hash split below
 # never has to guess which colon it is looking at.
+# Normalise a hash to SRI. The algorithm is READ, never assumed.
+#
+#   nse_to_sri <hash> [<algo>]
+#
+# A hash that carries its own algorithm (SRI `sha512-…`, or `sha512:…`) needs
+# no second argument. A BARE digest does not carry one, and this function used
+# to default it to `sha256`. That is the same defect as the presence probe's,
+# in better clothes:
+#
+#   store did not answer          -> assume ABSENT
+#   algorithm was not recorded    -> assume sha256
+#
+# Both are UNKNOWN promoted to a concrete claim. So a bare digest with no
+# algorithm supplied is now a hard error, and the caller has to have kept the
+# algorithm the derivation actually stated. DESIGN.md §19, standing invariant.
 nse_to_sri() {
-  local h=$1 algo=${2:-sha256}
+  local h=$1 algo=${2:-}
   h=${h#fixed:}; h=${h#text:}; h=${h#r:}
   case $h in
-    *-*) # already SRI (algo-base64)
+    *-*) # already SRI (algo-base64): carries its own algorithm
       printf '%s\n' "$h" ;;
-    *:*) # <algo>:<hash>
+    *:*) # <algo>:<digest>: also carries its own algorithm
       local a=${h##*:} ; local alg=${h%%:*}
+      [ -n "$alg" ] || { nse_warn "hash '$h' has an empty algorithm prefix"; return 2; }
       nix hash convert --hash-algo "$alg" --to sri "$a" ;;
-    *)
+    *)   # a bare digest. Without an algorithm this is not convertible, and
+         # guessing one is how a sha512 source gets checked as though it were
+         # sha256 -- or, on a length collision, checked against the wrong thing
+         # entirely and reported as a content-identity mismatch of the escrow.
+      if [ -z "$algo" ]; then
+        nse_warn "cannot normalise the bare digest '$h': no hash algorithm was
+       recorded for it. The algorithm is not guessable and will not be guessed;
+       an unrecorded algorithm is not sha256. HASH_ALGO_UNKNOWN."
+        return 3
+      fi
       nix hash convert --hash-algo "$algo" --to sri "$h" ;;
   esac
 }

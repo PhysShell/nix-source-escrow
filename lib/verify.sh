@@ -97,9 +97,9 @@ nse_verify() {
     > "$work/verify-meta.jsonl"
   jq -s '.' "$work/verify-meta.jsonl" > "$work/verify-meta.json"
 
-  local id_ok=0 id_bad=0 id_skip=0 sp expected ca got_sri exp_sri
+  local id_ok=0 id_bad=0 id_skip=0 sp expected expected_algo ca got_sri exp_sri
   : > "$work/verify-hash-mismatch.txt"
-  while IFS=$'\t' read -r sp ca expected; do
+  while IFS=$'\t' read -r sp ca expected expected_algo; do
     [ -n "$sp" ] || continue
     case $ca in
       __ABSENT__) id_skip=$((id_skip + 1)); continue ;;
@@ -108,10 +108,18 @@ nse_verify() {
         printf '%s\tno-CA-field\t%s\n' "$sp" "$expected" >> "$work/verify-hash-mismatch.txt"
         continue ;;
     esac
+    [ "$expected_algo" = "__NONE__" ] && expected_algo=""
     # `nix hash convert` runs only for a hash that is not already SRI, so on a
-    # current Nix this loop spawns nothing at all.
+    # current Nix this loop spawns nothing at all. The algorithm comes from the
+    # manifest, where discovery recorded whatever the derivation stated; it is
+    # never defaulted here, and a source whose algorithm was never recorded
+    # stops the run rather than being checked as though it were sha256.
     got_sri=$(nse_to_sri "$ca") || nse_die "cannot normalise CA hash '$ca' of $sp"
-    exp_sri=$(nse_to_sri "$expected") || nse_die "cannot normalise expected hash '$expected' of $sp"
+    exp_sri=$(nse_to_sri "$expected" "$expected_algo") \
+      || nse_die "cannot normalise the expected hash '$expected' of $sp.
+       If the algorithm is unrecorded, that is a gap in what discovery could read
+       from this Nix's derivation document, not a licence to assume one.
+       HASH_ALGO_UNKNOWN."
     if [ "$got_sri" = "$exp_sri" ]; then
       id_ok=$((id_ok + 1))
     else
@@ -129,7 +137,9 @@ nse_verify() {
                  (if   $rec == null          then "__ABSENT__"
                   elif ($rec.ca // "") == "" then "__NO_CA__"
                   else $rec.ca end),
-                 $exp ]
+                 $exp,
+                 (if (.expectedHashAlgo // null) == null then "__NONE__"
+                  else .expectedHashAlgo end) ]
              | @tsv' "$manifest")
   nse_log "content identity: ok=$id_ok mismatched=$id_bad not-in-escrow=$id_skip"
 

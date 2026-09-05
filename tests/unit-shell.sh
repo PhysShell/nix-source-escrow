@@ -566,6 +566,61 @@ assert_eq "u17.9 a missing conclusion field is UNRECORDED, not a verdict" \
   "combined default safe: UNRECORDED" "$(expsum "$TMP/exp-norev.json" | sed -n 3p)"
 
 # ---------------------------------------------------------------------------
+head_ "u18  a hash algorithm is read, never assumed"
+# nse_to_sri defaulted a bare digest to sha256. That is the presence-probe
+# defect in better clothes -- UNKNOWN promoted to a concrete claim:
+#
+#   store did not answer       -> assume ABSENT
+#   algorithm was not recorded -> assume sha256
+#
+# The fake `nix` records what algorithm it was asked for, because that is the
+# property under test. Whether Nix converts base16 to base64 correctly is Nix's
+# problem, not this repository's.
+FAKENIX=$TMP/fakenix; mkdir -p "$FAKENIX"
+cat > "$FAKENIX/nix" <<'FN'
+#!/usr/bin/env bash
+algo=""; prev=""
+for a in "$@"; do [ "$prev" = --hash-algo ] && algo=$a; prev=$a; done
+printf '%s\n' "$algo" >> "${NIX_CALLS:?}"
+printf 'CONVERTED-WITH-%s\n' "$algo"
+FN
+chmod +x "$FAKENIX/nix"
+NIX_CALLS=$TMP/nix-calls.txt; export NIX_CALLS
+sri() { NIX_CALLS=$NIX_CALLS PATH="$FAKENIX:$PATH" nse_to_sri "$@"; }
+
+: > "$NIX_CALLS"
+assert_eq "u18.1 legacy hex + sha256 converts as sha256" \
+  "CONVERTED-WITH-sha256" \
+  "$(sri 1bcd0nvfjnqjqbc0y0zqrqz2gk9zqzq3lc5wqzq0zqzq0zqzq0zq sha256)"
+: > "$NIX_CALLS"
+assert_eq "u18.2 legacy hex + sha512 converts as SHA512, not sha256" \
+  "CONVERTED-WITH-sha512" \
+  "$(sri 1bcd0nvfjnqjqbc0y0zqrqz2gk9zqzq3lc5wqzq0zqzq0zqzq0zq sha512)"
+assert_eq "u18.2a and sha256 was never even offered to nix" \
+  "sha512" "$(cat "$NIX_CALLS")"
+: > "$NIX_CALLS"
+assert_eq "u18.3 an SRI hash carries its own algorithm and needs no conversion" \
+  "sha512-abcdef==" "$(sri 'sha512-abcdef==')"
+assert_eq "u18.3a so nix is not invoked at all" "0" "$(wc -l < "$NIX_CALLS")"
+: > "$NIX_CALLS"
+assert_eq "u18.4 a prefixed <algo>:<digest> uses ITS algorithm, not the default" \
+  "CONVERTED-WITH-sha512" "$(sri 'sha512:abcdef')"
+# THE ONE THAT MATTERS. A bare digest with no recorded algorithm is not sha256.
+: > "$NIX_CALLS"
+rc=0; out=$(sri 4bd0zqzq0zqzq0zqzq0zqzq0zqzq0zqzq 2>/dev/null) || rc=$?
+assert_ne "u18.5 a bare digest with NO algorithm is a hard error" "0" "$rc"
+assert_eq "u18.5a it produces no hash at all, rather than a plausible one" "" "$out"
+assert_eq "u18.5b and does not ask nix to convert it as anything" "0" "$(wc -l < "$NIX_CALLS")"
+rc=0; sri 4bd0zqzq0zqzq0zqzq0zqzq0zqzq0zqzq 2>"$TMP/sri-err.txt" >/dev/null || rc=$?
+assert_ne "u18.5c the refusal says the algorithm is unknown, by name" "0" \
+  "$(grep -c 'HASH_ALGO_UNKNOWN' "$TMP/sri-err.txt")"
+# r: / fixed: / text: prefixes are stripped, and must not eat the algorithm.
+: > "$NIX_CALLS"
+assert_eq "u18.6 a recursive-hash prefix is stripped, the algorithm survives" \
+  "CONVERTED-WITH-sha512" "$(sri 'r:sha512:abcdef')"
+unset -f sri
+
+# ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"
 # A comment may name the old bug; an emitted line may not. Anchoring at the
 # start of a non-comment line is what separates the two.

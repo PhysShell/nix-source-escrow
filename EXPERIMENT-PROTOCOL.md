@@ -82,6 +82,38 @@ Corollaries paid for in this series:
 
 ---
 
+## 2a. A failed observation must never become a decision
+
+The strong form, worth stating separately because the weak form is easy to
+agree with and still get wrong:
+
+> No negative claim may be derived from an incomplete observation, and no
+> verdict may be derived from an invalid measurement.
+
+Two distinct failure modes hide behind one bug:
+
+```
+UNKNOWN -> ABSENT                  a measurement failure becomes a fact
+UNKNOWN -> ABSENT -> MAY_PROCEED   a measurement failure becomes a POLICY
+                                   DECISION
+```
+
+The second is materially worse and much easier to ship, because the code path
+reads like ordinary error handling. In the source series a probe that failed
+was read as "the store says it does not have it", which then authorised a
+rebuild of the object. A wrong number is a wrong number; a wrong number that
+steers an action is an incident.
+
+The permitted shape is `UNKNOWN -> STOP`. Where an observation has three
+outcomes — holds it, does not hold it, did not answer — exactly one of them may
+change state, and it is not the third.
+
+Corollary for any conversion or defaulting: `UNKNOWN -> <concrete value>` is the
+same defect wearing different clothes. "Algorithm not recorded, assume sha256"
+is "store did not answer, assume absent" with better manners.
+
+---
+
 ## 3. Presence is not necessity
 
 > Observing that X is present while the system works shows **presence**. It does

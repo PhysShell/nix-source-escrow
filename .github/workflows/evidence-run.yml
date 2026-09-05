@@ -104,6 +104,28 @@ jobs:
                    "    env.__json key:      \((.value.env // {}) | has("__json"))",
                    "    ALL env keys:        \((.value.env // {}) | keys | join(","))"' \
             /tmp/drvshow.json || true
+          # Which key states the hash ALGORITHM, per version. Counting told us
+          # nothing three times running about the structuredAttrs difference;
+          # naming settled it in one. Same technique, applied before the fix is
+          # trusted rather than after it fails. DESIGN.md §20.
+          echo "how a fixed-output derivation states its hash algorithm:"
+          jq -r '(.derivations // .) | to_entries
+                 | map(select(.value.outputs // {} | to_entries | any(.value.hash != null)))
+                 | .[0:2][]
+                 | "  \(.value.name // (.key | sub("^.*/";"")))",
+                   "    outputs.out keys:   \((.value.outputs.out // {}) | keys | join(","))",
+                   "    outputs.out.hash:   \((.value.outputs.out // {}).hash // "absent")",
+                   "    outputs.out.hashAlgo: \((.value.outputs.out // {}).hashAlgo // "absent")",
+                   "    env.outputHashAlgo: \((.value.env // {}).outputHashAlgo // "absent")"' \
+            /tmp/drvshow.json || true
+          echo "fixed-output derivations whose algorithm is stated NOWHERE we look:"
+          jq -r '[(.derivations // .)[]
+                  | select(.outputs // {} | to_entries | any(.value.hash != null))
+                  | select(((.outputs.out // {}).hash // "" | test("^[a-z0-9]+[-:]")) as $carried
+                           | ($carried | not)
+                             and (((.outputs.out // {}) | has("hashAlgo")) | not)
+                             and (((.env // {}) | has("outputHashAlgo")) | not))] | length' \
+            /tmp/drvshow.json || true
           echo "fixed-output derivations counted the way discover.sh counts them:"
           jq -r '[(.derivations // .)[]
                   | select(.outputs // {} | to_entries | any(.value.hash != null))] | length' \

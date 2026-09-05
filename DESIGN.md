@@ -1500,9 +1500,112 @@ RED TRACE 2 -- the closure/extraction pipeline fails before producing an
 If either forbidden line appears, the fix has not been made, whatever the exit
 codes say.
 
+### The standing invariant
+
+Stronger than the claim above, and kept **separate from `t21`/`t22`** on
+purpose: those two tests are today's enforcement, and later probes and stages
+will need their own. The rule outlives them.
+
+> **No negative claim about source presence may be derived from an incomplete
+> store observation, and no evidence verdict may be derived from an invalid
+> measurement.**
+
+Two failure modes it forbids, which are not the same thing:
+
+```
+UNKNOWN -> ABSENT                     a measurement failure becomes a fact
+UNKNOWN -> ABSENT -> MAY_REBUILD      a measurement failure becomes a POLICY
+                                      DECISION
+```
+
+The second is what `nse_tier_materialise` was doing, and it is the worse of the
+two by a distance. A wrong report is wrong. A wrong report that then authorises
+the acceptance build to rebuild an object it was supposed to receive from an
+approved tier is a measurement failure steering an action. The permitted shape
+is `UNKNOWN -> STOP`: exactly one of the three re-query outcomes may change
+state, and it is the one where the store actually answered.
+
+Any new probe, stage or verdict added to this tool is subject to this
+invariant, and the qualification question for each is the one in
+`EXPERIMENT-PROTOCOL.md` §1: what observable trace makes it refuse?
+
 ### What this run is not
 
 It is not a re-run of anything in §18. That line is closed, its canonical run is
 18 @ `a4f07ea`, and this does not reopen it: the observables §17 pre-registered
 must still hold, but they are a *regression floor* here, not the result. The
 result is whether the two red traces above appear.
+
+---
+
+## 20. Pre-registration: a non-sha256 source, and the observables it is expected to move
+
+Written **before** the run. §19's intervention left the regression floor from
+run 18 intact on purpose. This one does not, and says so in advance, because
+the alternative is discovering a moved `closureSha256` after the fact and
+reaching for an explanation.
+
+### Why the fixture has to change
+
+Every fixed-output source in the fixture is `sha256`. A cross-version
+compatibility suite over that fixture only ever exercised the subset of the
+derivation format where the two Nix versions happen to agree — and `nse_to_sri`
+defaulted a bare digest to `sha256`, so **nothing in the fixture could have
+noticed**. That is the sampling failure of §15a repeating: a sample that cannot
+exhibit the difference under investigation.
+
+`fetchurl` of `hello-2.12.1.tar.gz.sig` with a `sha512` SRI hash is added. A
+different URL on purpose: sources #2–#4 make the `postFetch` argument by
+sharing one URL and differing in exactly one attribute each, and a fourth
+member would destroy that.
+
+The bytes were fetched and both digests computed here. The `sha256` of the
+tarball came out **identical to the hash already in the fixture**, which is how
+the `sha512` beside it is known to be a digest of the right bytes rather than
+an asserted constant.
+
+### Observables expected to move, with the values
+
+```
+FOD_SOURCES                     165 -> 166
+COVERED                         163 -> 164
+HASH_MODE_FLAT                  159 -> 160
+SOURCES_REQUIRED_BY_PLAN          4 -> 5
+SOURCES_PRESERVED                 4 -> 5
+CONTENT_IDENTITY_VERIFIED         4 -> 5
+OBJECTS_REALISED                874 -> 875        (one new store path)
+closureSha256                   CHANGES
+```
+
+### Observables expected NOT to move
+
+```
+EXTERNAL_RECOVERY                 2      the new source has an origin URL
+WITH_POSTFETCH                    3      a plain fetchurl adds none
+ON_KNOWN_FORGE                   38      ftp.gnu.org is not in the forge list
+HASH_MODE_NAR                     6
+derivations                     638 -> 639 is acceptable; a larger jump is not
+SOURCES_DISCOVERED_NOT_REQUIRED_BY_PLAN  161
+FLAKE_INPUTS                      4      no new flake input
+t10.1 "exactly three sources share one identical upstream URL"  still THREE
+```
+
+`closureSha256` moving is legitimate **here** and was illegitimate in §17,
+and the difference is the whole point of naming it in advance: §17's change
+touched the acceptance harness and had no path to the fixture's derivation
+graph, while this one adds a source to that graph. A hash that moves for a
+stated reason is evidence; a hash that moves and then acquires a reason is not.
+
+### The red outcomes
+
+| observation | reading |
+|---|---|
+| `t10.1` no longer finds exactly three | the new source landed in the shared-URL set; wrong URL chosen |
+| `ON_KNOWN_FORGE` moves | the forge classifier is matching something it should not |
+| any source has `expectedHashAlgo = null` | discovery could not read the algorithm from this Nix's document, and `t01.8` fails rather than verify assuming one |
+| `EXTERNAL_RECOVERY` moves | the new source's origin URL was not read |
+| the two Nix versions disagree on any of the above | the algorithm is carried differently between schemas, which is exactly what this fixture exists to expose |
+
+The last row is the one worth running for. If the versions disagree here, the
+compatibility claim from run 18 was resting on a sample that could not have
+shown a difference.

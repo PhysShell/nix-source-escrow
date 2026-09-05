@@ -210,6 +210,28 @@ allow-import-from-derivation = false" \
             outputName: .outputName,
             storePath: $outPath,
             expectedHash: $o.hash,
+            # The ALGORITHM, read from wherever the document states it, and
+            # null when it states it nowhere. Never inferred, never defaulted.
+            #
+            #   SRI hash  "sha512-…"           -> carries its own
+            #   prefixed  "sha512:…"           -> carries its own
+            #   bare hex  + outputs[].hashAlgo -> the output record states it
+            #   bare hex  + env.outputHashAlgo -> the derivation states it
+            #   bare hex  + nothing            -> null, and verify REFUSES
+            #
+            # `nse_to_sri` used to default a bare digest to sha256. That is
+            # "the store did not answer, assume absent" with better manners:
+            # UNKNOWN promoted to a concrete claim. DESIGN.md §19.
+            expectedHashAlgo: (
+              ($o.hash // "") as $h
+              | if   ($h | test("^[a-z0-9]+-"))  then ($h | split("-")[0])
+                elif ($h | test("^[a-z0-9]+:"))  then ($h | split(":")[0])
+                elif ($o|has("hashAlgo")) and ($o.hashAlgo != null)
+                  then ($o.hashAlgo | sub("^r:";""))
+                else (nse_attr($d;"outputHashAlgo")) as $e
+                     | if ($e|type)=="string" and ($e|length)>0
+                       then ($e | sub("^r:";"")) else null end
+                end),
             hashMode: (if ($o|has("method")) then $o.method else null end),
             origin: {
               urls: $urls,
