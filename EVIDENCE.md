@@ -565,9 +565,9 @@ proves that last check can still fail, by flipping gap-12 back to OPEN.
 | `gap-20` | The acceptance test cannot reach a remote escrow by construction; a proof replica is materialised locally first. | third review |
 | `gap-21` | MODE_UNSUPPORTED has exactly one trigger; buildability of notProvidedPaths is left to the build. | fourth review |
 | `gap-22` | The binary replica's contents are faithful to the named tier; its reachability is still simulated and the replay audit only measures file:// stores. | fourth review |
-| `gap-23` | One added fixed-output source raised OBJECTS_REALISED by two, not the one predicted in DESIGN.md §20. Why is not established. | 2026-09-05 |
 
-**Closed and superseded:** `gap-12`, `gap-13`, `gap-17`, `gap-19`. See
+**Closed and superseded:** `gap-12`, `gap-13`, `gap-17`, `gap-19`, `gap-23`. See
+`known-gaps.json` for what closed each one and where the evidence is.
 `known-gaps.json` for what closed each one and where the evidence is.
 
 ---

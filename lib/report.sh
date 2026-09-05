@@ -189,6 +189,9 @@ nse_report() {
                 "  TIER_CANDIDATES=\(.binaryTier.candidates)  TIER_CLAIMS=\(.binaryTier.present)  MATERIALISED=\(.binaryTier.materializedRoots)" end),
              (if .binaryTier == null then empty else
                 "  CLAIMED_BUT_NOT_MATERIALISED=\(.binaryTier.claimedButNotMaterialized)  PROVIDED_TO_NOBODY=\(.binaryTier.notProvided)" end),
+             (if (.binaryTier // null) == null or ((.binaryTier.copyFailures // []) | length) == 0 then empty else
+                "  TIER_COPY_FAILURES=\((.binaryTier.copyFailures | length)) (what Nix said, verbatim):",
+                (.binaryTier.copyFailures[] | "    \(.path): \(.nixSaid)") end),
              "COMPRESSION=" + (.escrow.compression // "unknown"),
              "FLAKE_INPUTS_PRESERVED=\(.counts.flakeInputsPresent)/\(.counts.flakeInputs)",
              "SOURCES_REQUIRED_BY_PLAN=\(.counts.sourcesRequiredByPlan)",
@@ -208,13 +211,19 @@ nse_report() {
       # Presence of an object and integrity of its NAR are different claims,
       # and conflating them is how an escrow gets reported as verified when it
       # is merely populated.
-      jq -r '"MEASUREMENT_VALIDITY=\(if (.measurementValidity // null) == null then "UNRECORDED (evidence predates DESIGN.md §19)" else "closure readable, expected objects \(.measurementValidity.expectedObjects), observation complete" end)",
-             "OBJECTS_PRESENT=\(.presence.closurePaths - .presence.missing)/\(.presence.closurePaths)",
-             "OBJECTS_NAR_VERIFIED=\(.narIntegrity.pathsChecked)/\(.presence.closurePaths)",
-             "NAR_INTEGRITY_SCOPE=\(.narIntegrity.scope)",
-             "NAR_INTEGRITY=\(.narIntegrity.status)",
-             "CONTENT_IDENTITY_VERIFIED=\(.contentIdentity.verified)",
-             "CONTENT_IDENTITY_MISMATCH=\(.contentIdentity.mismatched)",
+      # A verify that REFUSED has no coverage figures, on purpose. It still has
+      # a record, and the record is the point: NOT_RUN below means nobody ran
+      # it, HARNESS_ERROR here means it ran and would not answer.
+      jq -r '"MEASUREMENT_VALIDITY=\(if (.measurementValidity // null) == null then "UNRECORDED (evidence predates DESIGN.md §19)"
+                                      elif (.measurementValidity.observationComplete | not) then "REFUSED: \(.refusedBecause // "unstated")"
+                                      else "closure readable, expected objects \(.measurementValidity.expectedObjects), observation complete" end)",
+             (if (.presence // null) == null then empty else
+               "OBJECTS_PRESENT=\(.presence.closurePaths - .presence.missing)/\(.presence.closurePaths)",
+               "OBJECTS_NAR_VERIFIED=\(.narIntegrity.pathsChecked)/\(.presence.closurePaths)",
+               "NAR_INTEGRITY_SCOPE=\(.narIntegrity.scope)",
+               "NAR_INTEGRITY=\(.narIntegrity.status)",
+               "CONTENT_IDENTITY_VERIFIED=\(.contentIdentity.verified)",
+               "CONTENT_IDENTITY_MISMATCH=\(.contentIdentity.mismatched)" end),
              "ESCROW_VERIFY=\(.status)"' "$vj"
     else
       printf 'ESCROW_VERIFY=NOT_RUN\n'

@@ -192,7 +192,28 @@ nse_tier_materialise() {
     local p
     while IFS= read -r p; do
       [ -n "$p" ] || continue
-      if nse_nix copy --from "$from" --to "$to_write" "$p" >/dev/null 2>&1; then continue; fi
+      # KEEP THE STDERR. This used to be `>/dev/null 2>&1`, and then the code
+      # announced "a transport, authentication or integrity failure" -- naming
+      # three possibilities after discarding the only line that tells them
+      # apart. Nix says which: a signature refusal reads "lacks a signature by
+      # a trusted key", and that is a POLICY outcome, not an outage. Guessing
+      # between them is the same defect as guessing absence from silence.
+      local errf=$work/tier-copy-error.txt
+      if nse_nix copy --from "$from" --to "$to_write" "$p" >/dev/null 2>"$errf"; then continue; fi
+      local nixsaid; nixsaid=$(tr '\n' ' ' < "$errf" | sed 's/  */ /g' | cut -c1-400)
+      printf '%s\t%s\n' "$p" "$nixsaid" >> "$work/tier-copy-failures.tsv"
+      # Signature refusals are classified, not lumped in with outages. The
+      # tier is reachable and answering; this store is simply not trusted to
+      # supply this object under the current configuration.
+      if printf '%s' "$nixsaid" | grep -qiE 'lacks a signature|untrusted|not trusted|signature'; then
+        nse_die "the binary tier '$from' would not supply $p because Nix refused its
+       signature: $nixsaid
+       That is a TRUST decision, not an absence and not an outage. Supply the
+       corresponding public key (--extra-nix-config 'trusted-public-keys = ...')
+       if this tier is meant to be trusted; this tool will not disable signature
+       checking for an ordinary binary tier on your behalf.
+       SIGNATURE_UNTRUSTED."
+      fi
       # Ask the source again about this one object. THREE outcomes, not two:
       # it still claims to hold it, it has revised its claim, or it did not
       # answer at all. Only the middle one is a legitimate absence.
@@ -208,13 +229,14 @@ nse_tier_materialise() {
       if [ "$probe_rc" -ne 0 ]; then
         nse_die "the binary tier '$from' would not hand over $p and then did not
        answer whether it holds it (observation exit $probe_rc). An unanswered
-       question is not a 'no'. BINARY_TIER_ERROR."
+       question is not a 'no'. Nix said: $nixsaid
+       BINARY_TIER_ERROR."
       fi
       if printf '%s\n' "$reprobe" | grep -qxF "$p"; then
         nse_die "the binary tier '$from' still claims to hold $p but will not hand it over.
-       That is a transport, authentication or integrity failure, not an absence,
-       and recording it as something the tier lacks would turn an outage into a
-       statistic. BINARY_TIER_ERROR."
+       Nix said: $nixsaid
+       That is not an absence, and recording it as something the tier lacks
+       would turn an outage into a statistic. BINARY_TIER_ERROR."
       fi
       printf '%s\n' "$p" >> "$work/tier-revised-absent.txt"
     done < "$work/tier-requested.txt"
@@ -293,6 +315,7 @@ nse_manifest() {
            tier-claimed-not-materialised not-provided-set; do
     [ -f "$work/$f.txt" ] || : > "$work/$f.txt"
   done
+  [ -f "$work/tier-copy-failures.tsv" ] || : > "$work/tier-copy-failures.tsv"
 
   jq -n \
     --slurpfile disc "$disc" \
@@ -308,6 +331,7 @@ nse_manifest() {
     --rawfile tierGap        "$work/tier-claimed-not-materialised.txt" \
     --rawfile replicaSet  "$work/replica-set.txt" \
     --rawfile notProvided "$work/not-provided-set.txt" \
+    --rawfile copyFailures "$work/tier-copy-failures.tsv" \
     --arg compression "${NSE_COMPRESSION:-zstd}" \
     --rawfile present  "$work/escrow-present.txt" \
     --rawfile realised "$work/staging-requisites.txt" \

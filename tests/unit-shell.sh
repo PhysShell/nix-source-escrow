@@ -735,6 +735,41 @@ assert_eq "u20.9 EVIDENCE.md renders exactly the OPEN gaps, nothing stale" \
   "$declared" "$rendered"
 
 # ---------------------------------------------------------------------------
+head_ "u21  a credential is never serialised into an artifact"
+# --extra-nix-config is where a netrc line, a bearer token or an S3 secret
+# arrives. prove.sh wrote it verbatim into work/prove-env.sh with printf %q, and
+# the CI job uploads work/**/*.log and the evidence tree as an artifact. A
+# secret at rest in a build artifact, to make a shell variable convenient.
+#
+# Static half here; t23 does it end to end with a sentinel over the whole
+# uploaded set, because a grep of the real artifact is the only thing that
+# proves it for the paths nobody thought of.
+leak=$(grep -nE 'printf .*NSE_EXTRA_NIX_CONFIG=%q' "$ROOT"/lib/*.sh || :)
+assert_eq "u21.1 the env file never carries the config VALUE" "" "$leak"
+assert_ne "u21.2 it records only that something was supplied" "" \
+  "$(grep -c 'NSE_EXTRA_NIX_CONFIG_PRESENT' "$ROOT/lib/prove.sh")"
+assert_ne "u21.3 the value travels through a file, not the environment record" "" \
+  "$(grep -c 'NSE_EXTRA_NIX_CONFIG_FILE' "$ROOT/lib/prove.sh")"
+assert_ne "u21.4 that file is created under a restrictive umask" "0" \
+  "$(grep -c 'umask 077' "$ROOT/lib/prove.sh")"
+assert_ne "u21.5 and removed however the run ends" "0" \
+  "$(grep -cE "trap .rm -f .\\\$extra_cfg_file" "$ROOT/lib/prove.sh")"
+
+# ---------------------------------------------------------------------------
+head_ "u22  the cost of the strong guarantee is stated as retention, not transfer"
+# The old wording said the strong guarantee "costs a copy of the entire realised
+# closure ... a tax on every dependency bump". A content-addressed store
+# deduplicates, so a bump does not re-copy the closure; a reader who knows that
+# discards the whole section on the strength of one sloppy sentence. The true
+# cost is the durable RETENTION set. This guard exists because the loose phrasing
+# is the natural one to reach for and will come back otherwise.
+revived=$(grep -rniE 'recopies|re-copies|copies (the )?(entire|whole) closure (on|for) every|tax (on|per) every (dependency )?bump' \
+            "$ROOT/README.md" "$ROOT/DESIGN.md" "$ROOT/EVIDENCE.md" || :)
+assert_eq "u22.1 the transfer-cost phrasing has not come back" "" "$revived"
+assert_ne "u22.2 and the retention framing is actually present" "0" \
+  "$(grep -ciE 'retention obligation' "$ROOT/DESIGN.md")"
+
+# ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"
 # A comment may name the old bug; an emitted line may not. Anchoring at the
 # start of a non-comment line is what separates the two.

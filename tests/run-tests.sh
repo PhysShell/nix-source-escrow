@@ -165,6 +165,16 @@ assert_eq "t02.9 closure.json splits escrow from replica" \
 # ---------------------------------------------------------------------------
 head_ "t03  preservation"
 assert_eq "t03.1 every discovered flake input is in the escrow" \
+
+# gap-23: OBJECTS_REALISED rose by two for one added source and was briefly
+# filed as unexplained, while three numbers in the same report explained it.
+# The realised set is `--requisites --include-outputs`, so it contains the .drv
+# files themselves; one new fixed-output source adds its .drv AND its output.
+# Asserted here so a future divergence is a red test, not arithmetic done after
+# the fact. DESIGN.md §20b.
+assert_eq "t03.9 the realised set contains exactly one .drv per discovered derivation" \
+  "true" "$(jq -r --argjson n "$(grep -c '\.drv$' "$ESCROW/work/staging-requisites.txt" || echo 0)" \
+              '.derivationDocument.derivations == $n' "$DISCOVERY")"
   "true" "$(jq -r "([.flakeInputs[]|select(.escrow.present)]|length) == .counts.flakeInputs" "$MANIFEST")"
 assert_eq "t03.2 all plan-required sources preserved" \
   "0" "$(jq -r '.counts.sourcesMissing' "$MANIFEST")"
@@ -861,8 +871,22 @@ assert_eq "t22.3 it never reports 0/0 as coverage" "0" \
   "$(tr '\n' ' ' < "$WORK/blind-verify.log" | grep -coE 'OBJECTS_PRESENT=0/0' || true)"
 assert_eq "t22.4 and never records a PASS built on an empty expected set" "0" \
   "$(tr '\n' ' ' < "$WORK/blind-verify.log" | grep -coE 'ESCROW_VERIFY=PASS' || true)"
-assert_eq "t22.5 no verify evidence is written at all" \
-  "absent" "$([ -f "$BLIND/evidence/verify.json" ] && echo present || echo absent)"
+# INVERTED, and the old assertion was wrong. It required a refusal to leave NO
+# record -- and nse_report prints ESCROW_VERIFY=NOT_RUN when verify.json is
+# absent, so a verify that REFUSED and a verify nobody ran rendered identically.
+# That is this repository's own "MISSING is not EMPTY" one level up, chosen
+# deliberately, which is worse than walking into it. A refusal now records
+# itself and says which prerequisite failed.
+assert_eq "t22.5 the refusal is RECORDED, so it cannot be read as 'never ran'" \
+  "present" "$([ -f "$BLIND/evidence/verify.json" ] && echo present || echo absent)"
+assert_eq "t22.5a and it is HARNESS_ERROR -- neither PASS nor FAIL is about the escrow" \
+  "HARNESS_ERROR" "$(jq -r '.status' "$BLIND/evidence/verify.json" 2>/dev/null)"
+assert_eq "t22.5b naming the prerequisite that was not met" \
+  "closure-unreadable" "$(jq -r '.refusedBecause' "$BLIND/evidence/verify.json" 2>/dev/null)"
+assert_eq "t22.5c with no coverage figures at all, rather than zeroes" \
+  "null" "$(jq -r '.presence | type' "$BLIND/evidence/verify.json" 2>/dev/null)"
+assert_ne "t22.5d and the report distinguishes it from a stage nobody ran" \
+  "1" "$("$NSE" report --escrow-dir "$BLIND" 2>/dev/null | grep -c '^ESCROW_VERIFY=NOT_RUN$' || true)"
 # The same again with a syntactically valid closure that names nothing: an
 # empty expected set is a statement about our reading, not about the escrow.
 EMPTYC=$WORK/empty-closure
@@ -881,6 +905,35 @@ rc=0
 assert_eq "t22.8 positive control: the real escrow still verifies" "0" "$rc"
 assert_ne "t22.9 and reports a non-zero expected set" "0" \
   "$(grep -cE 'ESCROW_OBJECTS_PRESENT=[1-9]' "$WORK/verify-control.log" || true)"
+
+# ---------------------------------------------------------------------------
+head_ "t23  a supplied credential does not survive into the uploaded artifact"
+# The static half is u21. This is the half that matters: a sentinel through the
+# real code path, then a grep over EXACTLY what CI uploads -- evidence/,
+# manifest.json, closure.json, discovery.json and work/**/*.log -- not merely
+# over the files someone remembered to think about.
+SENTINEL="nse-sentinel-$(date +%s)-do-not-leak"
+SECRETDIR=$WORK/secret-run
+rm_store "$SECRETDIR"; mkdir -p "$SECRETDIR"
+rc=0
+NSE_EXTRA_NIX_CONFIG="netrc-file = /dev/null # $SENTINEL" \
+  "$NSE" test-origin-independence "$FIXTURE" --escrow-dir "$SECRETDIR" \
+  --escrow-substituter "file://$ESCROW/cache" >"$WORK/secret-run.log" 2>&1 || rc=$?
+assert_eq "t23.1 the run completes with a credential supplied" "0" "$rc"
+# The uploaded set, listed the same way .github/workflows/evidence-run.yml does.
+found=$(
+  { find "$SECRETDIR/evidence" -type f 2>/dev/null
+    ls -1 "$SECRETDIR"/manifest.json "$SECRETDIR"/closure.json "$SECRETDIR"/discovery.json 2>/dev/null
+    find "$SECRETDIR/work" -name '*.log' -type f 2>/dev/null
+  } | xargs -r grep -l -- "$SENTINEL" 2>/dev/null || true)
+assert_eq "t23.2 the sentinel appears in NOTHING the CI job uploads" "" "$found"
+assert_eq "t23.3 and the evidence records only that a config was supplied" "yes" \
+  "$(grep -oE 'NSE_EXTRA_NIX_CONFIG_PRESENT=[a-z]+' "$SECRETDIR/work/prove-env.sh" 2>/dev/null | cut -d= -f2)"
+assert_eq "t23.4 the 0600 carrier file is gone when the run ends" \
+  "absent" "$([ -f "$SECRETDIR/work/prove-extra-nix-config" ] && echo present || echo absent)"
+# Positive control: the sentinel really was in play, or t23.2 proves nothing.
+assert_ne "t23.5 positive control: the sentinel did reach the run" "0" \
+  "$(grep -c -- "$SENTINEL" "$WORK/secret-run.log" || true)"
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1mRESULT\033[0m  passed=%d failed=%d\n' "$pass" "$fail"

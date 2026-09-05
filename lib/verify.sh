@@ -6,6 +6,36 @@
 # path, so a file:// cache, an S3 bucket and an Attic server are verified by
 # the same code.
 
+# Write a verify.json that says WHY this refused, then die. Called only from
+# the measurement-validity guards, which run before any coverage figure exists.
+#
+#   status              HARNESS_ERROR   never PASS, never FAIL: neither is a
+#                                       statement about the escrow
+#   measurementValidity the prerequisite that was not met, by name
+#
+# A reader who sees ESCROW_VERIFY=HARNESS_ERROR knows a run happened and
+# refused. A reader who sees NOT_RUN knows nothing happened. Before this they
+# saw NOT_RUN either way.
+nse_verify_refuse() {
+  local why=$1 detail=$2 readable=$3 expected=$4
+  jq -n \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg why "$why" --arg detail "$detail" \
+    --argjson readable "$readable" --argjson expected "$expected" \
+    --arg substituter "$NSE_SUBSTITUTER_URL" \
+    --argjson provenance "$(nse_provenance)" \
+    '{schemaVersion:3, kind:"verify", timestamp:$ts, status:"HARNESS_ERROR",
+      provenance:$provenance, substituterUrl:$substituter,
+      refusedBecause:$why, refusalDetail:$detail,
+      measurementValidity:{closureReadable:$readable, expectedObjects:$expected,
+                           observationComplete:false},
+      presence:null, contentIdentity:null, narIntegrity:null,
+      trustComposition:null}' \
+    | nse_json_canonical | nse_write_file "$NSE_DIR/evidence/verify.json"
+  printf 'ESCROW_VERIFY=HARNESS_ERROR\n'
+  nse_die "$detail"
+}
+
 nse_verify() {
   local manifest=$NSE_DIR/manifest.json
   local closure=$NSE_DIR/closure.json
@@ -32,15 +62,24 @@ nse_verify() {
   #
   # Each prerequisite is separate, and each is recorded, so a reader can see
   # WHICH one refused rather than a bare FAIL.
+  #
+  # AND A REFUSAL LEAVES A RECORD. The first version of this died before
+  # writing verify.json, so `nse_report` -- which prints NOT_RUN when the file
+  # is absent -- rendered a verify that REFUSED and a verify that nobody ran as
+  # the same line. That is this repository's own rule one level up: a missing
+  # record is not "did not happen", and losing the distinction on purpose is
+  # worse than losing it by accident. nse_verify_refuse writes the evidence,
+  # then dies.
   local extract_rc=0
   jq -r '(.escrowPaths // .paths)[]' "$closure" | LC_ALL=C sort -u \
     > "$work/verify-escrow-set.txt" || extract_rc=$?
   jq -r '(.replicaPaths // [])[]' "$closure" | LC_ALL=C sort -u \
     > "$work/verify-replica-set.txt" || extract_rc=$((extract_rc + 100))
-  [ "$extract_rc" -eq 0 ] || nse_die "could not extract the expected object set from
-       '$closure' (extraction status $extract_rc). An unreadable manifest is not
-       a manifest describing nothing, so no coverage figure is computed and no
-       object is reported missing. HARNESS_ERROR."
+  [ "$extract_rc" -eq 0 ] || nse_verify_refuse "closure-unreadable" \
+    "could not extract the expected object set from '$closure' (extraction status
+       $extract_rc). An unreadable manifest is not a manifest describing nothing,
+       so no coverage figure is computed and no object is reported missing.
+       HARNESS_ERROR." false null
 
   local n_escrow n_replica total
   n_escrow=$(wc -l < "$work/verify-escrow-set.txt")
@@ -49,10 +88,11 @@ nse_verify() {
 
   # A preserved escrow always describes at least its own realised closure, so
   # zero is never a fact about the escrow -- only about our reading of it.
-  [ "$total" -gt 0 ] || nse_die "the expected object set extracted from '$closure' is
-       EMPTY. A preserved escrow always names at least its own realised closure,
-       so this is a statement about reading the file, not about the escrow.
-       0 of 0 is not 100%. HARNESS_ERROR."
+  [ "$total" -gt 0 ] || nse_verify_refuse "expected-set-empty" \
+    "the expected object set extracted from '$closure' is EMPTY. A preserved
+       escrow always names at least its own realised closure, so this is a
+       statement about reading the file, not about the escrow. 0 of 0 is not
+       100%. HARNESS_ERROR." true 0
 
   nse_log "measurement validity: closure readable, expected objects $total (escrow $n_escrow, replica $n_replica)"
 
@@ -221,8 +261,7 @@ nse_verify() {
       substituterUrl:$substituter,
       binaryReplicaUrl:(if $replica=="" then null else $replica end),
       measurementValidity:{closureReadable:true, expectedObjects:$total,
-                           observationComplete:true,
-                           note:"All three are prerequisites, established before any coverage figure. This block cannot say false: a run that could not satisfy them dies before writing this file, so its ABSENCE is the signal. DESIGN.md 19."},
+                           observationComplete:true},
       presence:{closurePaths:$total, missing:$missing,
                 escrowPaths:$escrowPaths, escrowMissing:$escrowMissing,
                 replicaPaths:$replicaPaths, replicaMissing:$replicaMissing},

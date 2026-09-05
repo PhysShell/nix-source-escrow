@@ -45,10 +45,13 @@ entering the namespace, so "it only broke DNS" is not an available explanation.
 
 `ESCROW_REPLAY` is the default because it is the strongest claim this harness
 can demonstrate — nobody should get the weaker one by accident.
-`SOURCE_ORIGIN_INDEPENDENCE` exists because the strong one costs a copy of the
-entire realised closure (874 objects, 87 MB, for a fixture that consumes four
-sources), which is a tax rather than a gate if you want it on every dependency
-bump. It proves that losing the *source origins* does not break the build, and
+`SOURCE_ORIGIN_INDEPENDENCE` exists because the strong one puts the **entire
+realised closure** — 876 objects, 87 MB, for a fixture that consumes five
+sources — into the set you must **retain durably and be able to audit**, for
+every revision you gate. The cost is a retention obligation, not transfer: a
+content-addressed store deduplicates, so a bump does not re-copy 876 objects,
+and anyone who reads it that way will rightly doubt the rest of the paragraph.
+What grows is the set of objects you have promised to keep. It proves that losing the *source origins* does not break the build, and
 it says out loud, in the report, that it proves nothing about losing the binary
 tier.
 

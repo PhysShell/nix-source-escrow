@@ -20,6 +20,33 @@
   "ciBranch": "claude/ci-run-6a6687c",
   "runs": [
     {
+      "run": 25,
+      "workflowRunId": 33961293080,
+      "measuredCommit": "a1262505dbb31f68bfdcb5b24662e1cc9e556a2a",
+      "kind": "guard tightening + cost regression check",
+      "verdict": "green on both legs",
+      "results": {
+        "nix-2.34.7": {
+          "unitShell": "128/0",
+          "flakeCheck": "pass",
+          "acceptance": "green",
+          "acceptanceDuration": "3m15s"
+        },
+        "nix-2.24.9": {
+          "unitShell": "128/0",
+          "flakeCheck": "pass",
+          "acceptance": "green",
+          "acceptanceDuration": "3m28s"
+        }
+      },
+      "note": [
+        "Two claims: the flattened forbidden-phrase guards are green, and the cost of a",
+        "refusal is back to normal -- 3m15s/3m28s against ~20 minutes in run 22, after",
+        "the consecutive-silence cutoff. Indexed because it carries claims; a",
+        "documentation-only CI execution would not be."
+      ]
+    },
+    {
       "run": 24,
       "workflowRunId": 33960483704,
       "measuredCommit": "e301123f1dcace7a19b6960b8f55913db73b861c",
@@ -430,13 +457,5 @@
     },
     "runIndexPolicy": "Only executions that carry an empirical claim are indexed as runs. A documentation commit still triggers CI; that execution is operational verification, not a new experiment, and is deliberately absent from `runs`. Otherwise the index becomes a graveyard of identical green executions where the numbers grow and the knowledge does not."
   },
-  "openFindings": [
-    {
-      "id": "OBJECTS_REALISED-876",
-      "openedAtRun": 24,
-      "claim": "A single added fixed-output source raised OBJECTS_REALISED by two, not one.",
-      "status": "OPEN",
-      "evidence": "DESIGN.md \u00a720a"
-    }
-  ]
+  "openFindings": []
 }

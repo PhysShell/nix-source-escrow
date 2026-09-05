@@ -556,10 +556,32 @@ hiding the cheap one.
 can demonstrate, and it is what v0.1 already proved. It stays the default so
 nobody gets a weaker result by accident.
 
-**Why the first one exists.** `ESCROW_REPLAY` costs a copy of the entire
-realised closure — 874 objects and 87 MB for a fixture that consumes four
-sources. Running that on every Renovate bump is not a gate, it is a tax. The
-cheap mode escrows only the objects that have an origin to lose. What it proves
+**Why the first one exists.** `ESCROW_REPLAY` places the entire realised
+closure — 876 objects, 87 MB, for a fixture that consumes five sources — into
+the set you must **retain durably and be able to audit** for every revision you
+gate.
+
+State that precisely, because the imprecise version invites a correct
+objection. The cost is a **retention obligation**, not a transfer cost:
+
+```
+network / storage WRITE AMPLIFICATION   !=   long-term PRESERVATION OBLIGATION
+```
+
+A content-addressed store deduplicates by construction, so a dependency bump
+transfers what changed, not the whole closure. The loose phrasing is false, and
+a reader who knows how a CAS works will discard the rest of the section on the
+strength of it. What actually grows with the stronger guarantee is the number of
+objects you have promised to keep alive and answer for.
+
+*(`u22.1` guards this paragraph, and the first draft of it tripped its own
+guard by quoting the wording it rejects — the same defect as `t21.5` one commit
+earlier, §19b. The rule generalises past refusal messages: prose that argues
+against a phrase must not contain the phrase, because no text search can tell
+the two apart.)*
+
+The cheap mode narrows that promise to the objects that have an origin to
+lose. What it proves
 is exactly:
 
 > the disappearance of the source origins does not break this build, because
@@ -1772,3 +1794,40 @@ against 17 minutes 16 seconds in run 22.
 The compatibility conclusion from run 18 rested on a sample that could not have
 shown this difference. It can now, the difference is real, the tool reads both
 forms, and the observables still agree.
+
+### 20b. gap-23 was arithmetic, and the answer was in the same report
+
+Closed. `OBJECTS_REALISED` is `nix-store --query --requisites --include-outputs`
+of the top derivation, and that set **contains the `.drv` files themselves** —
+`t15.13` says so in as many words. One added fixed-output source therefore adds
+**two** store objects:
+
+```
++1   the .drv                     text-CA
++1   its output                   fixed-CA
+---
++2   OBJECTS_REALISED   874 -> 876
+```
+
+Both land in the content-addressed bucket, which is why the same report shows
+`ESCROW_OBJECTS_CONTENT_ADDRESSED` 820 → 822 with `SIGNATURE_ONLY` and
+`UNSIGNED_INPUT_ADDRESSED` unmoved, and `DERIVATION_DOCUMENT` 638 → 639
+derivations. Three numbers, all printed within a few lines of the one that was
+called unexplained, all consistent with +2.
+
+§20 predicted +1 because it forgot that a derivation is itself a store object —
+and predicted the derivation count in the same table without joining the two
+rows. Opening a gap for it was the wrong call twice over: the arithmetic is
+undergraduate, and the evidence was already on the page.
+
+**The rule this earns**, and it is narrower and more useful than "measure, do
+not guess":
+
+> Before opening a finding for an unexplained number, check whether the same
+> report already explains it. A registry that carries open questions with
+> visible answers is a registry nobody will trust to be current.
+
+`t03` now asserts the relationship rather than leaving it to arithmetic done
+after the fact: the count of `.drv` paths in the realised set equals the
+derivation count discovery recorded, so a future divergence between the two is
+a red test rather than a mystery in a table.

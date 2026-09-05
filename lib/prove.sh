@@ -217,6 +217,17 @@ nse_prove() {
   fi
 
   local envf=$work/prove-env.sh
+  # The secret-bearing fragment, if any, in a file only this user can read, and
+  # only for as long as the run needs it.
+  local extra_cfg_file=""
+  if [ -n "${NSE_EXTRA_NIX_CONFIG:-}" ]; then
+    extra_cfg_file=$work/prove-extra-nix-config
+    ( umask 077; printf '%s\n' "$NSE_EXTRA_NIX_CONFIG" > "$extra_cfg_file" )
+    chmod 0600 "$extra_cfg_file"
+    # Removed however this run ends, including on nse_die.
+    # shellcheck disable=SC2064  # expand the path now, not at trap time
+    trap "rm -f '$extra_cfg_file'" EXIT
+  fi
   {
     printf 'NSE_SUBSTITUTERS=%q\n' "$substituters"
     printf 'NSE_ESCROW_SUBSTITUTER=%q\n' "$escrow_proof"
@@ -235,7 +246,15 @@ nse_prove() {
     printf 'NSE_PROBE_IPS=%q\n'    "$(nse_resolve_probe_hosts)"
     printf 'NSE_PWD=%q\n'          "$PWD"
     printf "NSE_TRUSTED_KEYS=%q\n" "${NSE_TRUSTED_KEYS:-cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=}"
-    printf "NSE_EXTRA_NIX_CONFIG=%q\n" "${NSE_EXTRA_NIX_CONFIG:-}"
+    # NOT the value. --extra-nix-config is where a netrc line, a bearer token or
+    # an S3 secret arrives, and this file lives in work/, which the CI job
+    # uploads as an artifact. Serialising a credential into a build artifact to
+    # make a shell variable convenient is not a trade worth making. The evidence
+    # records only that something was supplied; the value reaches the namespace
+    # through a 0600 file that is removed on the way out.
+    printf "NSE_EXTRA_NIX_CONFIG_PRESENT=%q\n" \
+      "$([ -n "${NSE_EXTRA_NIX_CONFIG:-}" ] && echo yes || echo no)"
+    printf "NSE_EXTRA_NIX_CONFIG_FILE=%q\n" "$extra_cfg_file"
     printf "NSE_GUARANTEE_NAME=%q\n" "$(nse_guarantee_name)"
     printf "NSE_ISOLATION_MODE=%q\n" "$([ "${NSE_NO_ISOLATION:-0}" = 1 ] && echo none || echo namespaces)"
   } > "$envf"
@@ -468,7 +487,7 @@ flake-registry =
 warn-dirty = false
 build-users-group =
 require-drop-supplementary-groups = false
-${NSE_EXTRA_NIX_CONFIG:-}
+$([ -n "${NSE_EXTRA_NIX_CONFIG_FILE:-}" ] && [ -r "${NSE_EXTRA_NIX_CONFIG_FILE}" ] && cat "$NSE_EXTRA_NIX_CONFIG_FILE")
 "
 
 cd "$NSE_PWD" || { printf 'prove: cannot cd to %s\n' "$NSE_PWD" >&2; exit 90; }
