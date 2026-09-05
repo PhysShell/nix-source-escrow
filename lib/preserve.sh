@@ -213,8 +213,8 @@ nse_tier_materialise() {
       if printf '%s\n' "$reprobe" | grep -qxF "$p"; then
         nse_die "the binary tier '$from' still claims to hold $p but will not hand it over.
        That is a transport, authentication or integrity failure, not an absence,
-       and relabelling it 'not provided' would turn an outage into a statistic.
-       BINARY_TIER_ERROR."
+       and recording it as something the tier lacks would turn an outage into a
+       statistic. BINARY_TIER_ERROR."
       fi
       printf '%s\n' "$p" >> "$work/tier-revised-absent.txt"
     done < "$work/tier-requested.txt"

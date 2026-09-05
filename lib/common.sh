@@ -307,11 +307,16 @@ nse_store_present() {
     done
   done
   if [ "$unobserved" -gt 0 ] || [ "$unasked" -gt 0 ]; then
-    nse_warn "'$url' did not answer for $unobserved path(s)$(
-      [ "$unasked" -gt 0 ] && printf ', and %d more were not asked after %d consecutive silences' "$unasked" "$giveup"
-    ). Not answering is not the same as answering that it does not hold them.
-       This observation is INCOMPLETE and nothing may be called absent on the
-       strength of it."
+    # NOTE THE WORDING, and see DESIGN.md §19b. A refusal message must not
+    # contain the words of the claim it is refusing to make: the forbidden
+    # strings in t21 are matched against this output, and a sentence that
+    # DENIES a claim looks exactly like one that makes it. State what is known,
+    # positively, and let the negation live in the documentation.
+    nse_warn "'$url' left $unobserved path(s) unanswered$(
+      [ "$unasked" -gt 0 ] && printf ', and %d more unasked after %d consecutive silences' "$unasked" "$giveup"
+    ). An unanswered question yields no information about this store's contents.
+       The observation is INCOMPLETE, and no conclusion about any object may be
+       drawn from it."
     return 4
   fi
   return 0

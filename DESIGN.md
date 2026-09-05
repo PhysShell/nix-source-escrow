@@ -1666,3 +1666,109 @@ asked.
 §16a's question — *what observable trace makes this refuse?* — was answered here
 and the answer was correct. It simply never asked how long the answer takes,
 and a seventeen-minute correct answer is a defect of its own.
+
+### 19b. Instrument seven: a guard that passed because a sentence wrapped
+
+`t21.5` — *never calls anything absent on an unanswered question* — passed in
+run 22 and failed in run 24. The code between them did not change what it
+claims. The **sentence re-flowed**:
+
+```
+run 22   "...which is not the same as answering that it does not
+          hold them."                        grep -c 'does not hold'  ->  0   PASS
+
+run 24   "...is not the same as answering that it does not hold them."
+                                             grep -c 'does not hold'  ->  1   FAIL
+```
+
+A line-oriented grep cannot see a phrase split across a wrap, so the guard
+passed for a reason with no connection to the property. It is the seventh
+instrument in this project capable of passing by accident, and the same family
+as `u14.3` and `t07.9`: a check whose green has a cause other than the thing it
+is checking.
+
+Two corrections, both **tightening**:
+
+* The forbidden-phrase guards flatten the file (`tr '\n' ' '`) before matching,
+  so a wrap cannot hide anything. `t21.4`, `t21.5`, `t22.3`, `t22.4`, `t22.7`.
+* The refusal messages no longer utter the phrases they deny. That is worth
+  stating as a rule on its own, because the grep is deliberately crude and will
+  stay crude:
+
+  > **A refusal message must not contain the words of the claim it is refusing
+  > to make.** A sentence that denies a claim looks, to any text search, exactly
+  > like one that makes it. State what is known, positively; let the negation
+  > live in the documentation.
+
+  `nse_store_present`'s warning now says *"an unanswered question yields no
+  information about this store's contents"* rather than explaining what it is
+  not saying, and `nse_tier_materialise` no longer quotes the label it refuses
+  to apply.
+
+Note which way this was resolved. The tempting repair was to loosen the pattern
+so the denial stops matching; that would have made the guard blind to the real
+thing it exists for. A forbidden-string check should fail on ambiguity and make
+a human look. False positives there are cheap; false negatives are how this
+project lost six months.
+
+### 20a. Verdict on §20, including a miss
+
+Run 24, commit `e301123`, both Nix versions. Every pre-registered move happened,
+every pre-registered non-move held, **and the two versions agree on all of it**:
+
+```
+                              predicted   2.34.7   2.24.9
+FOD_SOURCES                   166         166      166
+COVERED                       164         164      164
+HASH_MODE_FLAT                160         160      160
+HASH_MODE_NAR                 6           6        6
+SOURCES_REQUIRED_BY_PLAN      5           5        5
+SOURCES_PRESERVED             5           5        5
+CONTENT_IDENTITY_VERIFIED     5           5        5
+EXTERNAL_RECOVERY             2           2        2
+WITH_POSTFETCH                3           3        3
+ON_KNOWN_FORGE                38          38       38
+FLAKE_INPUTS                  4           4        4
+derivations                   639         639      639
+closureSha256                 changes     7f141ef1…  7f141ef1…  (identical)
+t10.1 shared-URL sources      three       three    three
+OBJECTS_REALISED              875         876      876      <- MISS
+```
+
+**The miss is recorded as a miss.** `OBJECTS_REALISED` was predicted to rise by
+one and rose by two. One new fixed-output source added two paths to the realised
+closure, and *why* is not established — writing a plausible mechanism here would
+be exactly the move §17 forbids. It is a small, bounded discrepancy in a number
+that was expected to move at all, and it is open.
+
+**What the fixture bought.** The probe answers the question it was added for,
+and the two schemas do differ:
+
+```
+2.34.7   outputs.out = { hash: "sha256-SaVxnAzFoHLjT/95…", method }
+                        SRI: the algorithm is IN the hash, hashAlgo absent
+
+2.24.9   outputs.out = { hash: "49a5719c0cc5a072e34fff79…",
+                         hashAlgo: "sha256", method, path }
+                        bare hex: the algorithm is a SEPARATE key
+```
+
+So on 2.24.9 `expectedHash` was a bare digest with no algorithm recorded
+anywhere the code looked, and `nse_to_sri` supplied `sha256` from its default.
+For the sha256 sources that guess was accidentally right, which is why nothing
+ever noticed. **A sha512 source on 2.24.9 is a 128-character hex digest that the
+old code would have handed to `nix hash convert --hash-algo sha256`.** The
+fixture that could have exposed this did not exist until this commit, and the
+fix landed one commit before it would have bitten.
+
+`env.outputHashAlgo` is *empty* for one of the two sampled derivations on both
+versions, so the `env` fallback alone would not have covered it —
+`outputs[].hashAlgo` is the load-bearing source on 2.24.9. Both probes report
+`fixed-output derivations whose algorithm is stated NOWHERE we look: 0`.
+
+**And the cut-off works.** `t21.1` 10:25:40 → `t21.2` 10:26:18: **38 seconds**,
+against 17 minutes 16 seconds in run 22.
+
+The compatibility conclusion from run 18 rested on a sample that could not have
+shown this difference. It can now, the difference is real, the tool reads both
+forms, and the observables still agree.

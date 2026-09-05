@@ -129,9 +129,9 @@ assert_eq "t01.7 origin-less bootstrap FODs classified EXTERNAL_RECOVERY, not UN
 # is what makes verify guess -- and verify no longer guesses, so a null becomes
 # a hard stop at content-identity time. Better to fail on the real data, by
 # name, in discovery. DESIGN.md §19, §20.
-assert_eq "t01.8 every discovered source records the hash algorithm, none assumed" \
+assert_eq "t01.10 every discovered source records the hash algorithm, none assumed" \
   "0" "$(jq -r '[.sources[] | select(.expectedHash != null and .expectedHashAlgo == null)] | length' "$DISCOVERY")"
-assert_ne "t01.9 and at least one of them is NOT sha256, so the fixture can expose a difference" \
+assert_ne "t01.11 and at least one of them is NOT sha256, so the fixture can expose a difference" \
   "0" "$(jq -r '[.sources[] | select(.expectedHashAlgo != null and .expectedHashAlgo != "sha256")] | length' "$DISCOVERY")"
 
 assert_eq "t01.8 IFD probe ran and reports a definite answer" \
@@ -815,12 +815,22 @@ else
     assert_ne "t21.2 the run refuses rather than reporting a coverage figure" "0" "$rc"
     assert_ne "t21.3 and says the observation failed, naming the store" "0" \
       "$(grep -cE 'OBSERVATION_ERROR|BINARY_TIER_ERROR' "$WORK/dead-run.log" || true)"
-    # THE FORBIDDEN LINES. Fixing the exit code alone satisfies none of these:
+    # THE FORBIDDEN PHRASES. Fixing the exit code alone satisfies none of these:
     # a report that blames the wrong suspect is still wrong.
+    #
+    # FLATTENED before matching, and that is not cosmetic. In run 22 this test
+    # passed because the message wrapped as "...it does not\n hold them...", so
+    # a line-oriented grep found nothing. It passed for a reason that had
+    # nothing to do with the property, and the next commit -- which only
+    # re-flowed the sentence -- turned it red. A guard whose verdict depends on
+    # where a sentence wraps is a guard that can pass by accident, which is the
+    # seventh instrument in this project able to do that. Matching the whole
+    # stream makes it STRICTER, never looser. DESIGN.md §19b.
+    flat() { tr '\n' ' ' < "$1"; }
     assert_eq "t21.4 it never reports the tier as holding 0 of N" "0" \
-      "$(grep -cE 'claims to hold 0 of|present 0/|provided 0 of|holds 0 of' "$WORK/dead-run.log" || true)"
+      "$(flat "$WORK/dead-run.log" | grep -coE 'claims to hold 0 of|present 0/|provided 0 of|holds 0 of' || true)"
     assert_eq "t21.5 and never calls anything absent on an unanswered question" "0" \
-      "$(grep -ciE 'not provided|revised absent|does not hold' "$WORK/dead-run.log" || true)"
+      "$(flat "$WORK/dead-run.log" | grep -coiE 'not provided|revised absent|does not hold' || true)"
     assert_eq "t21.6 no manifest is written from an observation that did not complete" \
       "absent" "$([ -f "$DEADDIR/manifest.json" ] && echo present || echo absent)"
   fi
@@ -846,10 +856,11 @@ rc=0
 assert_ne "t22.1 verify refuses when it cannot read the expected set" "0" "$rc"
 assert_ne "t22.2 and names the file it could not read" "0" \
   "$(grep -c 'closure.json' "$WORK/blind-verify.log" || true)"
+# Flattened, for the reason given at t21.4.
 assert_eq "t22.3 it never reports 0/0 as coverage" "0" \
-  "$(grep -c 'OBJECTS_PRESENT=0/0' "$WORK/blind-verify.log" || true)"
+  "$(tr '\n' ' ' < "$WORK/blind-verify.log" | grep -coE 'OBJECTS_PRESENT=0/0' || true)"
 assert_eq "t22.4 and never records a PASS built on an empty expected set" "0" \
-  "$(grep -c 'ESCROW_VERIFY=PASS' "$WORK/blind-verify.log" || true)"
+  "$(tr '\n' ' ' < "$WORK/blind-verify.log" | grep -coE 'ESCROW_VERIFY=PASS' || true)"
 assert_eq "t22.5 no verify evidence is written at all" \
   "absent" "$([ -f "$BLIND/evidence/verify.json" ] && echo present || echo absent)"
 # The same again with a syntactically valid closure that names nothing: an
@@ -862,7 +873,7 @@ rc=0
 "$NSE" verify "$FIXTURE" --escrow-dir "$EMPTYC" >"$WORK/empty-closure.log" 2>&1 || rc=$?
 assert_ne "t22.6 an expected set of zero objects is refused, not passed" "0" "$rc"
 assert_eq "t22.7 0 of 0 is never reported as 100%" "0" \
-  "$(grep -c 'ESCROW_VERIFY=PASS' "$WORK/empty-closure.log" || true)"
+  "$(tr '\n' ' ' < "$WORK/empty-closure.log" | grep -coE 'ESCROW_VERIFY=PASS' || true)"
 # And the positive control: the real escrow still verifies, so t22 is not
 # passing because verify refuses everything.
 rc=0
