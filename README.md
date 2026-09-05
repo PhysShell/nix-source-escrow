@@ -48,12 +48,17 @@ can demonstrate — nobody should get the weaker one by accident.
 `SOURCE_ORIGIN_INDEPENDENCE` exists because the strong one puts the **entire
 realised closure** — 876 objects, 87 MB, for a fixture that consumes five
 sources — into the set you must **retain durably and be able to audit**, for
-every revision you gate. The cost is a retention obligation, not transfer: a
-content-addressed store deduplicates, so a bump does not re-copy 876 objects,
-and anyone who reads it that way will rightly doubt the rest of the paragraph.
-What grows is the set of objects you have promised to keep. It proves that losing the *source origins* does not break the build, and
-it says out loud, in the report, that it proves nothing about losing the binary
-tier.
+every revision you gate.
+
+**The cost is a retention obligation.** What grows with each gated revision is
+the set of objects you have promised to keep available and to be able to audit;
+the storage a content-addressed store actually consumes grows only by what is
+genuinely new. Write amplification and preservation obligation are different
+quantities, and it is the second one that makes this guarantee expensive.
+
+The weaker guarantee proves that losing the *source origins* does not break the
+build, and it says out loud, in the report, that it proves nothing about losing
+the binary tier.
 
 Its prebuilt objects are copied **from the approved tier you name**, never from
 whatever this machine happened to build — otherwise the evidence would claim
@@ -70,6 +75,41 @@ prebuilt binaries that originally came from `cache.nixos.org` with its
 signatures. A green `ESCROW_REPLAY` does not imply it, and this repo never says
 it does. It also needs signing, for a reason that was measured rather than
 assumed — `DESIGN.md` §4 and §9.
+
+## What is proven, and what is not
+
+The evidentiary contour is **closed for the envelope that was investigated**:
+
+> Within the locally-replicated escrow envelope, the evidentiary contour is
+> qualified and closed. The outstanding work belongs to **new envelopes**:
+> authenticated remote storage, archival availability, and selective network
+> reachability.
+
+A real authenticated Attic or S3 tier, selective egress, and Software Heritage
+archival coverage are **not** measured here, and are not backlog items of this
+experiment — each introduces an object of study the present evidence has never
+had to attribute a failure to. `DESIGN.md` §22 and `EXPERIMENT-PROTOCOL.md` §7c
+say why that distinction is load-bearing rather than pedantic.
+
+**The tested envelope has two axes, and both of them bound the result:**
+
+```
+TOPOLOGY   a locally-replicated escrow: file:// and a throwaway local HTTP
+           cache. No authenticated remote backend, no credential over a
+           network, no selective egress -- the blackout is all-or-nothing.
+PLATFORM   x86_64-linux, Nix 2.24.9 and 2.34.7, GitHub Actions ubuntu-latest,
+           this repository's own fixture flake.
+```
+
+Quoting one axis without the other is how a result like this gets overstated.
+"Works on two Nix versions" says nothing about the topology; "works from an
+escrow" says nothing about which Nix.
+
+Read the result together with the **tested envelope** and the **OPEN gaps** in
+[`EVIDENCE.md`](EVIDENCE.md) and [`known-gaps.json`](known-gaps.json). Presented
+that way it can be handed to an auditor honestly: what is proven, how each check
+could have gone red, where it actually went red, which Nix versions and platform
+it was measured on, and what is deliberately not proven.
 
 ## Where the escrow lives
 
@@ -133,9 +173,11 @@ Not built, on purpose:
 
 ## The part of this that is not about Nix
 
-Thirty-four runs produced defects in the implementation, **more in the
+This project's CI runs produced defects in the implementation, **more in the
 instruments meant to catch them**, and one sampling design that refuted a
-correct hypothesis. A test that asserted `0 == 0` about a command that never
+correct hypothesis. The count is deliberately not written here: a number
+maintained by hand in prose goes stale, which is a defect this repository has
+now fixed twice. `evidence-runs.json` owns it. A test that asserted `0 == 0` about a command that never
 ran. A probe whose own invocation determined its answer. An assertion that
 could pass only while the code under it was fail-open. A fixture in a shape the
 real tool never emits.
@@ -153,27 +195,6 @@ them cost five runs: a fixture that arrived carrying a signature by a key
 everyone trusts, a suite that died because a `grep` found nothing, and a refusal
 branch that turned out to be unreachable because the destination was a binary
 cache and binary caches do not verify.
-
-## What is proven, and what is not
-
-The evidentiary contour is **closed for the envelope that was investigated**:
-
-> Within the locally-replicated escrow envelope, the evidentiary contour is
-> qualified and closed. The outstanding work belongs to **new envelopes**:
-> authenticated remote storage, archival availability, and selective network
-> reachability.
-
-A real authenticated Attic or S3 tier, selective egress, and Software Heritage
-archival coverage are **not** measured here, and are not backlog items of this
-experiment — each introduces an object of study the present evidence has never
-had to attribute a failure to. `DESIGN.md` §22 and `EXPERIMENT-PROTOCOL.md` §7c
-say why that distinction is load-bearing rather than pedantic.
-
-Read the result together with the **tested envelope** and the **OPEN gaps** in
-[`EVIDENCE.md`](EVIDENCE.md) and [`known-gaps.json`](known-gaps.json). Presented
-that way it can be handed to an auditor honestly: what is proven, how each check
-could have gone red, where it actually went red, which Nix versions and platform
-it was measured on, and what is deliberately not proven.
 
 ## Architecture
 

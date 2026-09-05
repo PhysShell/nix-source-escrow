@@ -46,7 +46,7 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 > | 11 | all steps green | all steps green | **144 / 0 and 144 / 0** — the first run green everywhere, and the pre-removal reference every later observable is compared against |
 > | 15 | 143 / 1 | 143 / 1 | the **removal** run (`913df97`). Every pre-registered observable unchanged from run 11, `closureSha256` included. The one failure is `t07.9`, which asserted `.restoreExit == 0` — the exit code of a `nix copy` the default path never ran. `DESIGN.md` §17b |
 > | 17 | 144 / 1 | 144 / 1 | the repair (`102d5a1`). Observables still unchanged. The repaired `t07.9a` asserted all four flake inputs are in the test store; the answer is **2 of 4**, and the assertion was the thing that was wrong. `DESIGN.md` §17c |
-> | **18** | **146 / 0** | **146 / 0** | `a4f07ea`. Minimization closed: both workarounds deleted, every pre-registered observable equal to run 11's, and both versions report the same two locked inputs present after the build. **The canonical result below** |
+> | **18** | **146 / 0** | **146 / 0** | `a4f07ea`. Minimization closed: both workarounds deleted, every pre-registered observable equal to run 11's, and both versions report the same two locked inputs present after the build. **The removal validation below** — not the current state |
 >
 > The nine are `t01.3`, `t01.4`, `t01.7` and all of `t10` — every one an
 > assertion about an origin URL, a hash mode or a `postFetch`. On 2.24.9
@@ -90,7 +90,58 @@ nix-source-escrow escrow "path:$PWD/fixture#default"
 
 ---
 
-## Result (canonical): run 18, commit `a4f07ea`, 2026-09-04
+## Result (canonical current state): run 34, commit `10dd7fa`, 2026-09-05
+
+GitHub Actions `ubuntu-latest`, a matrix over Nix **2.34.7** and **2.24.9**,
+cold. This block is rendered from `evidence-runs.json` → `canonicalCurrentRun`
+and `u28` fails if the two disagree.
+
+| | 2.34.7 | 2.24.9 |
+|---|---|---|
+| `tests/unit-shell.sh` | 161 / 0 | 161 / 0 |
+| `nix flake check` (shellcheck) | pass | pass |
+| `tests/run-tests.sh` (`t00`–`t24`) | **198 / 0** | **198 / 0** |
+
+```
+FOD_SOURCES=166
+SOURCES_REQUIRED_BY_PLAN=5
+OBJECTS_REALISED=876
+DERIVATIONS=639
+ORIGIN_INDEPENDENCE=PASS
+ESCROW_VERIFY=PASS
+closureSha256=7f141ef13672adf93a9a23dc3bddbbbd47bf6fd39038cf60a3c338f5d9ccecb2
+```
+
+Both legs agree on every substantive observable. The only difference either
+report shows is a fact about Nix rather than about the escrow:
+`DERIVATION_DOCUMENT=envelope v4` on 2.34.7 against `flat-map vabsent` on
+2.24.9, over the same 639 derivations.
+
+**Artifacts.** A matrix run uploads two artifacts *both named* `evidence`, so
+the name is not an identifier. Bound to their legs by the uploading job's own
+log line, with `evidence-runs.json` → `runs[run=34].artifacts` carrying the
+digests:
+
+| Nix | job | artifact id | zip sha256 |
+|---|---:|---:|---|
+| 2.34.7 | `101318389508` | `9970904344` | `a4870c9b…2329` |
+| 2.24.9 | `101318389729` | `9970919996` | `4fbdb38d…4352` |
+
+The raw Actions ZIPs are deliberately not committed: they carry working logs
+well past the canonical evidence, and a repository is a poor place to give a log
+dump permanent retention. They expire 2026-09-19.
+
+---
+
+## Result (removal validation): run 18, commit `a4f07ea`, 2026-09-04
+
+> **This is not the current state.** It is the evidence that deleting the two
+> workarounds preserved every pre-registered observable. Its numbers describe a
+> fixture two changes ago — 165 sources, 638 derivations, 874 objects — and are
+> kept unchanged on purpose, because a removal validation that gets edited to
+> match later fixtures stops being one. For what the tool and fixture do **now**,
+> see *Result (canonical current state)* above.
+
 
 GitHub Actions, `ubuntu-latest`, a matrix over Nix **2.34.7** and **2.24.9**.
 Cold: no `NSE_TEST_REUSE`, `escrow/` created from nothing, staging store empty,
@@ -392,13 +443,16 @@ refuse.
 
 ## Automated tests
 
-`./tests/unit-shell.sh` — **102/102 passed**, on both Nix versions in run 11
-(it needs no Nix; it runs on the matrix anyway because it is free).
+Counts are **not repeated here.** They are owned by
+`evidence-runs.json` → `canonicalCurrentRun`, rendered once in *Result
+(canonical current state)* above, and checked against it by `u28`. Two places
+holding the same number is how this section came to advertise unit and
+acceptance totals from runs 11 and 18 while the suite had grown by roughly fifty
+assertions underneath them.
 
-`nix develop -c ./tests/run-tests.sh` — **146/146 passed on Nix 2.34.7 and
-146/146 on Nix 2.24.9**, cold, in run 18 (`a4f07ea`), the post-minimization
-state. `t20` joined the suite in run 8; `t07.9a`/`t07.9b` replaced a vacuous
-`t07.9` in run 18 (`DESIGN.md` §17b, §17c).
+`./tests/unit-shell.sh` needs no Nix; it runs on the matrix anyway because it is
+free. `nix develop -c ./tests/run-tests.sh` is the acceptance suite and is run
+cold, with no `NSE_TEST_REUSE`. What each group pins down:
 
 | group | what it pins down |
 |---|---|

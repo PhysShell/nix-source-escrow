@@ -687,6 +687,22 @@ assert_eq "u20.4 every gap records when it was opened" \
 assert_eq "u20.5 a CLOSED gap names the commit that closed it and its evidence" \
   "0" "$(jq -r '[.gaps[] | select(.status == "CLOSED")
                 | select((.closedBy // "") == "" or (.evidenceRef // "") == "")] | length' "$GAPS")"
+# AND THE COMMIT IS A COMMIT. gap-23 sat CLOSED with closedBy = "(this commit)"
+# for four commits: a placeholder written because a commit cannot name its own
+# hash, and then never resolved. Non-empty was passing for identified.
+assert_eq "u20.5a and closedBy is a full 40-hex commit id, not a placeholder" "0" \
+  "$(jq -r '[.gaps[] | select(.status == "CLOSED")
+             | select((.closedBy // "") | test("^[0-9a-f]{40}$") | not)] | length' "$GAPS")"
+assert_eq "u20.5b same for supersededBy where it names a commit" "0" \
+  "$(jq -r '[.gaps[] | select((.supersededByCommit // "") != "")
+             | select((.supersededByCommit) | test("^[0-9a-f]{40}$") | not)] | length' "$GAPS")"
+# The guard has been driven red, on the exact string that got past the old one.
+assert_ne "u20.5c positive control: the placeholder string is rejected" "0" \
+  "$(jq -n '[{id:"x",status:"CLOSED",closedBy:"(this commit)",evidenceRef:"y"}]
+            | [.[] | select((.closedBy // "") | test("^[0-9a-f]{40}$") | not)] | length')"
+assert_eq "u20.5d and a real sha is accepted" "0" \
+  "$(jq -n '[{id:"x",status:"CLOSED",closedBy:"0d4ae1e68e7a3e706cf7586fbeedbb7399875513",evidenceRef:"y"}]
+            | [.[] | select((.closedBy // "") | test("^[0-9a-f]{40}$") | not)] | length')"
 assert_eq "u20.6 a SUPERSEDED gap names its successor, and that successor exists" \
   "0" "$(jq -r '([.gaps[].id]) as $ids
                 | [.gaps[] | select(.status == "SUPERSEDED") as $g
@@ -768,15 +784,28 @@ assert_eq "u21.8 the refusal never prints the fragment" "0" \
 
 # ---------------------------------------------------------------------------
 head_ "u22  the cost of the strong guarantee is stated as retention, not transfer"
-# The old wording said the strong guarantee "costs a copy of the entire realised
-# closure ... a tax on every dependency bump". A content-addressed store
-# deduplicates, so a bump does not re-copy the closure; a reader who knows that
-# discards the whole section on the strength of one sloppy sentence. The true
-# cost is the durable RETENTION set. This guard exists because the loose phrasing
-# is the natural one to reach for and will come back otherwise.
-revived=$(grep -rniE 'recopies|re-copies|copies (the )?(entire|whole) closure (on|for) every|tax (on|per) every (dependency )?bump' \
-            "$ROOT/README.md" "$ROOT/DESIGN.md" "$ROOT/EVIDENCE.md" || :)
+# The old wording described the strong guarantee's cost in TRANSFER terms. A
+# content-addressed store deduplicates, so that framing is false, and a reader
+# who knows it discards the section on the strength of one sloppy sentence. The
+# true cost is the durable RETENTION set.
+#
+# The guard's regex is deliberately broad, and this comment is deliberately
+# written without the forbidden forms in it: prose that argues against a phrase
+# must not contain the phrase, because no text search can tell the two apart.
+# The first draft of the README paragraph tripped this guard by quoting the
+# wording it was rejecting, and so did an earlier version of this comment.
+revived=$( { grep -rniE '\bre-?cop(y|ies|ied|ying)\b|copies (the )?(entire|whole) closure (on|for) every|tax (on|per) every' \
+            "$ROOT/README.md" "$ROOT/DESIGN.md" "$ROOT/EVIDENCE.md" || :; } | grep -v 'EXPERIMENT-PROTOCOL' || :)
 assert_eq "u22.1 the transfer-cost phrasing has not come back" "" "$revived"
+# Driven red on each form, because the previous regex missed the hyphenless
+# singular -- README carried it for four commits inside a sentence denying it.
+assert_ne "u22.1a positive control: every inflection is caught" "0" \
+  "$(printf '%s\n' 'a bump does not recopy them' 'does not re-copy 876 objects' \
+       'it recopies the set' 'a tax on every bump' \
+     | grep -ciE '\bre-?cop(y|ies|ied|ying)\b|tax (on|per) every' || true)"
+assert_eq "u22.1b and ordinary prose is not" "0" \
+  "$(printf '%s\n' 'the retention obligation grows' 'copies of the manifest' \
+     | grep -ciE '\bre-?cop(y|ies|ied|ying)\b|tax (on|per) every' || true)"
 assert_ne "u22.2 and the retention framing is actually present" "0" \
   "$(grep -ciE 'retention obligation' "$ROOT/DESIGN.md")"
 
@@ -918,6 +947,125 @@ else
   rm -rf "$sc_tmp"
   assert_ne "u26.2 positive control: it really does report findings" "0" "$sc_bad"
 fi
+
+# ---------------------------------------------------------------------------
+head_ "u28  the canonical block in EVIDENCE.md is rendered, not remembered"
+# EVIDENCE.md called run 18 "Result (canonical)" for four commits after the
+# fixture had moved twice underneath it -- 165 sources, 638 derivations, 874
+# objects, closure 9243083e, all superseded, all still presented as the current
+# state. The run index knew better the whole time. Prose and structured data
+# disagreed and nothing could tell.
+#
+# The authority is evidence-runs.json -> canonicalCurrentRun. This check reads
+# each number out of the rendered block and requires it to equal the index.
+IDX=$ROOT/evidence-runs.json
+canon_block=$(awk '/^## Result \(canonical current state\)/{f=1} f{print} f&&/^---$/{exit}' \
+                "$ROOT/EVIDENCE.md")
+assert_ne "u28.1 the canonical current-state block exists" "" "$canon_block"
+
+# THE PREDICATE, and it had to be written twice. The first version used
+# `.value.acceptance // ""` for the type test and then handed the RAW value to
+# test(): with acceptance null, `//` yields "" for the type check but test() is
+# given the null and ERRORS. The substitution collapsed to empty, assert_eq
+# "" "" passed, and the check was green because it was broken. Third appearance
+# of that shape here (u14.3, u20.8), so the jq now runs with its stderr captured
+# and an errored checker is a failed checker.
+#
+# The rule it enforces: an acceptance count is an exact N/M or it is null, never
+# an adjective. "green" looks like a value and is not one -- five legs carried
+# it. null plus acceptanceJobConclusion says the same thing while staying
+# distinguishable from a measurement. MISSING-is-not-EMPTY, applied to the index.
+# shellcheck disable=SC2016  # a jq program, not a shell expansion
+adj_pred='[.runs[] | select(.results != null) | .run as $r
+           | (.results | to_entries[])
+           | select((.value.acceptance | type) == "string")
+           | select((.value.acceptance) | test("^[0-9]+/[0-9]+$") | not)
+           | "run \($r) leg \(.key)"] | join(", ")'
+adjectives=$(jq -r "$adj_pred" "$IDX" 2>"$TMP/u28-adj.err")
+assert_eq "u28.10 the adjective check itself did not error" "" "$(cat "$TMP/u28-adj.err")"
+assert_eq "u28.10a no indexed run states a count as an adjective" "" "$adjectives"
+# Three controls, because this predicate separates three cases and the first
+# attempt got two of them wrong.
+# shellcheck disable=SC2016  # a jq program, not a shell expansion
+ctl='[.[] | .run as $r | (.results | to_entries[])
+      | select((.value.acceptance | type) == "string")
+      | select((.value.acceptance) | test("^[0-9]+/[0-9]+$") | not)] | length'
+assert_ne "u28.10b positive control: an adjective IS caught" "0" \
+  "$(jq -n "[{run:1,results:{leg:{acceptance:\"green\"}}}] | $ctl")"
+assert_eq "u28.10c a null is NOT caught, because null is not a claim" "0" \
+  "$(jq -n "[{run:1,results:{leg:{acceptance:null}}}] | $ctl")"
+assert_eq "u28.10d and an exact count is not caught either" "0" \
+  "$(jq -n "[{run:1,results:{leg:{acceptance:\"198/0\"}}}] | $ctl")"
+# A null must not become a way of saying nothing: it carries what WAS verified.
+assert_eq "u28.10e a null acceptance records WHY there is no count" "" \
+  "$(jq -r '[.runs[] | select(.results != null) | .run as $r
+             | (.results | to_entries[])
+             | select(.value | has("acceptance"))
+             | select((.value.acceptance | type) == "null")
+             | select((.value.acceptanceOutcome // "") == "")
+             | "run \($r) leg \(.key)"] | join(", ")' "$IDX")"
+
+# ---------------------------------------------------------------------------
+head_ "u29  the removal-validation block does not claim to be the current state"
+# Run 18 is evidence about a REMOVAL. Its numbers describe a fixture two changes
+# ago and must stay that way; what it must not do is present itself as a
+# description of the present, which is exactly what "Result (canonical)" did.
+rv=$(awk '/^## Result \(removal validation\)/{f=1} f{print} f&&/^## /&&!/removal validation/{exit}' \
+       "$ROOT/EVIDENCE.md" | head -20)
+assert_ne "u29.1 the removal-validation block says it is not the current state" "0" \
+  "$(printf '%s\n' "$rv" | tr '\n' ' ' | grep -ci 'not the current state' || true)"
+assert_eq "u29.2 and no heading calls a run canonical without saying which sense" "" \
+  "$(grep -nE '^## Result \(canonical\):' "$ROOT/EVIDENCE.md" || true)"
+
+# ---------------------------------------------------------------------------
+head_ "u30  the envelope disclosure is where a reader meets it, not where it fits"
+# The disclosure existed and sat below the Guarantees table, "Where the escrow
+# lives", Non-goals and a section of experimental history. A reader who stops
+# after the guarantees -- which is most readers -- got the strong claim and none
+# of its bounds. Position is part of a disclosure; a caveat nobody reaches is
+# not a caveat, and no amount of correct wording fixes being on screen four.
+readme=$ROOT/README.md
+assert_ne "u30.1 the disclosure section exists" "0" \
+  "$(grep -c '^## What is proven, and what is not' "$readme" || true)"
+# Both axes of the envelope, because quoting one without the other overstates
+# the result in a way that reads as modest.
+disc=$(awk '/^## What is proven, and what is not/{f=1} f{print} f&&/^## /&&!/What is proven/{exit}' "$readme")
+assert_ne "u30.3 the disclosure names the TOPOLOGY axis" "0" \
+  "$(printf '%s\n' "$disc" | grep -ci 'locally-replicated' || true)"
+assert_ne "u30.4 and the PLATFORM axis" "0" \
+  "$(printf '%s\n' "$disc" | grep -c 'x86_64-linux' || true)"
+assert_ne "u30.5 and says what is NOT measured" "0" \
+  "$(printf '%s\n' "$disc" | tr '\n' ' ' | grep -ci 'no authenticated remote backend' || true)"
+# Red control: the position check must fail when a section is interposed.
+printf '%s\n' '## Guarantees' 'text' '## Something Else' 'text' \
+  '## What is proven, and what is not' > "$TMP/u30.md"
+# One awk pass, no assignment reading from a grep -- u25 flagged the first
+# version of this control on the same run it was written.
+count_between() {  # $1 file: sections strictly between Guarantees and the disclosure
+  awk '/^## Guarantees/{f=1; next}
+       /^## What is proven, and what is not/{print c; exit}
+       f&&/^## /{c++}' "$1"
+}
+assert_ne "u30.6 positive control: an interposed section is counted" "0" \
+  "$(count_between "$TMP/u30.md")"
+assert_eq "u30.6a and the real README has none between them" "" \
+  "$(count_between "$readme")"
+# No hand-maintained run count in the prose: it goes stale, and this file
+# carried "Thirty-four runs" past run 35.
+# Counts belong to the index, in the one block u28 renders. A count written
+# anywhere else in EVIDENCE.md outside the historical run table and the
+# removal-validation block is a second owner waiting to drift.
+assert_eq "u30.8 no stale unit/acceptance totals in the prose sections" "" \
+  "$(awk '/^## Automated tests/{f=1} f{print} f&&/^## /&&!/Automated tests/{exit}' \
+       "$ROOT/EVIDENCE.md" | grep -nE '[0-9]{2,}/[0-9]{2,}' || true)"
+assert_ne "u30.8a positive control: such a total would be caught" "0" \
+  "$(printf '%s\n' 'unit-shell 102/102 passed' | grep -cE '[0-9]{2,}/[0-9]{2,}' || true)"
+assert_eq "u30.7 no hand-written run count in README prose" "" \
+  "$(grep -nE '\b(Eighteen|Twenty|Thirty|Forty)[- ]?(one|two|three|four|five|six|seven|eight|nine)? runs\b' \
+       "$readme" || true)"
+assert_ne "u30.7a positive control: such a count would be caught" "0" \
+  "$(printf '%s\n' 'Thirty-four runs produced defects' \
+     | grep -cE '\b(Eighteen|Twenty|Thirty|Forty)[- ]?(one|two|three|four|five|six|seven|eight|nine)? runs\b' || true)"
 
 # ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"

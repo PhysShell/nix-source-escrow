@@ -2429,3 +2429,76 @@ Not run 36. A question:
 
 Until one of those exists, with its own pre-registration and its own red traces
 described in advance, this branch should not be pushed further.
+
+### 22a. Six accounting repairs found after the line was closed
+
+Closing an envelope is not the same as the record being correct, and a review of
+the closed state found six things wrong with the record itself. None changes a
+measurement; all of them change what a reader or a checker would conclude.
+
+**1. `EVIDENCE.md` described a superseded fixture as the current state.** Run 18
+was headed *Result (canonical)* for four commits after the fixture moved twice
+underneath it — 165 sources, 638 derivations, 874 objects, closure `9243083e…`,
+all superseded, all presented as what the tool does now. The run index knew
+better the whole time; prose and structured data disagreed and nothing could
+tell. Three ideas were sharing one word, so they now have three names:
+`canonicalCurrentRun` (34 — what it does now), `postMinimizationCanonicalRun`
+(18 — the removal validation), `preRemovalReferenceRun` (11). `u28` renders the
+first and fails if the document and the index disagree; `u29` requires the
+removal-validation block to say it is not the current state.
+
+**2. A machine-checked registry contained `"closedBy": "(this commit)"`.** A
+placeholder, written because a commit cannot name its own hash, that passed
+`u20.5` because the check asked whether the field was *non-empty*. Presence
+checks accept placeholders. `u20.5a` now requires `^[0-9a-f]{40}$`, `u20.5c`
+drives it red on that exact string, and `EXPERIMENT-PROTOCOL.md` §6b makes
+"the closure record is written by the next commit" a rule rather than a habit.
+
+**3. The index stated one leg's result as an adjective.** Run 34 carried
+`"acceptance": "198/0"` for 2.34.7 and `"acceptance": "green"` for 2.24.9, while
+its own verdict prose gave the number for both. A checker built to compare the
+rendered block against the structured field could not have derived the second
+leg's count. Five legs carried `"green"`, six carried `"aborted…"`. All are now
+`null` plus `acceptanceOutcome`, so *not measured* stays distinguishable from a
+measurement — MISSING-is-not-EMPTY, applied to the index itself.
+
+`u28.10` **passed on its first run because its own jq errored.** `test()` on a
+null throws, the substitution collapsed to empty, and `assert_eq "" ""` was
+green. Third appearance of that exact shape here after `u14.3` and `u20.8`; the
+jq now runs with stderr captured and an errored checker is a failed checker.
+
+**4. The envelope disclosure was correct and unreachably placed.** It sat below
+the guarantees table, "Where the escrow lives", Non-goals, and a section of
+experimental history. A reader who stops after the guarantees — most readers —
+got the strong claim and none of its bounds. Position is part of a disclosure.
+It now follows `## Guarantees` immediately, `u30.2` requires that no section is
+interposed, and the disclosure states **both axes**: topology (locally
+replicated, no authenticated remote backend, no selective egress) and platform
+(x86_64-linux, Nix 2.24.9/2.34.7, this fixture). Quoting one axis without the
+other overstates the result in a way that reads as modest.
+
+**5. Counts were maintained by hand in prose.** `102/102` and `146/146` from
+runs 11 and 18 were still advertised after the suite had grown by fifty
+assertions, and README carried "Thirty-four runs" past run 35. Numbers a
+document states are now rendered from the one place that owns them; `u30.7`
+forbids a hand-written run count.
+
+**6. The retention paragraph argued its point by denying the wrong framing** —
+and so contained it. The `u22` regex covered the plural verb form but not the
+hyphenless singular, so a sentence *rejecting* the transfer framing carried that
+framing's own keyword for four commits and no search could tell the two apart.
+The wording is now positive — write amplification and preservation obligation
+named as different quantities, neither of them denied — the guard covers every
+inflection of the verb, and `u22.1a` drives it red on each one.
+
+This is the third time in this project that prose about a forbidden phrase has
+tripped the guard against it, and the rule is by now unambiguous: **write the
+positive statement and never the rejected one.** A specimen belongs in the test,
+where it is data, not in the document, where it is text.
+
+And the run 34 artifacts: a matrix run uploads **two artifacts both named
+`evidence`**, so the name is not an identifier. They are bound to their legs by
+the uploading job's own log line, with digests, in
+`evidence-runs.json` → `runs[run=34].artifacts`. The raw ZIPs are deliberately
+not committed — they carry working logs well past the canonical evidence, and a
+repository is a poor place to give a log dump permanent retention.

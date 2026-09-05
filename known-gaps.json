@@ -199,9 +199,9 @@
       "status": "CLOSED",
       "openedAt": "2026-09-05",
       "closedAt": "2026-09-05",
-      "closedBy": "(this commit)",
+      "closedBy": "0d4ae1e68e7a3e706cf7586fbeedbb7399875513",
       "evidenceRef": "DESIGN.md \u00a720b; run 24 report.txt",
-      "closeNote": "Arithmetic, not a mystery, and the answer was three lines below the number in the same report. OBJECTS_REALISED is `nix-store --query --requisites --include-outputs` of the top derivation, and that set contains the .drv files themselves -- t15.13 says so in as many words. One added fixed-output source therefore adds TWO store objects: its .drv (text-CA) and its output (fixed-CA). The same report shows derivations 638->639 and ESCROW_OBJECTS_CONTENT_ADDRESSED 820->822, both consistent with +2 and both printed beside the number that was called unexplained. The pre-registration predicted +1 because it forgot a derivation is itself a store object, and it predicted the derivation count in the same table without joining the two rows."
+      "closeNote": "Recorded by the commit AFTER the one that closed it. A commit cannot name its own hash, so '(this commit)' was written as a placeholder and then never resolved -- the closure record must be written by the NEXT commit, which is now a process rule (EXPERIMENT-PROTOCOL.md 6b) and enforced by u20.5/u20.5a."
     },
     {
       "id": "gap-24",

@@ -229,6 +229,29 @@ pleasant to look at.
 
 ---
 
+## 6b. A record cannot name the commit that creates it
+
+A commit cannot contain its own hash. So any record that must identify the
+commit which caused it — a gap closure, a retirement, an evidence reference — is
+written by the **next** commit, never by the one it describes.
+
+The failure mode is not forgetting this. It is writing a placeholder:
+
+```
+"closedBy": "(this commit)"
+```
+
+which satisfies every check that asks whether the field is filled in, reads as
+an identifier to a human skimming, and survives indefinitely because nothing
+distinguishes it from a real one. It sat in a machine-checked registry for four
+commits next to proper 40-hex identities.
+
+So the check is on the **shape**, not the presence: a commit identity matches
+`^[0-9a-f]{40}$` or it is not a commit identity. Presence checks accept
+placeholders; shape checks do not.
+
+---
+
 ## 7a. A test whose subject is an absence needs a presence control
 
 The hardest check to keep honest is one that asserts something is *not* there —
@@ -329,6 +352,10 @@ Before trusting a check:
 - [ ] It is inside the envelope that was actually investigated. Anything that
       introduces a new object of study gets its own envelope, not an extra
       assertion in this one.
+- [ ] Where it checks an identity, it checks the SHAPE. "Non-empty" accepts a
+      placeholder; "40 hex characters" does not.
+- [ ] Numbers a document states are rendered from the one place that owns them,
+      not remembered in two places that can drift apart.
 - [ ] Its own success case cannot abort the run. A tool that signals "found
       nothing" with a non-zero exit will end an errexit script from inside the
       assertion that was about to pass.

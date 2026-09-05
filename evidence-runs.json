@@ -35,7 +35,7 @@
         "nix-2.24.9": {
           "unitShell": "161/0",
           "flakeCheck": "pass",
-          "acceptance": "green",
+          "acceptance": "198/0",
           "acceptanceDuration": "5m31s"
         }
       },
@@ -52,7 +52,32 @@
       "stillOpen": [
         "gap-24: no credential crossed a network",
         "gap-26: nix store verify --sigs would avoid the second copy; its flags across both Nix versions remain unmeasured"
-      ]
+      ],
+      "artifacts": {
+        "note": "A matrix run produces TWO GitHub Actions artifacts with the SAME NAME, 'evidence'. The name is therefore not an identifier. Each is bound to its matrix leg here by the uploading job's own log line ('Artifact ID is ...'), which is the primary source; the artifact created_at and the leg-characteristic size agree with it independently.",
+        "expiresAt": "2026-09-19T14:09:56Z",
+        "legs": [
+          {
+            "nixVersion": "2.34.7",
+            "jobId": 101318389508,
+            "jobName": "evidence (nix 2.34.7)",
+            "artifactId": 9970904344,
+            "sizeInBytes": 368105,
+            "zipSha256": "a4870c9b363ff38e179e6270541b03d67388d907c1da1bf1cf763ac617d72329",
+            "boundBy": "job log 14:09:56.9841830Z 'SHA256 digest of uploaded artifact zip is a4870c9b...' and 14:09:57.2291853Z 'Artifact ID is 9970904344'"
+          },
+          {
+            "nixVersion": "2.24.9",
+            "jobId": 101318389729,
+            "jobName": "evidence (nix 2.24.9)",
+            "artifactId": 9970919996,
+            "sizeInBytes": 456861,
+            "zipSha256": "4fbdb38ddef7d8d49aa7f08df3074d6a2fd5f9a9fbeb53c10f28f6d4d98e4352",
+            "boundBy": "artifact created_at 14:11:03Z matches this job's upload completion; size matches the 2.24.9 leg's characteristic ~450KB in runs 28, 30, 32 and 34"
+          }
+        ],
+        "retentionNote": "The raw Actions ZIPs are deliberately NOT committed. They contain working logs well beyond the canonical evidence, and a repository is a poor place to give a log dump permanent retention. What is durable here is this binding plus the digests; a durable snapshot of the evidence files themselves belongs in a curated form, after a secret-sentinel sweep."
+      }
     },
     {
       "run": 33,
@@ -152,12 +177,14 @@
         "nix-2.34.7": {
           "unitShell": "155/0",
           "flakeCheck": "FAIL",
-          "acceptance": "aborted at the t24 header"
+          "acceptance": null,
+          "acceptanceOutcome": "aborted at the t24 header"
         },
         "nix-2.24.9": {
           "unitShell": "155/0",
           "flakeCheck": "FAIL",
-          "acceptance": "aborted at the t24 header"
+          "acceptance": null,
+          "acceptanceOutcome": "aborted at the t24 header"
         }
       },
       "cause": {
@@ -241,8 +268,9 @@
         "nix-2.24.9": {
           "unitShell": "150/0",
           "flakeCheck": "pass",
-          "acceptance": "green",
-          "acceptanceDuration": "3m52s"
+          "acceptance": null,
+          "acceptanceDuration": "3m52s",
+          "acceptanceOutcome": "success; per-assertion counts not extracted from this leg log"
         }
       },
       "observables": {
@@ -338,10 +366,12 @@
       "verdict": "RED on both legs, 74 seconds in -- harness, not subject",
       "results": {
         "nix-2.34.7": {
-          "acceptance": "aborted"
+          "acceptance": null,
+          "acceptanceOutcome": "aborted"
         },
         "nix-2.24.9": {
-          "acceptance": "aborted"
+          "acceptance": null,
+          "acceptanceOutcome": "aborted"
         }
       },
       "note": [
@@ -361,13 +391,15 @@
       "results": {
         "nix-2.34.7": {
           "flakeCheck": "pass",
-          "acceptance": "green",
-          "acceptanceDuration": "3m23s"
+          "acceptance": null,
+          "acceptanceDuration": "3m23s",
+          "acceptanceOutcome": "success; per-assertion counts not extracted from this leg log"
         },
         "nix-2.24.9": {
           "flakeCheck": "pass",
-          "acceptance": "green",
-          "acceptanceDuration": "3m23s"
+          "acceptance": null,
+          "acceptanceDuration": "3m23s",
+          "acceptanceOutcome": "success; per-assertion counts not extracted from this leg log"
         }
       },
       "note": [
@@ -387,14 +419,16 @@
         "nix-2.34.7": {
           "unitShell": "128/0",
           "flakeCheck": "pass",
-          "acceptance": "green",
-          "acceptanceDuration": "3m15s"
+          "acceptance": null,
+          "acceptanceDuration": "3m15s",
+          "acceptanceOutcome": "success; per-assertion counts not extracted from this leg log"
         },
         "nix-2.24.9": {
           "unitShell": "128/0",
           "flakeCheck": "pass",
-          "acceptance": "green",
-          "acceptanceDuration": "3m28s"
+          "acceptance": null,
+          "acceptanceDuration": "3m28s",
+          "acceptanceOutcome": "success; per-assertion counts not extracted from this leg log"
         }
       },
       "note": [
@@ -693,10 +727,12 @@
       "measuredCommit": "6e22737d09076858d7a3f9925415bdaf16f1fd55",
       "results": {
         "nix-2.34.7": {
-          "acceptance": "aborted in t20"
+          "acceptance": null,
+          "acceptanceOutcome": "aborted in t20"
         },
         "nix-2.24.9": {
-          "acceptance": "aborted in t20"
+          "acceptance": null,
+          "acceptanceOutcome": "aborted in t20"
         }
       },
       "note": "Green t01-t19, then `find | head` + pipefail + set -e ended the suite before it could print a result."
@@ -872,5 +908,50 @@
       "note": "That is a materially different artefact from 'supports Attic/S3', which usually means three happy-path integration tests."
     },
     "startingConditionForTheNextWork": "A question, not a run number: 'can we prove authenticated remote escrow without leaking credentials?' or 'can we prove selective egress?' -- each with its own pre-registration and red traces described in advance. Until one exists, this branch should not be pushed further."
-  }
+  },
+  "canonicalCurrentRun": {
+    "run": 34,
+    "workflowRunId": 33970633589,
+    "measuredCommit": "10dd7fa5fb9b61af0f29c5bba19dc4900e7e4c31",
+    "what": "The canonical description of the CURRENT state of the tool and fixture. EVIDENCE.md's 'Result (canonical current state)' block renders this and nothing else.",
+    "results": {
+      "nix-2.34.7": {
+        "unitShell": "161/0",
+        "flakeCheck": "pass",
+        "acceptance": "198/0"
+      },
+      "nix-2.24.9": {
+        "unitShell": "161/0",
+        "flakeCheck": "pass",
+        "acceptance": "198/0"
+      }
+    },
+    "observables": {
+      "FOD_SOURCES": 166,
+      "COVERED": 164,
+      "SOURCES_REQUIRED_BY_PLAN": 5,
+      "OBJECTS_REALISED": 876,
+      "DERIVATIONS": 639,
+      "EXTERNAL_RECOVERY": 2,
+      "WITH_POSTFETCH": 3,
+      "ON_KNOWN_FORGE": 38,
+      "HASH_MODE_FLAT": 160,
+      "HASH_MODE_NAR": 6,
+      "closureSha256": "7f141ef13672adf93a9a23dc3bddbbbd47bf6fd39038cf60a3c338f5d9ccecb2"
+    },
+    "verdicts": {
+      "ORIGIN_INDEPENDENCE": "PASS",
+      "ESCROW_VERIFY": "PASS",
+      "MEASUREMENT_VALIDITY": "closure readable, expected objects 876, observation complete"
+    },
+    "representationDifference": "The only per-leg difference is a fact about Nix, not about the escrow: DERIVATION_DOCUMENT envelope v4 on 2.34.7, flat-map vabsent on 2.24.9, over the same 639 derivations.",
+    "countPolicy": "Every matrix leg MUST carry an exact N/M for unitShell and acceptance. 'green' or 'pass' alone is insufficient for these fields: a checker cannot derive a number from an adjective, and the run 34 entry carried the strong form in prose and the weak form in the structured field until this was fixed."
+  },
+  "canonicalRunSemantics": {
+    "canonicalCurrentRun": "run 34 -- what the tool and fixture do NOW. This is what EVIDENCE.md's canonical block renders.",
+    "postMinimizationCanonicalRun": "run 18 -- the REMOVAL VALIDATION. It is the evidence that deleting the workarounds preserved every pre-registered observable. It is not, and never was, a description of the current fixture: 165 sources, 638 derivations, 874 objects, closureSha256 9243083e... all belong to a fixture two changes ago.",
+    "preRemovalReferenceRun": "run 11 -- the state the removal was measured against.",
+    "why": "Three different ideas were sharing one word. Splitting them is why EVIDENCE.md could sit for four commits describing a superseded fixture as 'canonical' while the run index knew better."
+  },
+  "countPolicy": "A unitShell or acceptance field is an exact N/M, or it is null. It is never a word. 'green' and 'aborted' both look like values and neither is a count: a checker cannot derive a number from either, and the run 34 entry carried 198/0 on one leg and 'green' on the other while its own verdict prose stated the number for both. When no count exists, the field is null and acceptanceOutcome says why -- which keeps 'not measured' distinguishable from a measurement. MISSING-is-not-EMPTY, applied to the index itself. canonicalCurrentRun is stricter: every leg MUST carry exact counts, null is not enough there."
 }
