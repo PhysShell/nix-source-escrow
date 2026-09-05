@@ -2074,3 +2074,68 @@ from inside a pipeline. It writes to a file first now.
 > a test's fixture is built out of the system under test's own materials, state
 > what the fixture must NOT contain and assert that too — the defaults of the
 > surrounding system are not neutral.
+
+### 21b. Run 31: the suite died between the header and the first assertion
+
+Run 31 (`65a81dd`), both Nix versions. **`nix flake check` red for the first time
+in thirty-one runs**, and the acceptance suite ended here:
+
+```
+t24  an untrusted tier signature is a TRUST refusal, and a key makes it work
+##[error]Process completed with exit code 1.
+```
+
+The header printed. **Not one t24 assertion ran.** So for the second consecutive
+run, nothing whatever is established about the binary-tier signature policy —
+and this time the fault was not even in the fixture, it was in the line that
+checks the fixture:
+
+```
+stray=$(grep -l '^Sig: ' "$STRIP"/*.narinfo 2>/dev/null | wc -l)
+```
+
+`grep` exits 1 when it finds nothing. `pipefail` hands that to the pipeline, and
+a **variable assignment takes its substitution's status**, so `set -e` ended the
+run. The line was asserting that the stripped cache had no signatures left,
+which means **the success case was the fatal one**: the better the fixture, the
+harder the suite died. Same shape as the `find | head` that took down run 7.
+
+The distinction that makes this tractable, and that keeps the new guard small:
+
+> A command substitution in an **argument** — `assert_eq "…" "$(grep -c …)"` —
+> does not set the calling command's status and is safe. One in an
+> **assignment** does.
+
+`u25` flags only assignments, joins line continuations first, and `u25.2` drives
+it red against the exact line that killed run 31. Auditing for that shape found
+one more live instance — `u20.9`'s `rendered=$(grep -oE … | tr | sort)`, which
+would have killed `unit-shell.sh` on the day `EVIDENCE.md` rendered no gap rows.
+
+#### And the flake check found what a local run reported as inconclusive
+
+Two INFO-level findings, `SC2012` and `SC2016`. Before pushing I ran shellcheck
+here — **without the flake's flags** — got a non-zero exit from unrelated
+`SC1091` notices, and reported the result as unavailable rather than as a
+finding. The repository's real invocation is one line in `flake.nix`:
+
+```
+shellcheck -x -e SC1091 --shell=bash bin/nix-source-escrow lib/*.sh tests/*.sh
+```
+
+`u26` runs exactly that, here, with `u26.2` as its positive control. Writing
+`u26` immediately turned `u26.1` red on the code written alongside it, which is
+the shortest gap yet between a check appearing and catching something. Its
+control needed one correction of its own: `echo $x` after a constant assignment
+is **not** flagged by shellcheck 0.11, so the specimen is an `SC2016` — a
+finding this exact shellcheck was observed to emit — and it is assembled from
+pieces so that writing the control does not trip `u26.1`.
+
+#### The standing cost, stated plainly
+
+`t24` has now consumed **two CI runs and established nothing**: run 30 measured a
+fixture that carried a trusted signature, run 31 never reached an assertion. Both
+faults are mechanical, both were invisible to `bash -n`, and both are the direct
+consequence of the limitation in §20c — the acceptance suite cannot be executed
+on the machine that writes it. `u23`, `u25` and `u26` are what can be closed
+statically. The rest is paid for one CI run at a time, and saying so is cheaper
+than pretending the next push is obviously correct.

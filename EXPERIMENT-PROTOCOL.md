@@ -300,6 +300,11 @@ Before trusting a check:
 - [ ] Its fixture does not carry a default of the surrounding system that would
       satisfy the check on its own. What it must NOT contain is asserted, not
       assumed.
+- [ ] Its own success case cannot abort the run. A tool that signals "found
+      nothing" with a non-zero exit will end an errexit script from inside the
+      assertion that was about to pass.
+- [ ] I ran the project's OWN checker with the project's OWN flags, not a
+      similar command with a status I then interpreted.
 
 Before an intervention:
 

@@ -20,6 +20,44 @@
   "ciBranch": "claude/ci-run-6a6687c",
   "runs": [
     {
+      "run": 31,
+      "workflowRunId": 33968436297,
+      "measuredCommit": "65a81dd76f247cd128d535ba825ab94308ff204f",
+      "kind": "t24 second attempt (fixture corrected)",
+      "verdict": "RED on both legs. flake check failed on two shellcheck INFO findings, and the acceptance suite died after printing the t24 header with ZERO t24 assertions run.",
+      "results": {
+        "nix-2.34.7": {
+          "unitShell": "155/0",
+          "flakeCheck": "FAIL",
+          "acceptance": "aborted at the t24 header"
+        },
+        "nix-2.24.9": {
+          "unitShell": "155/0",
+          "flakeCheck": "FAIL",
+          "acceptance": "aborted at the t24 header"
+        }
+      },
+      "cause": {
+        "acceptance": "stray=$(grep -l '^Sig: ' \"$STRIP\"/*.narinfo 2>/dev/null | wc -l). grep exits 1 on no match, pipefail propagates it, and a VARIABLE ASSIGNMENT takes its substitution's status, so set -e ended the run. The line asserted the stripped cache had NO signatures left, so the success case was the fatal one. Same shape as the find|head that killed run 7.",
+        "flakeCheck": "SC2012 (ls to count files) in tests/run-tests.sh and SC2016 in tests/unit-shell.sh. A local shellcheck run WITHOUT the flake's flags (-x -e SC1091 --shell=bash) exited non-zero on unrelated SC1091 notices and was reported as inconclusive rather than as a finding."
+      },
+      "whatIsEstablished": {
+        "aboutTheSignaturePolicy": "NOTHING, for the second consecutive run. Run 30 measured a fixture that carried a trusted signature; run 31 never reached an assertion.",
+        "green": [
+          "unit-shell 155/0 on both legs",
+          "t23.1-t23.6 green",
+          "t22 green",
+          "t03.9 green"
+        ]
+      },
+      "corrections": [
+        "count_narinfos(): a loop with no pipe at all replaces every grep|wc in the t24 fixture.",
+        "u25 flags assignments (never arguments) that read from an unguarded grep; u25.2 drives it red on the exact line that killed this run.",
+        "One further live instance found and fixed: u20.9's rendered=$(grep -oE ... | tr | sort).",
+        "u26 runs the flake's exact shellcheck invocation locally, with u26.2 as its positive control. It turned red on the code written alongside it."
+      ]
+    },
+    {
       "run": 30,
       "workflowRunId": 33967783163,
       "measuredCommit": "d299c63c04375c5b3db3f5ce26762c92f7801bae",

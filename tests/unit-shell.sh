@@ -729,7 +729,7 @@ assert_ne "u20.8a and it really does catch one -- this is not a check that only 
   "" "$(gap_offenders "$TMP/gaps-regressed.json")"
 # And the rendered document must list exactly the open ids -- no more, no fewer.
 # shellcheck disable=SC2016  # a literal backtick in the markdown table, not a subshell
-rendered=$(grep -oE '^\| `gap-[0-9a-z]+`' "$ROOT/EVIDENCE.md" | tr -d '|` ' | LC_ALL=C sort)
+rendered=$( { grep -oE '^\| `gap-[0-9a-z]+`' "$ROOT/EVIDENCE.md" || true; } | tr -d '|` ' | LC_ALL=C sort)
 declared=$(jq -r '.gaps[] | select(.status == "OPEN") | .id' "$GAPS" | LC_ALL=C sort)
 assert_eq "u20.9 EVIDENCE.md renders exactly the OPEN gaps, nothing stale" \
   "$declared" "$rendered"
@@ -834,6 +834,7 @@ assert_ne "u24.1 the function was found at all" "" "$tierfn"
 assert_eq "u24.2 the tier copy does not disable signature checking" "0" \
   "$(printf '%s\n' "$tierfn" | grep -c -- '--no-check-sigs' || true)"
 # A guard nobody has seen fail is not a guard.
+# shellcheck disable=SC2016  # the $from/$to_write here are literal source text
 assert_ne "u24.3 and the guard catches it when it is added" "0" \
   "$(printf '%s\n' "$tierfn" \
      | sed 's|copy --from "$from" --to "$to_write"|& --no-check-sigs|' \
@@ -844,6 +845,67 @@ assert_ne "u24.4 a signature refusal is classified as SIGNATURE_UNTRUSTED" "0" \
 # assertion about a message nobody can check.
 assert_ne "u24.5 and the refusal quotes what Nix said" "0" \
   "$(printf '%s\n' "$tierfn" | grep -c 'nixsaid' || true)"
+
+# ---------------------------------------------------------------------------
+head_ "u25  a grep that finds nothing must not kill the suite"
+# Run 31 died AFTER PRINTING THE t24 HEADER AND BEFORE ONE ASSERTION:
+#
+#   stray=$(grep -l '^Sig: ' "$STRIP"/*.narinfo 2>/dev/null | wc -l)
+#
+# grep exits 1 when it finds nothing, pipefail hands that status to the whole
+# pipeline, and a VARIABLE ASSIGNMENT takes its substitution's status -- so
+# set -e ended the run. The line was checking that a fixture had no signatures
+# left, which means the SUCCESS case was the fatal one. Same shape as the
+# `find | head` that took down run 7.
+#
+# The distinction that keeps this guard small: a substitution in an ARGUMENT
+# (assert_eq "..." "$(grep -c ...)") does not set the calling command's status
+# and is safe. One in an ASSIGNMENT does. Only assignments are flagged.
+joined25=$(sed -e :a -e '/\\$/N; s/\\\n//; ta' "$ROOT/tests/run-tests.sh" "$ROOT/tests/unit-shell.sh")
+grepassign=$(printf '%s\n' "$joined25" \
+  | grep -nE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=\$\([[:space:]]*(LC_ALL=[^[:space:]]+[[:space:]]+)?grep\b' \
+  | grep -vE '\|\|[[:space:]]*(true|:)' || true)
+assert_eq "u25.1 no assignment reads from an unguarded grep" "" "$grepassign"
+# And the guard has been seen to fail, because one that has not is not a guard.
+# shellcheck disable=SC2016  # the specimen is literal shell source, not an expansion
+assert_ne "u25.2 and it catches one when it is there" "0" \
+  "$(printf '%s\n' 'stray=$(grep -l "^Sig: " "$D"/*.narinfo | wc -l)' \
+     | grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=\$\([[:space:]]*(LC_ALL=[^[:space:]]+[[:space:]]+)?grep\b' \
+     || true)"
+
+# ---------------------------------------------------------------------------
+head_ "u26  the repository's own shellcheck invocation, run here"
+# The flake check runs `shellcheck -x -e SC1091 --shell=bash ...` and is the
+# only thing that has ever caught a lint regression. In run 31 it went red on
+# two INFO-level findings, after a local run WITHOUT those exact flags was
+# reported as inconclusive. A check that exists only inside a four-minute Nix
+# build is a check nobody runs before pushing.
+if ! command -v shellcheck >/dev/null 2>&1; then
+  echo "  skipped (shellcheck not on PATH)"
+else
+  sc_out=$(cd "$ROOT" && shellcheck -x -e SC1091 --shell=bash \
+             bin/nix-source-escrow lib/*.sh tests/*.sh 2>&1) && sc_rc=0 || sc_rc=$?
+  assert_eq "u26.1 shellcheck is clean with the flake's exact flags" "0" "$sc_rc"
+  [ "$sc_rc" -eq 0 ] || printf '%s\n' "$sc_out" | head -30
+  # Positive control: the same invocation on a file with a known finding must
+  # go red, or u26.1 is green whenever shellcheck silently does nothing. The
+  # specimen is an SC2016 -- an expansion inside single quotes -- because that
+  # is a finding this exact shellcheck was OBSERVED to report, in this very
+  # file, one minute after u26 was written. `echo $x` after a constant
+  # assignment was the first choice and shellcheck 0.11 does not flag it.
+  sc_tmp=$(mktemp -d "${TMPDIR:-/tmp}/nse-u26.XXXXXX")
+  # Assembled from pieces, so THIS file does not itself contain the pattern the
+  # specimen is made of -- otherwise writing the control trips u26.1, which is
+  # exactly what happened on the first attempt.
+  sc_q="'"
+  { printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' "printf %s ${sc_q}a literal \$HOME here${sc_q}"
+  } > "$sc_tmp/bad.sh"
+  shellcheck -x -e SC1091 --shell=bash "$sc_tmp/bad.sh" >/dev/null 2>&1 \
+    && sc_bad=0 || sc_bad=$?
+  rm -rf "$sc_tmp"
+  assert_ne "u26.2 positive control: it really does report findings" "0" "$sc_bad"
+fi
 
 # ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"

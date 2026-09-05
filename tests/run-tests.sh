@@ -1002,8 +1002,23 @@ else
   STRIP=$T24/stripped
   command cp -a "$ESCROW/cache" "$STRIP"
   find "$STRIP" -maxdepth 1 -name '*.narinfo' -exec sed -i '/^Sig: /d' {} +
-  stray=$(grep -l '^Sig: ' "$STRIP"/*.narinfo 2>/dev/null | wc -l)
-  assert_eq "t24.1 the fixture cache really has no signatures left" "0" "$stray"
+  # NO PIPE. `grep -l ... | wc -l` returns grep's status under pipefail, and
+  # grep exits 1 when it finds nothing -- which here is the SUCCESS case. Run 31
+  # died on that line before printing a single assertion: the same set -e +
+  # pipefail shape that killed run 7, in a test written to check a fixture.
+  count_narinfos() {  # $1 dir, $2 = "sig" to count only signed ones
+    local n=0 f
+    for f in "$1"/*.narinfo; do
+      [ -e "$f" ] || continue
+      if [ "${2:-}" = sig ]; then
+        grep -q '^Sig: ' "$f" || continue
+      fi
+      n=$((n+1))
+    done
+    printf '%s\n' "$n"
+  }
+  assert_eq "t24.1 the fixture cache really has no signatures left" "0" \
+    "$(count_narinfos "$STRIP" sig)"
   # The vehicle must be INPUT-ADDRESSED. A content-addressed object is accepted
   # on its hash regardless of signature, so choosing one would make the whole
   # test vacuous -- which is the failure mode this suite has now hit nine times.
@@ -1052,16 +1067,16 @@ secret-key-files = $SK" nix copy --from "file://$STRIP" --to "file://$TIER_S" \
       # pass for a reason unconnected to the key; if the unsigned tier IS signed,
       # legs A and B are accepted for a reason unconnected to the policy. That
       # is exactly what happened in run 30 and it is why these come first.
-      s_sigs=$(grep -l '^Sig: ' "$TIER_S"/*.narinfo 2>/dev/null | wc -l)
-      u_sigs=$(grep -l '^Sig: ' "$TIER_U"/*.narinfo 2>/dev/null | wc -l)
-      u_infos=$(ls -1 "$TIER_U"/*.narinfo 2>/dev/null | wc -l)
+      s_sigs=$(count_narinfos "$TIER_S" sig)
+      u_sigs=$(count_narinfos "$TIER_U" sig)
+      u_infos=$(count_narinfos "$TIER_U")
       assert_ne "t24.4 the signed tier really carries signatures" "0" "$s_sigs"
       assert_eq "t24.5 and the unsigned tier really carries none" "0" "$u_sigs"
       assert_ne "t24.6 the unsigned tier is not simply empty" "0" "$u_infos"
       # Every store path the unsigned tier actually holds, so a refusal can be
       # checked against what was really on offer.
-      awk '/^StorePath: /{print substr($0,12)}' "$TIER_U"/*.narinfo 2>/dev/null \
-        | LC_ALL=C sort -u > "$T24/tier-u-paths.txt"
+      { awk '/^StorePath: /{print substr($0,12)}' "$TIER_U"/*.narinfo 2>/dev/null \
+          || true; } | LC_ALL=C sort -u > "$T24/tier-u-paths.txt"
 
       run_tier() {  # $1 dir, $2 tier url, $3 log, $4 extra nix config
         rm_store "$1"; mkdir -p "$1"
@@ -1082,7 +1097,7 @@ secret-key-files = $SK" nix copy --from "file://$STRIP" --to "file://$TIER_S" \
         "$(grep -c 'SIGNATURE_UNTRUSTED' "$T24/run-unsigned.log" || true)"
       # It must name something the tier was actually offering, not any old path.
       assert_ne "t24.9 it names an object the tier really holds" "0" \
-        "$(grep -oE '/nix/store/[a-z0-9]{32}-[^ "]*' "$T24/run-unsigned.log" \
+        "$( { grep -oE '/nix/store/[a-z0-9]{32}-[^ "]*' "$T24/run-unsigned.log" || true; } \
            | LC_ALL=C sort -u | LC_ALL=C comm -12 - "$T24/tier-u-paths.txt" | wc -l)"
       assert_ne "t24.10 and quotes what Nix actually said about the signature" "0" \
         "$(grep -ciE 'lacks a signature|untrusted|not trusted' "$T24/run-unsigned.log" || true)"
