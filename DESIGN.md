@@ -1942,3 +1942,67 @@ authenticated tier instead of the tool that dropped the fragment. A fragment
 that was supplied and did not arrive is now a refusal (`exit 91`) naming the
 file and never its contents. `u21.6`–`u21.8` guard it, and `u21.6` was driven
 red against a copy with the old construction restored before being trusted.
+
+## 21. Pre-registration: a binary tier Nix will not trust
+
+`ESCROW_OBJECTS_UNSIGNED_INPUT_ADDRESSED=1` has been in the report for eighteen
+runs. The signature policy around it — *this tool will not disable signature
+checking for an ordinary binary tier on the operator's behalf* — has been
+**stated in a refusal message and never once executed.** §20d's rule applies to
+policies as much as to tests: an unexercised branch is a claim, not a behaviour.
+
+### The claim
+
+> A binary tier whose objects Nix will not accept produces `SIGNATURE_UNTRUSTED`,
+> naming the object and quoting what Nix said, and never an absence, an outage,
+> or a quietly weakened trust policy. Supplying the tier's public key — and only
+> that — turns the same run green.
+
+### The design is paired, and that is not decoration
+
+Legs B and C use **the same tier, the same object, and differ in exactly one
+variable**: whether the tier's public key is trusted.
+
+| leg | tier | key trusted | required outcome |
+| --- | --- | --- | --- |
+| A | object unsigned | — | refuse, `SIGNATURE_UNTRUSTED` |
+| B | object signed by a generated key | no | refuse, `SIGNATURE_UNTRUSTED` |
+| C | **the same signed tier** | **yes** | **succeed, object in the replica** |
+
+Without C, every assertion in `t24` is satisfied by a tool that refuses
+everything — which is a worse tool, not a better one, and would read as a pass.
+This is `t23`'s lesson stated as a construction rather than as a regret.
+
+`t24.3` and `t24.4` are preconditions and not decoration: if the "signed" tier
+carries no `Sig:` line, C would succeed for a reason unconnected to the key and
+B would refuse for leg A's reason. The vehicle is **input-addressed** — chosen by
+the absence of a `CA:` line — because a content-addressed object is accepted on
+its hash whatever its signature, and picking one would make the whole test
+vacuous by construction.
+
+### The red outcomes, classified in advance
+
+- **A or B green** — the tier copy is not checking signatures at all. That is
+  the policy failing, and the fix is in `lib/preserve.sh`, never in `t24`.
+- **C red** — the escape hatch does not deliver `trusted-public-keys` to the
+  tier copy, or the refusal is not attributable to the key. Either way the
+  paired design is broken and A/B prove nothing.
+- **t24.9 or t24.10 red** — a trust refusal was laundered into an absence. That
+  is the `UNKNOWN → ABSENT → MAY_REBUILD` defect of §19, one store over.
+- **t24.13 or u24.2 red** — the tool added `--no-check-sigs` to get past its own
+  refusal, i.e. weakened the operator's trust policy for the convenience of a
+  test.
+- **t24.1 or t24.2 red** — the fixture could not be built. The test measured
+  nothing; it must not be reported as evidence in either direction.
+
+`u24` is the static half, and it exists because a red `t24` has one
+character-cheap wrong fix. It is scoped to `nse_tier_materialise` — staging and
+host copies legitimately use `--no-check-sigs`, since those read stores this tool
+has just written — and `u24.3` drives the guard red against a doctored copy
+before it is trusted.
+
+### What this does not establish
+
+Nothing about a real authenticated tier. The keys are generated locally, the
+tier is a `file://` directory, and no credential crosses a network. `gap-22`
+stays open, and so does the S3/Attic item.

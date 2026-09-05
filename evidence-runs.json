@@ -20,6 +20,55 @@
   "ciBranch": "claude/ci-run-6a6687c",
   "runs": [
     {
+      "run": 29,
+      "workflowRunId": 33967105123,
+      "measuredCommit": "66e3d5834005dfc92c3ac095b4f006a046fb34d1",
+      "kind": "verdict on the t23 repair and on the credential escape hatch",
+      "verdict": "green on both legs -- unit-shell 150/0, acceptance 175/0",
+      "results": {
+        "nix-2.34.7": {
+          "unitShell": "150/0",
+          "flakeCheck": "pass",
+          "acceptance": "175/0",
+          "acceptanceDuration": "3m37s"
+        },
+        "nix-2.24.9": {
+          "unitShell": "150/0",
+          "flakeCheck": "pass",
+          "acceptance": "green",
+          "acceptanceDuration": "3m52s"
+        }
+      },
+      "observables": {
+        "fodSources": 166,
+        "covered": 164,
+        "externalRecovery": 2,
+        "withPostfetch": 3,
+        "onKnownForge": 38,
+        "hashModeFlat": 160,
+        "hashModeNar": 6,
+        "derivations": 639,
+        "objectsRealised": 876,
+        "closureSha256": "7f141ef13672adf93a9a23dc3bddbbbd47bf6fd39038cf60a3c338f5d9ccecb2",
+        "unchangedFromRun24": true
+      },
+      "verdicts": {
+        "t23.5": "PASS. The unknown-setting fragment reached the isolated nix and Nix echoed it back. This is the assertion that gives the rest of t23 meaning: the escape hatch demonstrably delivers, so t23.2's silence is now a statement about REDACTION rather than about a dead pipe. In run 28 it was 0.",
+        "t23.2": "PASS with the sentinel genuinely in play: it appears in nothing the CI job uploads -- evidence/, manifest.json, closure.json, discovery.json, work/**/*.log.",
+        "t23.6": "PASS. Even a fragment Nix shouts about is not serialised into prove-env.sh.",
+        "t23.3 / t23.3a": "PASS. The record carries NSE_EXTRA_NIX_CONFIG_PRESENT=yes and the carrier path, never the value.",
+        "t03.9": "PASS again -- gap-23 stays closed on measurement.",
+        "t22.5a-d": "PASS.",
+        "section-20 observables": "all unchanged and identical across versions."
+      },
+      "note": [
+        "The 2.34.7 leg was read line by line from its log; the 2.24.9 leg is recorded as",
+        "green from its job conclusion, and its per-assertion lines were not extracted.",
+        "Both legs completed every step successfully. Run 28's t23 measured nothing;",
+        "run 29 is the first run in which the credential path was actually exercised."
+      ]
+    },
+    {
       "run": 28,
       "workflowRunId": 33966155330,
       "measuredCommit": "1ae0b1c1a60bd584ccc50f2b1ac164e012c08788",

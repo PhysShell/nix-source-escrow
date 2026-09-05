@@ -821,6 +821,31 @@ caught=$(awk '
 assert_eq "u23.2 and the check really does catch a stripped assertion" "caught" "$caught"
 
 # ---------------------------------------------------------------------------
+head_ "u24  the binary tier path never weakens the operator's trust policy"
+# t24 is the behavioural half. This is the half that survives someone "fixing"
+# a red t24 the easy way. Adding --no-check-sigs to the tier copy would turn
+# every t24 refusal green in one character-cheap edit, and the tool would then
+# be silently disabling signature verification on the operator's behalf to make
+# its own test pass. Staging and host copies are a different matter -- those
+# read stores this tool just wrote -- so the guard is scoped to the function.
+tierfn=$(awk '/^nse_tier_materialise\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' \
+           "$ROOT/lib/preserve.sh")
+assert_ne "u24.1 the function was found at all" "" "$tierfn"
+assert_eq "u24.2 the tier copy does not disable signature checking" "0" \
+  "$(printf '%s\n' "$tierfn" | grep -c -- '--no-check-sigs' || true)"
+# A guard nobody has seen fail is not a guard.
+assert_ne "u24.3 and the guard catches it when it is added" "0" \
+  "$(printf '%s\n' "$tierfn" \
+     | sed 's|copy --from "$from" --to "$to_write"|& --no-check-sigs|' \
+     | grep -c -- '--no-check-sigs' || true)"
+assert_ne "u24.4 a signature refusal is classified as SIGNATURE_UNTRUSTED" "0" \
+  "$(printf '%s\n' "$tierfn" | grep -c 'SIGNATURE_UNTRUSTED' || true)"
+# The refusal has to carry Nix's own words, or the classification is an
+# assertion about a message nobody can check.
+assert_ne "u24.5 and the refusal quotes what Nix said" "0" \
+  "$(printf '%s\n' "$tierfn" | grep -c 'nixsaid' || true)"
+
+# ---------------------------------------------------------------------------
 head_ "u07  no source file smuggles a hardcoded machine identity"
 # A comment may name the old bug; an emitted line may not. Anchoring at the
 # start of a non-comment line is what separates the two.
