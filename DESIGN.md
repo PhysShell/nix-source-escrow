@@ -1375,3 +1375,134 @@ no Nix in them, because that is the portable artefact. The funny part of the
 whole exercise: this repository set out to demonstrate properties of a source
 escrow, and the most transferable thing it produced is a rule about how not to
 build a test that is only capable of agreeing with its author.
+
+---
+
+## 19. Pre-registration: an observation failure is not an observation
+
+Written **before** the fix and before the run that judges it, per §17 and
+`EXPERIMENT-PROTOCOL.md` §4. This opens a new line: §18 closed the previous one,
+and this has its own claim and its own red traces.
+
+### The claim under test
+
+> **Store observation failures cannot be represented as source absence, and
+> stage-internal observation failures cannot produce a successful evidence
+> verdict.**
+
+### Why this is a stop-the-line defect and not a bug report
+
+Two mechanisms that exist to make the evidence trustworthy can currently turn an
+**environment failure** into a **substantive conclusion**. For an ordinary
+utility that is unpleasant. For a tool whose entire output is a claim about what
+was demonstrated, it is disqualifying: a proof tool that reads HTTP 503 as
+proven absence cannot be put in front of an auditor, and one such branch cancels
+a great deal of correct work around it.
+
+**P0-A — `nse_store_present` is a binary predicate over a three-valued
+observation.** Today:
+
+```
+store says PRESENT   -> present
+store says null      -> absent          (correct, fixed in run 7)
+store request FAILS  -> absent          (wrong, and invisible)
+```
+
+`nix path-info --json` signals absence documentedly, as `null` with exit 0.
+A **non-zero exit therefore cannot mean absence** — there is no room for
+interpretation. The per-path fallback silently drops any path whose query
+failed, so an unreachable, unauthenticated, throttled or 503-ing tier reports
+every candidate absent and the run continues into a confident
+`tier provided 0 of N`. The `file://` branch has the same shape: a store
+directory that does not exist reads as a cache that holds nothing.
+
+The correct model is not a predicate but an observation with three outcomes:
+
+```
+present                          -> PRESENT
+successful negative observation  -> ABSENT
+failed observation               -> UNKNOWN / ERROR   (never ABSENT)
+```
+
+**P0-B — the orchestrator disables `errexit` inside every stage it runs.**
+`nse_verify || { rc=$?; …; }` places the whole function body in a context where
+`-e` is ignored, so a failing command inside it does not abort. Measured on
+bash 5.2.21, and two of the three obvious repairs do **not** work:
+
+```
+rc=0; stage || rc=$?            -> body continues after `false`   (the bug)
+rc=0; ( stage ) || rc=$?        -> body continues after `false`   (suspension
+                                   propagates into the subshell)
+rc=0; ( set -e; stage ) || rc=$? -> body continues after `false`  (an explicit
+                                   re-arm does NOT restore it)
+rc=0; bash -c '… stage' || rc=$? -> aborts at `false`             (only this)
+```
+
+Only a **separate process** restores the semantics the code was written under.
+That is measured, not read off a manual page — the third form is the workaround
+usually recommended, and it does not work here.
+
+The reachable consequence: `jq … > "$work/verify-escrow-set.txt"` fails, the
+file exists and is empty, `n_escrow = 0`, `total = 0`, `missing = 0`, and the
+report says `OBJECTS_PRESENT=0/0` and `ESCROW_VERIFY=PASS`. That is a textbook
+specimen of this repository's own §16 — a tool containing the methodology that
+explains why its own code is inadmissible.
+
+### The intervention
+
+1. `nse_store_present` gets a **contract**, enforced at the API boundary rather
+   than left to callers: exit `0` means *the observation completed for every
+   path asked about*; non-zero means *incomplete*, and the caller may not read
+   its output as a complete presence set nor a missing path as absent. All nine
+   call sites are audited against it. The one that matters most is the tier
+   re-query in `nse_tier_materialise`: a failed re-query must not be recorded as
+   a revised absence, which is precisely how an outage gets laundered.
+2. Each pipeline stage runs in a **child process**, so `errexit` holds inside it
+   and the orchestrator still sees only the final status.
+3. **Measurement validity is established before measurement result**, and
+   independently of shell mechanics:
+
+   ```
+   MANIFEST_READABLE = yes
+   EXPECTED_OBJECTS  = 874          # pre-registered, non-empty
+   OBSERVATION_OK    = yes
+   -----------------------------------------
+   only then:  OBJECTS_PRESENT = …   ESCROW_VERIFY = PASS|FAIL
+   ```
+
+   An expected set that is empty, or an extraction that did not succeed, is a
+   `FAIL`/`HARNESS_ERROR` before any coverage is computed. A future shell trick
+   must not be able to turn "could not obtain the data" into `0`.
+
+### The red traces, defined in advance
+
+Neither of these is satisfied by fixing an exit code alone. Both assert
+**attribution**, because the central lesson of the previous line was that a
+producer failure must not be reported as an observed absence — and a report that
+blames the wrong suspect is still wrong after the status code is right.
+
+```
+RED TRACE 1 -- binary tier answers HTTP 503
+
+  required:   BINARY_TIER_ERROR  (or HARNESS_ERROR), naming the tier
+  forbidden:  "tier provided 0 of N"
+              any SOURCE_ORIGIN_INDEPENDENCE failure attributed to the escrow
+              any ESCROW_REPLAY verdict of the form "held 0 of N"
+
+RED TRACE 2 -- the closure/extraction pipeline fails before producing an
+               observation
+
+  required:   ESCROW_VERIFY=FAIL or HARNESS_ERROR, naming the unreadable input
+  forbidden:  OBJECTS_PRESENT=0/0 with ESCROW_VERIFY=PASS
+              any PASS whose coverage was computed over an empty expected set
+```
+
+If either forbidden line appears, the fix has not been made, whatever the exit
+codes say.
+
+### What this run is not
+
+It is not a re-run of anything in §18. That line is closed, its canonical run is
+18 @ `a4f07ea`, and this does not reopen it: the observables §17 pre-registered
+must still hold, but they are a *regression floor* here, not the result. The
+result is whether the two red traces above appear.
