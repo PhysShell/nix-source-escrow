@@ -763,6 +763,106 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+head_ "t21  a tier that stops answering is not a tier answering 'I hold nothing'"
+# RED TRACE 1 of DESIGN.md §19, and it asserts ATTRIBUTION, not an exit code.
+# `nix path-info --json` signals absence as `"path": null` with exit 0, so a
+# non-zero exit cannot mean absence. Before the fix the per-path fallback
+# silently dropped every path the store would not answer for, and a 503 tier
+# produced a confident "tier provided 0 of N" -- an outage laundered into a
+# statistic about the escrow.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "  skipped (python3 not on PATH)"
+else
+  DEAD=$WORK/dead-tier
+  rm_store "$DEAD"; mkdir -p "$DEAD"
+  command cp -a "$ESCROW/cache" "$DEAD/cache"
+  DEADPORT=$WORK/dead-tier.port; rm -f "$DEADPORT"
+  # One request answered, so Nix can establish the cache exists; everything
+  # after that is 503. A tier that never answered at all would be too easy.
+  python3 "$ROOT/tests/helpers/http-cache-server.py" "$DEAD/cache" "$DEADPORT" \
+    --status-503-after 1 >"$WORK/dead-tier.log" 2>&1 &
+  DEAD_PID=$!
+  # shellcheck disable=SC2064  # expand now, not at trap time
+  trap "kill $DEAD_PID 2>/dev/null || :" EXIT
+  DPORT=""
+  for _ in $(seq 1 100); do
+    [ -s "$DEADPORT" ] && { DPORT=$(cat "$DEADPORT"); break; }
+    kill -0 "$DEAD_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  if [ -z "$DPORT" ]; then
+    bad "t21.1 a tier that answers 503 is serving" "no port; see $WORK/dead-tier.log"
+  else
+    ok "t21.1 a tier that answers 503 is serving"
+    DEADDIR=$WORK/dead-run
+    rm_store "$DEADDIR"; mkdir -p "$DEADDIR"
+    command cp -f "$ESCROW/discovery.json" "$DEADDIR/discovery.json"
+    rc=0
+    "$NSE" preserve "$FIXTURE" \
+      --escrow-dir "$DEADDIR" \
+      --guarantee source-origin-independence \
+      --binary-tier "http://127.0.0.1:$DPORT" \
+      --staging-dir "$ESCROW/work/staging" >"$WORK/dead-run.log" 2>&1 || rc=$?
+    assert_ne "t21.2 the run refuses rather than reporting a coverage figure" "0" "$rc"
+    assert_ne "t21.3 and says the observation failed, naming the store" "0" \
+      "$(grep -cE 'OBSERVATION_ERROR|BINARY_TIER_ERROR' "$WORK/dead-run.log" || true)"
+    # THE FORBIDDEN LINES. Fixing the exit code alone satisfies none of these:
+    # a report that blames the wrong suspect is still wrong.
+    assert_eq "t21.4 it never reports the tier as holding 0 of N" "0" \
+      "$(grep -cE 'claims to hold 0 of|present 0/|provided 0 of|holds 0 of' "$WORK/dead-run.log" || true)"
+    assert_eq "t21.5 and never calls anything absent on an unanswered question" "0" \
+      "$(grep -ciE 'not provided|revised absent|does not hold' "$WORK/dead-run.log" || true)"
+    assert_eq "t21.6 no manifest is written from an observation that did not complete" \
+      "absent" "$([ -f "$DEADDIR/manifest.json" ] && echo present || echo absent)"
+  fi
+  kill "$DEAD_PID" 2>/dev/null || :
+  trap - EXIT
+fi
+
+# ---------------------------------------------------------------------------
+head_ "t22  an unreadable expected set is not an empty one"
+# RED TRACE 2 of DESIGN.md §19. `jq … > verify-escrow-set.txt` fails, the file
+# exists and is empty, n_escrow = 0, total = 0, missing = 0, and the report
+# says OBJECTS_PRESENT=0/0 with ESCROW_VERIFY=PASS. Two independent defences
+# now: errexit really holds inside the stage (u08.10/u08.11), AND verify
+# establishes measurement validity before computing any coverage. This test
+# drives the second one, because the first is a shell mechanic and the last
+# shell mechanic here was load-bearing without anyone knowing.
+BLIND=$WORK/blind-verify
+rm_store "$BLIND"; mkdir -p "$BLIND/evidence"
+command cp -f "$ESCROW/manifest.json" "$BLIND/manifest.json"
+printf 'this is not json {{{\n' > "$BLIND/closure.json"
+rc=0
+"$NSE" verify "$FIXTURE" --escrow-dir "$BLIND" >"$WORK/blind-verify.log" 2>&1 || rc=$?
+assert_ne "t22.1 verify refuses when it cannot read the expected set" "0" "$rc"
+assert_ne "t22.2 and names the file it could not read" "0" \
+  "$(grep -c 'closure.json' "$WORK/blind-verify.log" || true)"
+assert_eq "t22.3 it never reports 0/0 as coverage" "0" \
+  "$(grep -c 'OBJECTS_PRESENT=0/0' "$WORK/blind-verify.log" || true)"
+assert_eq "t22.4 and never records a PASS built on an empty expected set" "0" \
+  "$(grep -c 'ESCROW_VERIFY=PASS' "$WORK/blind-verify.log" || true)"
+assert_eq "t22.5 no verify evidence is written at all" \
+  "absent" "$([ -f "$BLIND/evidence/verify.json" ] && echo present || echo absent)"
+# The same again with a syntactically valid closure that names nothing: an
+# empty expected set is a statement about our reading, not about the escrow.
+EMPTYC=$WORK/empty-closure
+rm_store "$EMPTYC"; mkdir -p "$EMPTYC/evidence"
+command cp -f "$ESCROW/manifest.json" "$EMPTYC/manifest.json"
+printf '{"escrowPaths":[],"replicaPaths":[]}\n' > "$EMPTYC/closure.json"
+rc=0
+"$NSE" verify "$FIXTURE" --escrow-dir "$EMPTYC" >"$WORK/empty-closure.log" 2>&1 || rc=$?
+assert_ne "t22.6 an expected set of zero objects is refused, not passed" "0" "$rc"
+assert_eq "t22.7 0 of 0 is never reported as 100%" "0" \
+  "$(grep -c 'ESCROW_VERIFY=PASS' "$WORK/empty-closure.log" || true)"
+# And the positive control: the real escrow still verifies, so t22 is not
+# passing because verify refuses everything.
+rc=0
+"$NSE" verify "$FIXTURE" --escrow-dir "$ESCROW" >"$WORK/verify-control.log" 2>&1 || rc=$?
+assert_eq "t22.8 positive control: the real escrow still verifies" "0" "$rc"
+assert_ne "t22.9 and reports a non-zero expected set" "0" \
+  "$(grep -cE 'ESCROW_OBJECTS_PRESENT=[1-9]' "$WORK/verify-control.log" || true)"
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1mRESULT\033[0m  passed=%d failed=%d\n' "$pass" "$fail"
 if [ "$fail" -ne 0 ]; then
   printf 'failed tests:\n'; printf '  - %s\n' "${failed_names[@]}"

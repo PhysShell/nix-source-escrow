@@ -16,27 +16,62 @@ nse_verify() {
 
   nse_step "VERIFY $NSE_SUBSTITUTER_URL"
 
-  # ---- 1. presence ---------------------------------------------------------
-  # Two sets, two stores. Under ESCROW_REPLAY the replica set is empty and this
-  # collapses to the v0.1 behaviour.
-  # `// .paths` keeps an escrow written by an older version readable.
-  jq -r '(.escrowPaths // .paths)[]' "$closure" | LC_ALL=C sort -u > "$work/verify-escrow-set.txt"
-  jq -r '(.replicaPaths // [])[]' "$closure"    | LC_ALL=C sort -u > "$work/verify-replica-set.txt"
+  # ---- 0. measurement validity, before any measurement result --------------
+  #
+  # MEASUREMENT VALIDITY PRECEDES MEASUREMENT RESULT. Coverage is a ratio, and
+  # a ratio computed over a set nobody managed to read is not a small number,
+  # it is not a number.
+  #
+  # The failure this closes: `jq … > verify-escrow-set.txt` fails, the file
+  # exists and is empty, n_escrow = 0, total = 0, missing = 0, and the report
+  # says OBJECTS_PRESENT=0/0 with ESCROW_VERIFY=PASS. The stage-isolation fix
+  # in report.sh means the jq failure now aborts -- but this guard does not
+  # depend on that, or on any other shell mechanic, because the last one was
+  # load-bearing for four months without anyone knowing. Two independent
+  # defences, on purpose.
+  #
+  # Each prerequisite is separate, and each is recorded, so a reader can see
+  # WHICH one refused rather than a bare FAIL.
+  local extract_rc=0
+  jq -r '(.escrowPaths // .paths)[]' "$closure" | LC_ALL=C sort -u \
+    > "$work/verify-escrow-set.txt" || extract_rc=$?
+  jq -r '(.replicaPaths // [])[]' "$closure" | LC_ALL=C sort -u \
+    > "$work/verify-replica-set.txt" || extract_rc=$((extract_rc + 100))
+  [ "$extract_rc" -eq 0 ] || nse_die "could not extract the expected object set from
+       '$closure' (extraction status $extract_rc). An unreadable manifest is not
+       a manifest describing nothing, so no coverage figure is computed and no
+       object is reported missing. HARNESS_ERROR."
 
   local n_escrow n_replica total
   n_escrow=$(wc -l < "$work/verify-escrow-set.txt")
   n_replica=$(wc -l < "$work/verify-replica-set.txt")
   total=$((n_escrow + n_replica))
 
-  nse_store_present "$NSE_SUBSTITUTER_URL" < "$work/verify-escrow-set.txt" \
-    | LC_ALL=C sort -u > "$work/verify-escrow-present.txt"
+  # A preserved escrow always describes at least its own realised closure, so
+  # zero is never a fact about the escrow -- only about our reading of it.
+  [ "$total" -gt 0 ] || nse_die "the expected object set extracted from '$closure' is
+       EMPTY. A preserved escrow always names at least its own realised closure,
+       so this is a statement about reading the file, not about the escrow.
+       0 of 0 is not 100%. HARNESS_ERROR."
+
+  nse_log "measurement validity: closure readable, expected objects $total (escrow $n_escrow, replica $n_replica)"
+
+  # ---- 1. presence ---------------------------------------------------------
+  # Two sets, two stores. Under ESCROW_REPLAY the replica set is empty and this
+  # collapses to the v0.1 behaviour.
+  # `// .paths` keeps an escrow written by an older version readable.
+
+  nse_observe_present "$NSE_SUBSTITUTER_URL" \
+    "$work/verify-escrow-set.txt" "$work/verify-escrow-present.txt" \
+    "which escrowed objects the escrow holds"
   LC_ALL=C comm -23 "$work/verify-escrow-set.txt" "$work/verify-escrow-present.txt" \
     > "$work/verify-missing.txt"
 
   : > "$work/verify-replica-present.txt"
   if [ -s "$work/verify-replica-set.txt" ]; then
-    nse_store_present "$NSE_REPLICA_URL" < "$work/verify-replica-set.txt" \
-      | LC_ALL=C sort -u > "$work/verify-replica-present.txt"
+    nse_observe_present "$NSE_REPLICA_URL" \
+      "$work/verify-replica-set.txt" "$work/verify-replica-present.txt" \
+      "which replicated objects the binary replica holds"
     LC_ALL=C comm -23 "$work/verify-replica-set.txt" "$work/verify-replica-present.txt" \
       >> "$work/verify-missing.txt"
   fi
@@ -175,6 +210,9 @@ nse_verify() {
     '{schemaVersion:3, kind:"verify", timestamp:$ts, status:$status, provenance:$provenance,
       substituterUrl:$substituter,
       binaryReplicaUrl:(if $replica=="" then null else $replica end),
+      measurementValidity:{closureReadable:true, expectedObjects:$total,
+                           observationComplete:true,
+                           note:"All three are prerequisites, established before any coverage figure. This block cannot say false: a run that could not satisfy them dies before writing this file, so its ABSENCE is the signal. DESIGN.md 19."},
       presence:{closurePaths:$total, missing:$missing,
                 escrowPaths:$escrowPaths, escrowMissing:$escrowMissing,
                 replicaPaths:$replicaPaths, replicaMissing:$replicaMissing},

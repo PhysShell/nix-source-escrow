@@ -208,7 +208,8 @@ nse_report() {
       # Presence of an object and integrity of its NAR are different claims,
       # and conflating them is how an escrow gets reported as verified when it
       # is merely populated.
-      jq -r '"OBJECTS_PRESENT=\(.presence.closurePaths - .presence.missing)/\(.presence.closurePaths)",
+      jq -r '"MEASUREMENT_VALIDITY=\(if (.measurementValidity // null) == null then "UNRECORDED (evidence predates DESIGN.md §19)" else "closure readable, expected objects \(.measurementValidity.expectedObjects), observation complete" end)",
+             "OBJECTS_PRESENT=\(.presence.closurePaths - .presence.missing)/\(.presence.closurePaths)",
              "OBJECTS_NAR_VERIFIED=\(.narIntegrity.pathsChecked)/\(.presence.closurePaths)",
              "NAR_INTEGRITY_SCOPE=\(.narIntegrity.scope)",
              "NAR_INTEGRITY=\(.narIntegrity.status)",
@@ -314,16 +315,47 @@ nse_final_report() {
   exit "$rc"
 }
 
+# Run one stage so that `set -e` still applies INSIDE it.
+#
+# MEASURED on bash 5.2.21, because the obvious repairs do not work:
+#
+#   stage || rc=$?              -> the body continues after a failed command
+#   ( stage ) || rc=$?          -> same; the suspension propagates into the
+#                                  subshell
+#   ( set -e; stage ) || rc=$?  -> same; an explicit re-arm does NOT restore it
+#   bash -c '... stage'         -> aborts at the failed command
+#
+# So the stage runs as a CHILD PROCESS, which is the only form that keeps the
+# semantics the stage was written under while still letting this function see
+# only the final status. Every NSE_* setting is already exported, and each
+# stage communicates through files under $NSE_DIR, so a child is equivalent to
+# a call in every way except the one that matters.
+#
+# What this cost when it was a `||`: a failing `jq > file` inside nse_verify
+# did not abort. The file existed and was empty, the expected set was 0, the
+# missing count was 0, and the report said OBJECTS_PRESENT=0/0 with
+# ESCROW_VERIFY=PASS. DESIGN.md §19.
+nse_run_stage() {
+  local stage=$1; shift
+  "$NSE_SELF" "$stage" ${NSE_INSTALLABLE:+"$NSE_INSTALLABLE"} "$@"
+}
+
 nse_escrow_pipeline() {
-  local rc=0 failed=""
+  local rc=0 failed="" src=0
   trap nse_final_report EXIT
 
   nse_env
-  nse_discover
-  nse_preserve
-  nse_verify      || { rc=$?; failed="$failed verify"; }
-  nse_trust_probe || { rc=$?; failed="$failed trust-probe"; }
-  nse_prove "$NSE_EXPECT" || { rc=$?; failed="$failed test-origin-independence"; }
+  nse_run_stage discover
+  nse_run_stage preserve
+  nse_run_stage verify      || { src=$?; rc=$src; failed="$failed verify"; }
+  nse_run_stage trust-probe || { src=$?; rc=$src; failed="$failed trust-probe"; }
+  if [ "$NSE_EXPECT" = fail ]; then
+    nse_run_stage test-origin-independence --expect-fail \
+      || { src=$?; rc=$src; failed="$failed test-origin-independence"; }
+  else
+    nse_run_stage test-origin-independence \
+      || { src=$?; rc=$src; failed="$failed test-origin-independence"; }
+  fi
 
   NSE_PIPELINE_DETAIL=${failed# }
   export NSE_PIPELINE_DETAIL

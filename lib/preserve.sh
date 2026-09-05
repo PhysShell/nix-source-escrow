@@ -156,9 +156,9 @@ nse_binary_replica() {
   grep -v '\.drv$' "$work/non-source-set.txt" > "$work/tier-candidates.txt" || :
 
   nse_log "binary tier: asking $NSE_BINARY_TIER about $(wc -l < "$work/tier-candidates.txt") prebuilt objects"
-  nse_store_present "$NSE_BINARY_TIER" < "$work/tier-candidates.txt" \
-    | LC_ALL=C sort -u > "$work/tier-present.txt" \
-    || nse_die "could not read a presence answer from the binary tier '$NSE_BINARY_TIER'"
+  nse_observe_present "$NSE_BINARY_TIER" \
+    "$work/tier-candidates.txt" "$work/tier-present.txt" \
+    "what the approved binary tier claims to hold"
   nse_log "binary tier: claims to hold $(wc -l < "$work/tier-present.txt") of them"
   return 0
 }
@@ -193,9 +193,24 @@ nse_tier_materialise() {
     while IFS= read -r p; do
       [ -n "$p" ] || continue
       if nse_nix copy --from "$from" --to "$to_write" "$p" >/dev/null 2>&1; then continue; fi
-      # Ask the source again about this one object. A revised "absent" is a
-      # legitimate answer; anything else is an operational failure.
-      if printf '%s\n' "$p" | nse_store_present "$from" | grep -qxF "$p"; then
+      # Ask the source again about this one object. THREE outcomes, not two:
+      # it still claims to hold it, it has revised its claim, or it did not
+      # answer at all. Only the middle one is a legitimate absence.
+      #
+      # The old form ran the probe in a pipeline and read "grep found nothing"
+      # as "the tier says it does not have it" -- so a tier that had stopped
+      # answering (503, expired credential, DNS gone) got its outage recorded
+      # as a revised absence, and the acceptance build was then told it was
+      # free to rebuild the object. That is the exact laundering this whole
+      # section exists to prevent, one level below where it was prevented.
+      local reprobe probe_rc=0
+      reprobe=$(printf '%s\n' "$p" | nse_store_present "$from") || probe_rc=$?
+      if [ "$probe_rc" -ne 0 ]; then
+        nse_die "the binary tier '$from' would not hand over $p and then did not
+       answer whether it holds it (observation exit $probe_rc). An unanswered
+       question is not a 'no'. BINARY_TIER_ERROR."
+      fi
+      if printf '%s\n' "$reprobe" | grep -qxF "$p"; then
         nse_die "the binary tier '$from' still claims to hold $p but will not hand it over.
        That is a transport, authentication or integrity failure, not an absence,
        and relabelling it 'not provided' would turn an outage into a statistic.
@@ -208,9 +223,9 @@ nse_tier_materialise() {
   # What is in the replica is a fact about the replica, asked of the replica --
   # not "the copy command returned 0". `nix copy` is recursive, so the store
   # may hold more than these; only the requested roots are counted here.
-  nse_store_present "$to_read" < "$work/tier-requested.txt" \
-    | LC_ALL=C sort -u > "$work/replica-set.txt" \
-    || nse_die "could not read back the binary replica at '$to_read'"
+  nse_observe_present "$to_read" \
+    "$work/tier-requested.txt" "$work/replica-set.txt" \
+    "what actually arrived in the binary replica"
 
   LC_ALL=C comm -23 "$work/tier-requested.txt" "$work/replica-set.txt" \
     > "$work/tier-claimed-not-materialised.txt"
@@ -268,8 +283,9 @@ nse_manifest() {
   # directory and for an Attic/S3/HTTPS cache without a second code path.
   jq -r '(.flakeInputs[].storePath), (.sources[] | select(.storePath != null) | .storePath)' "$disc" \
     | LC_ALL=C sort -u > "$work/manifest-candidates.txt"
-  nse_store_present "$NSE_SUBSTITUTER_URL" < "$work/manifest-candidates.txt" \
-    | LC_ALL=C sort -u > "$work/escrow-present.txt"
+  nse_observe_present "$NSE_SUBSTITUTER_URL" \
+    "$work/manifest-candidates.txt" "$work/escrow-present.txt" \
+    "which manifest objects the escrow holds"
 
   local backend; backend=$(nse_backend_name "$NSE_STORE_URL")
   local f

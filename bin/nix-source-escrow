@@ -11,6 +11,11 @@ set -euo pipefail
 
 NSE_SELF=${BASH_SOURCE[0]}
 while [ -L "$NSE_SELF" ]; do NSE_SELF=$(readlink -f "$NSE_SELF"); done
+# Absolute and exported: nse_escrow_pipeline runs each stage as a CHILD of this
+# executable, which is the only construction that keeps `set -e` alive inside a
+# stage (DESIGN.md §19).
+NSE_SELF=$(cd "$(dirname "$NSE_SELF")" && pwd)/$(basename "$NSE_SELF")
+export NSE_SELF
 NSE_ROOT=$(cd "$(dirname "$NSE_SELF")/.." && pwd)
 
 # shellcheck source=../lib/common.sh

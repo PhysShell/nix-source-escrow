@@ -88,8 +88,12 @@ nse_proof_source() {
   nse_nix_batched "$setfile" copy --from "$url" \
     --to "file://$dir?compression=${NSE_COMPRESSION:-zstd}" --no-check-sigs \
     || nse_die "cannot materialise the proof replica for '$label' from '$url'"
+  # Not a command substitution: that swallowed the observation status, so a
+  # proof replica that could not be read looked like one holding 0 objects.
   local got
-  got=$(nse_store_present "file://$dir" < "$setfile" | LC_ALL=C sort -u | wc -l)
+  nse_observe_present "file://$dir" "$setfile" "$dir.present.txt" \
+    "what the proof replica holds after materialisation"
+  got=$(wc -l < "$dir.present.txt")
   [ "$got" -eq "$n" ] \
     || nse_die "proof replica ($label) holds $got of $n objects after materialisation from '$url'"
   NSE_PROOF_URL="file://$dir"; NSE_PROOF_MODE=materialised; NSE_PROOF_N=$n
@@ -148,8 +152,9 @@ nse_prove() {
   # does follow, and it does not depend on anyone having run `verify` first.
   jq -r '.sources[] | select(.plan.requiredByPlan) | .storePath' "$manifest" \
     | LC_ALL=C sort -u > "$work/prove-required-sources.txt"
-  nse_store_present "$NSE_SUBSTITUTER_URL" < "$work/prove-required-sources.txt" \
-    | LC_ALL=C sort -u > "$work/prove-sources-in-escrow.txt"
+  nse_observe_present "$NSE_SUBSTITUTER_URL" \
+    "$work/prove-required-sources.txt" "$work/prove-sources-in-escrow.txt" \
+    "whether the escrow holds every plan-required source"
   local sources_required sources_in_escrow
   sources_required=$(wc -l < "$work/prove-required-sources.txt")
   sources_in_escrow=$(wc -l < "$work/prove-sources-in-escrow.txt")

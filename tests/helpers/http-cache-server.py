@@ -12,7 +12,11 @@ The port is written to a file, atomically (write to a sibling, then rename),
 so a reader either sees nothing or sees the whole number. Nothing here parses
 prose emitted by a standard library that is free to reword it.
 
-usage: http-cache-server.py <directory> <port-file>
+usage: http-cache-server.py <directory> <port-file> [--status-503-after N]
+
+--status-503-after N serves the first N requests normally and answers 503 to
+everything after that. A store that stops answering is not a store answering
+that it holds nothing, and t21 is the test that says so out loud.
 """
 
 import functools
@@ -23,13 +27,39 @@ import sys
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    argv = sys.argv[1:]
+    fail_after = None
+    if "--status-503-after" in argv:
+        i = argv.index("--status-503-after")
+        fail_after = int(argv[i + 1])
+        del argv[i:i + 2]
+    if len(argv) != 2:
         print(__doc__, file=sys.stderr)
         return 2
-    directory, port_file = sys.argv[1], sys.argv[2]
+    directory, port_file = argv
 
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
-                                directory=directory)
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        served = 0
+
+        def _degraded(self) -> bool:
+            if fail_after is None:
+                return False
+            Handler.served += 1
+            return Handler.served > fail_after
+
+        def do_GET(self):  # noqa: N802
+            if self._degraded():
+                self.send_error(503, "Service Unavailable")
+                return
+            super().do_GET()
+
+        def do_HEAD(self):  # noqa: N802
+            if self._degraded():
+                self.send_error(503, "Service Unavailable")
+                return
+            super().do_HEAD()
+
+    handler = functools.partial(Handler, directory=directory)
 
     class Server(socketserver.ThreadingTCPServer):
         allow_reuse_address = True

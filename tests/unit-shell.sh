@@ -143,32 +143,46 @@ head_ "u08  a FAILED pipeline still produces a report"
 export ROOT
 FIXTURE_ENV=$TMP/partial-escrow/evidence/environment.json; export FIXTURE_ENV
 
-run_pipeline() {  # run_pipeline <escrow-dir> <failing-stage> <how>
+# The pipeline now runs each stage as a CHILD of $NSE_SELF, so the stages are
+# stubbed where they really live: in a fake executable. That is not a
+# concession to the test -- it is the only way to exercise the construction the
+# fix depends on, and u08.10/u08.11 below are only meaningful against a real
+# child process.
+FAKE_CLI=$TMP/fake-nse; export FAKE_CLI
+cat > "$FAKE_CLI" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+. "$ROOT/lib/common.sh"
+stage=${1:-}
+[ "$stage" = "$NSE_FAIL_STAGE" ] || exit 0
+case $NSE_FAIL_HOW in
+  return)   exit 1 ;;
+  die)      nse_die "simulated failure in $stage" ;;
+  # A command that fails PART WAY THROUGH a stage. Under the old orchestrator
+  # this did not abort: the body continued and the stage reported success.
+  midstage) false
+            printf 'REACHED-AFTER-FAILURE\n' > "$NSE_DIR/reached-marker"
+            exit 0 ;;
+esac
+FAKE
+chmod +x "$FAKE_CLI"
+
+run_pipeline() {  # run_pipeline <escrow-dir> <failing-subcommand> <how>
   local dir=$1 stage=$2 how=$3
   mkdir -p "$dir/evidence"
   NSE_DIR=$dir NSE_EXPECT=pass NSE_FAIL_STAGE=$stage NSE_FAIL_HOW=$how \
+  NSE_SELF=$FAKE_CLI \
     bash -c '
       set -euo pipefail
+      export NSE_DIR NSE_FAIL_STAGE NSE_FAIL_HOW NSE_SELF
       . "$ROOT/lib/common.sh"
       . "$ROOT/lib/report.sh"
-      maybe_fail() {
-        [ "$1" = "$NSE_FAIL_STAGE" ] || return 0
-        case $NSE_FAIL_HOW in
-          return) return 1 ;;
-          die)    nse_die "simulated failure in $1" ;;
-        esac
-      }
-      nse_env()         { cp "$FIXTURE_ENV" "$NSE_DIR/evidence/environment.json"; maybe_fail env; }
-      nse_discover()    { maybe_fail discover; }
-      nse_preserve()    { maybe_fail preserve; }
-      nse_verify()      { maybe_fail verify; }
-      nse_trust_probe() { maybe_fail trust-probe; }
-      nse_prove()       { maybe_fail prove; }
+      nse_env() { cp "$FIXTURE_ENV" "$NSE_DIR/evidence/environment.json"; }
       nse_escrow_pipeline
     ' >/dev/null 2>&1
 }
 
-rc=0; run_pipeline "$TMP/pipe-prove" prove return || rc=$?
+rc=0; run_pipeline "$TMP/pipe-prove" test-origin-independence return || rc=$?
 assert_ne "u08.1 a failing acceptance test makes the pipeline exit non-zero" "0" "$rc"
 assert_eq "u08.2 and the report is written anyway" \
   "ok" "$([ -f "$TMP/pipe-prove/evidence/report.txt" ] && echo ok || echo missing)"
@@ -188,6 +202,18 @@ rc=0; run_pipeline "$TMP/pipe-ok" none return || rc=$?
 assert_eq "u08.8 a clean pipeline exits zero" "0" "$rc"
 assert_eq "u08.9 and reports the pipeline as passed" "1" \
   "$(grep -c '^ESCROW_PIPELINE=PASS$' "$TMP/pipe-ok/evidence/report.txt")"
+
+# THE ONE THAT MATTERS. A command failing PART WAY THROUGH a stage must abort
+# that stage. `nse_verify || rc=$?` put the whole function body in a context
+# where errexit is ignored, so a failing `jq > file` did not abort: the file was
+# empty, the expected set was 0, and the report said OBJECTS_PRESENT=0/0 with
+# ESCROW_VERIFY=PASS. Measured on bash 5.2.21, neither `( stage )` nor
+# `( set -e; stage )` restores it -- only a child process does. DESIGN.md §19.
+rc=0; run_pipeline "$TMP/pipe-mid" verify midstage || rc=$?
+assert_ne "u08.10 a command failing mid-stage aborts that stage" "0" "$rc"
+assert_eq "u08.11 and execution does NOT continue past it" \
+  "not reached" \
+  "$([ -f "$TMP/pipe-mid/reached-marker" ] && echo "REACHED -- errexit is suspended inside the stage" || echo "not reached")"
 
 # ---------------------------------------------------------------------------
 head_ "u09  escrow metadata survives an object that is deliberately broken"

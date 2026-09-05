@@ -180,13 +180,44 @@ nse_nix_batched() {
 
 # stdin: store paths.  stdout: the subset the given store actually holds.
 # Never one process per path.
+# THE CONTRACT. Presence is not a predicate, it is an OBSERVATION with three
+# outcomes, and the third one has no representation in a list of paths:
+#
+#   present                         -> on stdout
+#   successful negative observation -> not on stdout, exit 0
+#   FAILED observation              -> exit NON-ZERO. Never silence.
+#
+#   exit 0   the observation completed for every path asked about. Only then
+#            may a caller read this output as a complete presence set, or read
+#            a path's absence from it as the store not holding that path.
+#   exit !=0 the observation is incomplete. The output may be a partial list of
+#            paths that ARE present; it is never evidence that anything is
+#            absent.
+#
+# Enforced here rather than left to nine call sites to remember, because the
+# previous version left it to them and every one of them got it wrong the same
+# way: an unreachable, unauthenticated, throttled or 503-ing store reported
+# every candidate absent, and the run continued into "provided 0 of N".
+#
+# `nix path-info --json` signals absence documentedly -- `"<path>": null` with
+# exit 0 -- so a non-zero exit cannot mean absence. There is no room for
+# interpretation in that.
 nse_store_present() {
   local url=$1
   if nse_url_is_file "$url"; then
     # A file:// binary cache is a directory of <hashpart>.narinfo. Presence is
     # a stat, not a process.
+    #
+    # A directory that does not exist is a FAILED observation, not a cache that
+    # holds nothing. Same defect one layer down: "I cannot look" read as "there
+    # is nothing there".
     local dir p hp
     dir=$(nse_url_file_path "$url")
+    if [ ! -d "$dir" ]; then
+      nse_warn "cannot observe '$url': no such directory. That is an observation
+       failure, not an empty cache, and nothing may be called absent on it."
+      return 3
+    fi
     while IFS= read -r p; do
       [ -n "$p" ] || continue
       hp=${p##*/}; hp=${hp%%-*}
@@ -214,21 +245,51 @@ nse_store_present() {
   #
   # An unrecognised response shape is fatal, not empty.
   local -a chunk
-  local pathinfo_json p
+  local pathinfo_json p unobserved=0
   while mapfile -t -n "$NSE_BATCH_SIZE" chunk && [ "${#chunk[@]}" -gt 0 ]; do
     if pathinfo_json=$(nse_nix path-info --store "$url" --json "${chunk[@]}" 2>/dev/null); then
       printf '%s\n' "$pathinfo_json" | nse_pathinfo_present_keys || return 1
-    else
-      # A batch can still fail outright (a malformed object, a transport
-      # error). Ask per path, and let each answer stand on its own.
-      for p in "${chunk[@]}"; do
-        if pathinfo_json=$(nse_nix path-info --store "$url" --json "$p" 2>/dev/null); then
-          printf '%s\n' "$pathinfo_json" | nse_pathinfo_present_keys || return 1
-        fi
-      done
+      continue
     fi
+    # A batch can fail outright: a transport error, an auth failure, a 503, or
+    # one malformed object among many. Ask per path so a real answer is still
+    # obtained where one exists -- and COUNT the ones that never answered.
+    for p in "${chunk[@]}"; do
+      if pathinfo_json=$(nse_nix path-info --store "$url" --json "$p" 2>/dev/null); then
+        printf '%s\n' "$pathinfo_json" | nse_pathinfo_present_keys || return 1
+      else
+        unobserved=$((unobserved + 1))
+      fi
+    done
   done
+  if [ "$unobserved" -gt 0 ]; then
+    nse_warn "$unobserved path(s) could not be observed in '$url'. The store did
+       not answer for them, which is not the same as answering that it does not
+       hold them. This observation is incomplete and nothing may be called
+       absent on the strength of it."
+    return 4
+  fi
   return 0
+}
+
+# The contract above, applied. Every caller that wants "the set this store
+# holds, on disk, to compute coverage from" goes through here, because five of
+# them used to drop the status on the floor and a sixth swallowed it inside a
+# command substitution.
+#
+#   nse_observe_present <url> <in-file> <out-file> <what-it-is-for>
+#
+# Dies on an incomplete observation, naming the store rather than the escrow.
+# There is no non-fatal mode: a caller that could sensibly continue does not
+# want a coverage set, it wants nse_store_present and its exit status.
+nse_observe_present() {
+  local url=$1 in_file=$2 out_file=$3 what=$4
+  nse_store_present "$url" < "$in_file" | LC_ALL=C sort -u > "$out_file" \
+    || nse_die "could not observe '$url' while establishing $what.
+       The store did not answer, which is NOT an answer that it holds nothing.
+       No object may be called absent, missing or unavailable on the strength of
+       a failed observation, so this run stops here rather than reporting a
+       coverage figure it cannot support. OBSERVATION_ERROR."
 }
 
 # stdin: a `nix path-info --json` document. stdout: the paths it says EXIST.

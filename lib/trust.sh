@@ -45,8 +45,9 @@ nse_trust_probe() {
   } | awk 'NF && !seen[$0]++' > "$work/trust-candidates.txt"
 
   LC_ALL=C sort -u "$work/trust-candidates.txt" > "$work/trust-candidates-sorted.txt"
-  nse_store_present "$NSE_SUBSTITUTER_URL" < "$work/trust-candidates-sorted.txt" \
-    | LC_ALL=C sort -u > "$work/trust-present.txt"
+  nse_observe_present "$NSE_SUBSTITUTER_URL" \
+    "$work/trust-candidates-sorted.txt" "$work/trust-present.txt" \
+    "which escrowed objects are available to probe for trust"
   nse_store_meta "$NSE_SUBSTITUTER_URL" < "$work/trust-present.txt" \
     > "$work/trust-meta.jsonl"
 
