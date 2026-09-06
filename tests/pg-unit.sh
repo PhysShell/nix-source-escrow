@@ -1359,6 +1359,72 @@ assert_eq "p42.12 the closed line's run index has not gained entries from this l
 assert_eq "p42.12a and the guard did not error while deciding that" "" "$JQ_ERR"
 assert_ne "p42.12b positive control: jqx surfaces an error instead of an empty answer" "0" \
   "$(jqx -r '.runs[] | .note | test("x")' "$ROOT/evidence-runs.json" | grep -c CHECKER_ERROR || true)"
+# ---------------------------------------------------------------------------
+# INDEX PROVENANCE. Both of these were found by a reviewer reading runs.json,
+# not by a check -- which is the same closure-bookkeeping class this repository
+# has been bitten by before ("(this commit)" as a literal, a stale canonical
+# block). The repair comes with the guard.
+# ---------------------------------------------------------------------------
+# (a) An indexed run that claims to have measured on N Nix versions must carry
+#     an artifact for each of them. Runs 4 and 5 recorded only the 2.34.7 leg
+#     while both matrix legs had succeeded and both artifacts existed, so the
+#     index under-recorded its own provenance on half of each run.
+# shellcheck disable=SC2016  # a jq program, handed to the jqx wrapper
+assert_eq "p42.14 every indexed run records an artifact for EVERY Nix version it measured on" "" \
+  "$(jqx -r '[ .runs[]
+               | . as $r
+               | .nixVersions[]
+               | . as $v
+               | select([ $r.artifacts // {} | keys[] | select(contains($v)) ] | length == 0)
+               | "run \($r.run) has no artifact for nix \($v)" ] | join("; ")' \
+       "$PGRUNS")"
+assert_eq "p42.14a and the guard did not error while deciding that" "" "$JQ_ERR"
+# The red control, because "no run is missing an artifact" is also what this
+# says about an index with no runs in it.
+assert_ne "p42.14b positive control: a missing leg IS caught" "0" \
+  "$(jq -n '{runs:[{run:9,nixVersions:["2.34.7","2.24.9"],
+                    artifacts:{"q-nix2.34.7":1}}]}' \
+     | jq -r '[ .runs[] | . as $r | .nixVersions[] | . as $v
+                | select([ $r.artifacts // {} | keys[] | select(contains($v)) ] | length == 0)
+                | "x" ] | length')"
+# (b) A prose reference to "run N" inside an indexed run must name an INDEXED
+#     run. PREREG.md §19: a GitHub Actions workflow number is not a number of
+#     knowledge. Run 4's notMeasured said "Run 10's step", which is a workflow
+#     number wearing the word `run` in the one namespace where that word is
+#     already taken.
+# shellcheck disable=SC2016  # a jq program, handed to the jqx wrapper
+assert_eq "p42.15 no prose names a 'run N' that is not an indexed run" "" \
+  "$(jqx -r '[ .runs[].run ] as $known
+              | [ .runs[]
+                  | .run as $r
+                  | ((.findings // []) + (.defectsFoundInThisRun // [])
+                     + (.notMeasured // []) + [ .supports // "", .verdict // "" ])[]
+                  | [ match("[Rr]un ([0-9]+)"; "g").captures[0].string | tonumber ]
+                  | .[]
+                  # `. as $n` FIRST. `$known | index(.)` rebinds . to the
+                  # ARRAY, so index() looks for the array inside itself, finds
+                  # it at 0, and the select is never true -- the guard was
+                  # INERT and passed by never selecting anything. Its positive
+                  # control caught that on the first run, which is the entire
+                  # reason a guard ships with one.
+                  | . as $n
+                  | select(($known | index($n)) == null)
+                  | "run \($r) prose names run \($n), which is not indexed" ]
+              | unique | join("; ")' "$PGRUNS")"
+assert_eq "p42.15a and that guard did not error either" "" "$JQ_ERR"
+assert_ne "p42.15b positive control: a workflow number in prose IS caught" "0" \
+  "$(jq -n '{runs:[{run:1,findings:["Run 10 step produced a green"]}]}' \
+     | jq -r '[ .runs[].run ] as $known
+               | [ .runs[] | (.findings // [])[]
+                   | [ match("[Rr]un ([0-9]+)"; "g").captures[0].string | tonumber ] | .[]
+                   | . as $n | select(($known | index($n)) == null) ] | length')"
+assert_eq "p42.15c and a reference to a REAL indexed run is not caught" "0" \
+  "$(jq -n '{runs:[{run:1,findings:["as run 1 showed"]},{run:2,findings:[]}]}' \
+     | jq -r '[ .runs[].run ] as $known
+               | [ .runs[] | (.findings // [])[]
+                   | [ match("[Rr]un ([0-9]+)"; "g").captures[0].string | tonumber ] | .[]
+                   | . as $n | select(($known | index($n)) == null) ] | length')"
+
 assert_ne "p42.13 and this line's index names the frozen commit it branched from" "0" \
   "$(jq -r '.branchedFrom.commit | test("^84354e85") | if . then 1 else 0 end' "$PGRUNS")"
 

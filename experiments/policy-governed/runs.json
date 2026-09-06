@@ -11,7 +11,7 @@
     "note": "That line's index is evidence-runs.json at the repository root. It is NOT the index of this line and nothing is appended to it. Its history and its recorded results are not modified here."
   },
   "note": "This index holds runs of the policy-governed line only. A run is indexed ONLY if it measures a pre-registered claim (PREREG.md §19). Docs-only changes, cleanup and operational CI are NOT AN EMPIRICAL RUN and do not appear here. A GitHub Actions workflow number is not a number of knowledge and is not used as one.",
-  "countPolicy": "runs[] holds indexed empirical runs. The array being empty means no empirical run has been recorded, never that none was attempted.",
+  "countPolicy": "runs[] holds indexed empirical runs. The array being empty means no empirical run has been recorded, never that none was attempted. A prose reference of the form 'run N' inside an indexed run names an INDEXED RUN in this file. A GitHub Actions workflow number is not a number of knowledge (§19) and is not written as one: the workflow that produced a run is recorded in its workflowRunId field and nowhere else.",
   "primaryClaims": [
     {
       "id": "C1",
@@ -301,10 +301,11 @@
         "Rewritten for the next run: the victim is taken from the escrow's own discovery document so it is certainly a discovered source, and the verdict is decided by copying the object back OUT of the escrow into a fresh store and comparing hashes against the original and the corrupted content. VIOLATED, HELD_* and NOT_MEASURED_* are distinct outcomes, and NOT_MEASURED is recorded rather than rounded to a pass."
       ],
       "notMeasured": [
-        "CACH2. Run 10's step produced a green that the step was not capable of earning, so it is recorded as INCONCLUSIVE and not as a pass."
+        "CACH2. THIS RUN's CACH2 step produced a green that the step was not capable of earning, so it is recorded as INCONCLUSIVE and not as a pass."
       ],
       "artifacts": {
-        "policy-governed-qualification-nix2.34.7": 9976898123
+        "policy-governed-qualification-nix2.34.7": 9976898123,
+        "policy-governed-qualification-nix2.24.9": 9976896993
       }
     },
     {
@@ -362,7 +363,8 @@
       ],
       "defectsFoundInThisRun": [],
       "artifacts": {
-        "policy-governed-qualification-nix2.34.7": 9977203632
+        "policy-governed-qualification-nix2.34.7": 9977203632,
+        "policy-governed-qualification-nix2.24.9": 9977204852
       }
     }
   ]
